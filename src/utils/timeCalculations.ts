@@ -168,3 +168,79 @@ export function getWarningMessage(warningType: string): string {
     };
     return messages[warningType] || warningType;
 }
+
+// ---------------------------------------------------------------------------
+// America/Los_Angeles (company timezone) helpers — added for punch clock Phase 1
+// All new punch code MUST use these for workDate, manual times, and week bounds.
+// Display-only user.timezone never affects payroll math or storage.
+// ---------------------------------------------------------------------------
+
+/**
+ * Current date in America/Los_Angeles as YYYY-MM-DD (logical work date).
+ * Never uses raw browser local Date for payroll keys.
+ */
+export function getCurrentPTDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+/**
+ * Current wall time in America/Los_Angeles as HH:MM (24h).
+ * Used for clockInManual / clockOutManual etc in new punch flows.
+ */
+export function getCurrentPTTimeHHMM(): string {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  return fmt.format(new Date());
+}
+
+/**
+ * Convert a JS Date to PT YYYY-MM-DD (for history range queries etc).
+ */
+export function getPTDate(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+/**
+ * Simple PT week start (Sunday = 0, matches existing DEFAULT_WORKWEEK_START_DAY).
+ * Returns YYYY-MM-DD of the Sunday of the week containing the given PT date.
+ */
+export function getPTWeekStart(dateStr: string = getCurrentPTDate()): string {
+  // Parse the PT date as local noon to avoid any DST boundary issues
+  const [y, m, d] = dateStr.split('-').map(Number);
+  // Create date in UTC representing that PT calendar day at noon PT
+  const ptNoon = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  // Get the weekday in PT (0=Sun ... 6=Sat) using long name (numeric not supported for weekday)
+  const ptWeekdayStr = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    weekday: 'long',
+  }).format(ptNoon);
+  const weekdayMap: Record<string, number> = {
+    Sunday: 0,
+    Monday: 1,
+    Tuesday: 2,
+    Wednesday: 3,
+    Thursday: 4,
+    Friday: 5,
+    Saturday: 6,
+  };
+  const ptWeekday = weekdayMap[ptWeekdayStr] ?? 0;
+  const daysBack = ptWeekday; // Sunday start
+  const start = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  start.setUTCDate(start.getUTCDate() - daysBack);
+  // Reuse the PT date formatter (the adjusted instant will resolve to correct PT calendar day)
+  return getPTDate(start);
+}

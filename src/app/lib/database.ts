@@ -283,6 +283,76 @@ export function calculateFlags(entry: TimeEntry): string[] {
   return flags;
 }
 
+// ---------------------------------------------------------------------------
+// Punch segment helpers (Clock Agent owns — minimal addition for atomic punch flows)
+// These are the canonical way to create/close segments in the TimeSegment model.
+// New clockService.ts MUST use these + runTransaction for double-punch safety.
+// Legacy flat fields are dual-written for backward compat with History/Payroll.
+// ---------------------------------------------------------------------------
+
+/** Create a fresh open segment for a new punch-in. */
+export function createInitialSegment(clockInManual: string, clockInSystem: number, taskId?: string): TimeSegment {
+  return {
+    id: `seg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+    clockInManual,
+    clockInSystem,
+    complete: false,
+    taskId: taskId || undefined,
+  };
+}
+
+/** Close an open segment with clock-out + compute its workMinutes (lunch-aware, simple). */
+export function closeActiveSegment(
+  seg: TimeSegment,
+  clockOutManual: string,
+  clockOutSystem: number,
+  skipLunch = false
+): TimeSegment {
+  if (seg.complete) return seg; // idempotent
+
+  const inM = timeToMinutes(seg.clockInManual || '00:00');
+  const outM = timeToMinutes(clockOutManual);
+  let workM = Math.max(0, outM - inM);
+
+  if (!skipLunch && seg.lunchOutManual && seg.lunchInManual) {
+    const lo = timeToMinutes(seg.lunchOutManual);
+    const li = timeToMinutes(seg.lunchInManual);
+    workM -= Math.max(0, li - lo);
+  }
+  if (skipLunch) {
+    // no deduction
+  }
+
+  return {
+    ...seg,
+    clockOutManual,
+    clockOutSystem,
+    workMinutes: workM,
+    complete: true,
+    skipLunch: skipLunch || seg.skipLunch,
+  };
+}
+
+/** Apply a lunch action to an open segment (start or end). Returns updated segment copy. */
+export function applyLunchToSegment(
+  seg: TimeSegment,
+  action: 'start' | 'end' | 'skip',
+  timeManual: string,
+  timeSystem: number
+): TimeSegment {
+  if (seg.complete) return seg;
+  if (action === 'skip') {
+    return { ...seg, skipLunch: true };
+  }
+  if (action === 'start' && !seg.lunchOutManual) {
+    return { ...seg, lunchOutManual: timeManual, lunchOutSystem: timeSystem };
+  }
+  if (action === 'end' && seg.lunchOutManual && !seg.lunchInManual) {
+    return { ...seg, lunchInManual: timeManual, lunchInSystem: timeSystem };
+  }
+  return seg;
+}
+
 class DatabaseService {
   calculateTotalHours(entry: Partial<TimeEntry>): number {
     return calculateTotalHours(entry);
