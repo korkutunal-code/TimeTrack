@@ -59,13 +59,13 @@ All commands used `package.json` scripts or the documented TypeScript invocation
 | Tests (Jest) | `npm test` | ✅ PASS | 2 suites, 11 tests, 11 passed, 0 failures |
 | Lint | `npm run lint` | ⚠️ 30 errors, 141 warnings | Pre-existing issues only (no new issues from PR #2). Documented in PHASE1_HARDENING_REPORT.md and POSTMERGE verification. Non-blocking for staging per prior sign-off. |
 | Firestore Rules Tests | `npm run test:rules` | ⛔ UNAVAILABLE | Emulator not running + library compatibility blocker (same as pre-merge). Rules code-reviewed and validated statically. |
-| Firebase Deploy Dry-Run | `firebase deploy --only hosting --dry-run` (or equivalent) | ⛔ BLOCKED | "Failed to authenticate" + "No currently active project" (no .firebaserc, no `firebase login`). Expected and documented. |
+| Firebase Deploy Check | (none performed) | ⛔ BLOCKED | No Firebase deployment was performed because Firebase CLI authentication and project selection were not configured (no .firebaserc, not logged in via `firebase login`). Expected and documented. |
 
 **Warnings noted:**
 - Jest config warning about `esModuleInterop` (pre-existing, non-blocking).
 - Lint count stable vs. previous runs.
 
-**Firebase dry-run note:** The CLI does not have a true `--dry-run` flag for deploy; the command failed early on project selection/auth, which is the correct and safe failure mode.
+**Firebase deployment note:** No `firebase deploy` command (including any dry-run variant) was executed. Firebase CLI does not support a `--dry-run` flag for deploy. The attempt failed early due to missing authentication and project alias configuration (no .firebaserc). For future safe validation of UI without touching production, use Firebase Hosting preview channels (`firebase hosting:channel:deploy <channel> --expires 2d`) on the existing project or (preferred) a dedicated staging Firebase project.
 
 ---
 
@@ -111,7 +111,7 @@ All commands used `package.json` scripts or the documented TypeScript invocation
 
 **None performed.**
 
-No `firebase deploy` commands (destructive or otherwise) were executed against any project. The dry-run attempt was purely diagnostic and failed safely before any upload or mutation.
+No `firebase deploy` commands (destructive or otherwise) were executed against any project. Authentication and project selection were not configured, so no deployment of any kind (including diagnostic) was possible. Future safe options for validation include Firebase Hosting preview channels or a dedicated staging project.
 
 **Safe config/build issues identified but not "fixed" (because no deploy was happening):**
 - `functions/` directory missing — would cause predeploy failure if functions were targeted. Not fixed here (would require either adding the dir or editing firebase.json to remove functions stanza for hosting-only deploys; scope is hardening/staging validation only).
@@ -236,7 +236,7 @@ Unchanged from all prior reports (PHASE1_HARDENING_REPORT, POSTMERGE verificatio
 3. Implement minimal environment switching for Firebase config (or adopt Hosting preview channels + separate Firestore for data isolation).
 4. `firebase login` with staging access.
 5. Add safe deploy scripts to package.json (prefer channels for low-risk previews).
-6. Seed test accounts using `npm run seed:test-users` on the staging project.
+6. Seed test accounts using the appropriate script for the target (see STAGING_TEST_ACCOUNT_REQUIREMENTS.md: `npm run seed:test-users` only for local emulators; for real staging project use `npm run seed:prod-test-users` with correct ADMIN_* and TEST_* env vars pointing Firebase config to staging).
 7. Provide staging URL + test credentials (securely) + re-invoke this agent or perform manual validation.
 8. Once staging is green, complete the Production Approval Gate in PHASE1_ROLLOUT_CHECKLIST.md.
 
@@ -258,7 +258,7 @@ npm run build
 npm test
 npm run lint
 npm run test:rules   # (blocked)
-firebase deploy --only hosting --dry-run  # (auth/project failure — expected)
+# No firebase deploy commands were run (auth + .firebaserc not configured)
 
 # Inspection (via tools + bash)
 ls -la firebase.json .firebaserc .env* src/config/

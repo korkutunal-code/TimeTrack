@@ -14,7 +14,7 @@ Runtime validation of the employee clock-in/out flows, admin correction flows, a
 - No `firebase login` has been performed.
 - No test users exist in any environment accessible from this workspace.
 - The local emulator (`VITE_USE_EMULATORS=true`) can run the app shell but does not provide realistic auth/role simulation for full end-to-end flows (especially admin vs employee permissions and Firestore rules enforcement).
-- Seeding scripts (`npm run seed:test-users`) require an authenticated Firebase CLI targeting a real project.
+- Seeding for **real staging projects** requires separate handling (see "Local Emulator vs Real Staging Seeding" section below). `npm run seed:test-users` is emulator-only and does **not** require or use `firebase login` to a real project.
 
 Per instructions: "If runtime validation requires test accounts and none exist: Create STAGING_TEST_ACCOUNT_REQUIREMENTS.md. Document required test accounts. Do not invent or hardcode credentials."
 
@@ -77,27 +77,61 @@ To execute the validation checklist in STAGING_DEPLOYMENT_AND_VALIDATION_REPORT.
 
 ---
 
+## Local Emulator vs Real Staging Project Seeding (Critical Distinction)
+
+**`npm run seed:test-users` (emulator only):**
+- Targets **local Auth and Firestore emulators** only (hardcoded to `http://127.0.0.1:9099` in the script + uses `@firebase/rules-unit-testing`).
+- **Requires** `firebase emulators:start --only auth,firestore` (or full emulator suite) running locally.
+- **Does NOT** require `firebase login`, does NOT target any real Firebase project (including staging), and does NOT need .firebaserc aliases.
+- Safe for local development and rules testing.
+- Creates test users like admin@test.local / manager@test.local / employee@test.local with password "Test123!".
+- Does **not** seed a real staging environment.
+
+**`npm run seed:prod-test-users` (real projects, including staging):**
+- Uses the real Firebase JS SDK + the app's Firebase config.
+- Requires real admin credentials via environment variables: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `TEST_PASSWORD` (≥6 chars).
+- May also require Firebase config variables (e.g., via `.env` or by ensuring `src/config/firebase.config.js` + any VITE_ overrides point to the **staging** project during the seed run).
+- Signs in as the admin user (must already exist with admin role in the target project) and provisions additional test users via `provisionUser`.
+- **Use this for a real dedicated staging Firebase project** (after `firebase login` and with `.firebaserc` "staging" alias or by temporarily configuring the app to point to staging).
+- **Never** run this against the production project (`atd-time-tracking`) without explicit owner approval.
+
+**Rule:** For any real staging deployment validation, always use `seed:prod-test-users` with env vars configured for the staging project. The `seed:test-users` script is intentionally isolated to emulators.
+
+---
+
 ## How to Create These Accounts (Owner Steps)
 
-1. **In Firebase Console (or CLI):**
-   - Go to Authentication → Users → Add User (or use `firebase auth:import`).
+1. **In Firebase Console (or CLI) for the target project (staging or emulator):**
+   - Go to Authentication → Users → Add User (or use `firebase auth:import` / emulator UI).
    - Note the UID generated.
 
-2. **Seed via provided script (preferred, after `firebase login` targeting staging):**
+2. **For real staging project seeding (preferred for validation):**
    ```bash
-   # After authenticating to staging project and ensuring .firebaserc has "staging" alias
+   # Ensure .firebaserc has staging alias + you are logged in
+   # Set env vars that make the app's Firebase config + authService target the *staging* project
+   ADMIN_EMAIL=your-staging-admin@... \
+   ADMIN_PASSWORD=... \
+   TEST_PASSWORD=TestPass123! \
+   npm run seed:prod-test-users
+   ```
+   - Review `scripts/seed-prod-test-users.mjs` — it requires the admin to already exist with proper role in the target (staging) project.
+   - This is the script to use for `atd-time-tracking-staging` or equivalent.
+
+3. **For local emulator development/testing only:**
+   ```bash
+   firebase emulators:start --only auth,firestore
+   # In another terminal
    npm run seed:test-users
    ```
-   - Review `scripts/seed-test-users.mjs` to understand what it creates (it likely creates the users collection docs + auth users).
-   - There is also `npm run seed:prod-test-users` — use the test one for staging.
+   - Then run the app with `VITE_USE_EMULATORS=true npm run dev`.
 
-3. **Manual Firestore seed (if script insufficient):**
-   - After creating Auth users, manually create matching documents in `users` collection via Firebase Console or Admin SDK script.
-   - Ensure `role` and `active` fields are set correctly (rules depend on them).
+4. **Manual Firestore seed (if script insufficient):**
+   - After creating Auth users in the target (real staging project or emulator UI), manually create matching documents in the `users` collection.
+   - Ensure `role` and `active: true` fields (critical for Firestore rules and UI role checks).
 
-4. **Never commit passwords or real UIDs** to the repository.
+5. **Never commit passwords or real UIDs** to the repository.
 
-5. **Document the actual credentials** used for a given staging deployment in a private owner-only location (e.g., 1Password, internal wiki, or encrypted note). Update this file only with placeholders or "see internal credentials doc".
+6. **Document the actual credentials** used for a given staging deployment in a private owner-only location (e.g., 1Password, internal wiki, or encrypted note). Update this file only with placeholders or "see internal credentials doc".
 
 ---
 
@@ -143,7 +177,7 @@ VITE_USE_EMULATORS=true npm run dev
 - However:
   - Rules are only enforced locally.
   - No persistent cross-session state like real staging.
-  - Seeding scripts target real projects, not emulators by default.
+  - For real staging, use `seed:prod-test-users` with env configuration for the staging project. The `seed:test-users` script is intentionally limited to local emulators only.
   - Role-based UI (hiding admin panels for employees) and Firestore permission errors are hard to fully simulate for all flows.
   - Audit log immutability and correction atomicity are best verified against real deployed rules + real data.
 
@@ -156,7 +190,7 @@ Local emulator is excellent for development but **insufficient** for the officia
 Owner should:
 1. Resolve all items in STAGING_DEPLOY_BLOCKER_REPORT.md.
 2. Deploy to staging (hosting + rules + indexes).
-3. Run `npm run seed:test-users` against the staging project.
+3. Run the appropriate seed script for the real staging project (`npm run seed:prod-test-users` with correct env vars for staging; see the "Local Emulator vs Real Staging Project Seeding" section). `npm run seed:test-users` is only for local emulators.
 4. Record the actual test account emails/passwords in a secure location.
 5. Provide the staging URL + credentials to the validation agent or QA owner.
 6. Re-invoke the Staging Deployment Agent (or perform manual validation) against the live staging URL.

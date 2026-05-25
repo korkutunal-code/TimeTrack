@@ -63,7 +63,7 @@ Deployment was **not attempted**. Local pre-staging checks were completed succes
     "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"]
   }
   ```
-- **Reality:** `functions/` directory does not exist (`ls: cannot access 'functions/': No such or directory`).
+- **Reality:** `functions/` directory does not exist (`ls: cannot access 'functions/': No such file or directory`).
 - **Impact:** Any deploy that includes functions (even accidentally) would fail predeploy. Hosting-only deploys might succeed but config is inconsistent.
 
 ### 6. No Documented Staging Hosting Channel or Target
@@ -114,8 +114,9 @@ Deployment was **not attempted**. Local pre-staging checks were completed succes
    - Document in DEPLOYMENT_GUIDE.md.
 
 5. **Test Data:**
-   - Use `npm run seed:test-users` against the staging project (after auth).
-   - Document test account credentials (never committed).
+    - For real staging project: Use `npm run seed:prod-test-users` (with ADMIN_EMAIL/ADMIN_PASSWORD/TEST_PASSWORD env vars + Firebase config/env pointing to the staging project). 
+    - `npm run seed:test-users` is for local emulators only (requires `firebase emulators:start --only auth,firestore`); it does not seed real projects and does not require `firebase login`.
+    - Document test account credentials (never committed).
 
 6. **Optional Safer Path (Recommended):**
    - Use Hosting preview channels on the existing project for UI validation: `firebase hosting:channel:deploy staging-2026-05-25 --expires 2d`
@@ -162,7 +163,7 @@ Full details in the main staging validation report.
 3. Implement environment-specific Firebase config.
 4. Run `firebase login` in a secure environment with staging access.
 5. Add safe deploy scripts (prefer Hosting channels for low-risk UI previews).
-6. Seed test accounts via `npm run seed:test-users`.
+6. Seed test accounts: use `npm run seed:prod-test-users` (with proper env vars) for the real staging project; `npm run seed:test-users` only for local emulator development.
 7. Re-run this agent or perform manual staging deploy + validation.
 
 Once staging is available and populated, the validation items in the main report (employee clock flows, admin correction with mandatory reason + audit, mobile layout, security rules enforcement) can be executed against the live staging URL.
