@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { arrayUnion, collection, doc, getDoc, getDocs, limit, query, setDoc, Timestamp, updateDoc, where, deleteDoc } from 'firebase/firestore';
+import { arrayUnion, collection, doc, getDoc, getDocs, limit, query, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { AlertCircle, AlertTriangle, ArrowRight, CheckCircle2, Clock, Coffee, History, LogIn, LogOut as LogOutIcon, Zap, HelpCircle, FileWarning, CalendarDays, Globe, Play, Target } from 'lucide-react';
 
@@ -7,6 +7,7 @@ import type { User } from '../../lib/auth';
 import type { TimeEntry } from '../../lib/database';
 import { dbService } from '../../lib/database';
 import { db } from '../../lib/firebase';
+import { auditLogService } from '../../../services/auditLogService';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -524,13 +525,31 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
   }
 
   async function resetToday() {
-    if (!confirm('Delete today’s entry? This is intended for testing only.')) return;
+    if (!confirm('Void today\'s entry? This will mark it as voided but preserve the record for audit purposes.')) return;
     try {
-      await deleteDoc(doc(db, 'timeEntries', `${user.uid}_${today}`));
-      toast.success('Entry deleted');
+      const entryId = `${user.uid}_${today}`;
+      const entryDoc = await getDoc(doc(db, 'timeEntries', entryId));
+      const before = entryDoc.exists() ? entryDoc.data() : {};
+      await auditLogService.logVoidEntry({
+        actorUid: user.uid,
+        actorName: user.name || user.email,
+        actorRole: 'system',
+        targetId: entryId,
+        before,
+        reason: 'Employee voided today\'s entry (test mode)',
+      });
+      await updateDoc(doc(db, 'timeEntries', entryId), {
+        status: 'voided',
+        voidedAt: Timestamp.now(),
+        voidedBy: user.uid,
+        voidReason: 'Employee voided via test mode',
+        updatedAt: Timestamp.now(),
+        updatedBy: user.uid,
+      } as any);
+      toast.success('Entry voided');
       await initLoad();
     } catch {
-      toast.error('Failed to delete entry');
+      toast.error('Failed to void entry');
     }
   }
 

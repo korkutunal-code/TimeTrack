@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
 import { TimeEntry, dbService } from '../../lib/database';
-import { doc, updateDoc, deleteDoc, Timestamp } from 'firebase/firestore';
+import { doc, updateDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { auditLogService } from '../../../services/auditLogService';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -249,15 +250,34 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
     }
   };
 
-  const handleDeleteEntry = async (entry: TimeEntry) => {
-    if (window.confirm('Are you sure you want to delete this entry? This cannot be undone.')) {
-      try {
-        await deleteDoc(doc(db, 'timeEntries', entry.id));
-        toast.success('Entry deleted');
-        loadEntries();
-      } catch (error) {
-        toast.error('Failed to delete entry');
-      }
+  const handleVoidEntry = async (entry: TimeEntry) => {
+    const reason = window.prompt('Reason for voiding this entry (required):');
+    if (!reason || !reason.trim()) {
+      toast.error('Reason is required to void an entry');
+      return;
+    }
+    try {
+      const before = { ...entry };
+      await auditLogService.logVoidEntry({
+        actorUid: user.uid,
+        actorName: user.name || user.email,
+        actorRole: user.role === 'admin' ? 'admin' : 'manager',
+        targetId: entry.id,
+        before,
+        reason: reason.trim(),
+      });
+      await updateDoc(doc(db, 'timeEntries', entry.id), {
+        status: 'voided',
+        voidedAt: Timestamp.now(),
+        voidedBy: user.uid,
+        voidReason: reason.trim(),
+        updatedAt: Timestamp.now(),
+        updatedBy: user.uid,
+      } as any);
+      toast.success('Entry voided');
+      loadEntries();
+    } catch (error) {
+      toast.error('Failed to void entry');
     }
   };
 
@@ -491,9 +511,9 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
                                 <Edit className="size-4 mr-2" />
                                 Edit Entry
                               </DropdownMenuItem>
-                              <DropdownMenuItem className="text-red-600" onClick={() => handleDeleteEntry(entry)}>
+                              <DropdownMenuItem className="text-red-600" onClick={() => handleVoidEntry(entry)}>
                                 <Trash2 className="size-4 mr-2" />
-                                Delete Entry
+                                Void Entry
                               </DropdownMenuItem>
                             </>
                           )}
