@@ -67,6 +67,8 @@ export interface TimeEntry {
   correctionRequested?: boolean;
   anomalyFlag?: boolean;
 
+  status?: 'active' | 'corrected' | 'voided' | 'archived';
+
   completedAt?: number;     // millis
 }
 
@@ -171,6 +173,7 @@ function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
     adminNotes: data.correctionNotes || data.notes || undefined,
     correctionRequested: data.correctionRequested === true,
     anomalyFlag: data.anomaly_flag === true,
+    status: data.status || 'active',
     completedAt: tsToMillis(data.completedAt),
   };
 

@@ -76,6 +76,42 @@ export class AuditLogService {
     }
   }
 
+  async logVoidEntry(params: {
+    actorUid: string;
+    actorName?: string;
+    actorRole: 'admin' | 'manager' | 'system';
+    targetId: string;
+    before: Record<string, any>;
+    reason: string;
+  }): Promise<string> {
+    const trimmedReason = (params.reason || '').trim();
+
+    if (!trimmedReason) {
+      throw new Error('Audit log rejected: reason is required and must be non-empty');
+    }
+
+    const entry: Omit<AuditLogEntry, 'id'> = {
+      occurredAt: Timestamp.now(),
+      actorUid: params.actorUid,
+      actorName: params.actorName,
+      actorRole: params.actorRole,
+      action: 'void_entry',
+      targetCollection: 'timeEntries',
+      targetId: params.targetId,
+      before: params.before,
+      after: { status: 'voided' },
+      reason: trimmedReason,
+    };
+
+    try {
+      const docRef = await addDoc(collection(db, this.collectionName), entry);
+      return docRef.id;
+    } catch (err) {
+      console.error('[AuditLogService] Failed to write void audit log:', err);
+      throw new Error('Failed to record immutable audit trail. Void operation aborted for safety.');
+    }
+  }
+
   /**
    * Future: Query audit history for a given time entry (admin + manager + employee self).
    */
