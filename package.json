@@ -11,7 +11,13 @@
     "test:rules": "node scripts/test-firestore-rules.js",
     "lint": "eslint src",
     "seed:test-users": "node scripts/seed-test-users.mjs",
-    "seed:prod-test-users": "node scripts/seed-prod-test-users.mjs"
+    "seed:prod-test-users": "node scripts/seed-prod-test-users.mjs",
+
+    "// Staging-only Firebase helpers (require .firebaserc 'staging' alias + firebase login)": "",
+    "firebase:login": "firebase login",
+    "firebase:use:staging": "firebase use staging",
+    "deploy:staging": "firebase deploy --only hosting,firestore:rules,firestore:indexes --project staging",
+    "deploy:rules:staging": "firebase deploy --only firestore:rules,firestore:indexes --project staging"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

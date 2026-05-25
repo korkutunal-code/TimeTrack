@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "default": "atd-time-tracking",
+    "staging": "REPLACE_WITH_STAGING_FIREBASE_PROJECT_ID",
+    "production": "atd-time-tracking"
+  }
+}
