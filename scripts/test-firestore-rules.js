@@ -185,6 +185,76 @@ async function main() {
       )
     );
 
+    // --- auditLogs rules (Phase 1) ---
+    const auditLogId = "test-audit-log-1";
+    const validAuditLog = {
+      occurredAt: new Date(),
+      actorUid: "admin-1",
+      actorRole: "admin",
+      action: "time_correction",
+      targetCollection: "timeEntries",
+      targetId: entryId2,
+      before: { clockInManual: "08:00" },
+      after: { clockInManual: "08:15" },
+      reason: "Employee arrived at 8:15, not 8:00",
+    };
+
+    // admin can create audit log with valid fields
+    await assertSucceeds(
+      setDoc(doc(admin.firestore(), "auditLogs", auditLogId), validAuditLog)
+    );
+
+    // admin cannot create audit log without reason
+    await assertFails(
+      setDoc(doc(admin.firestore(), "auditLogs", "test-audit-no-reason"), {
+        ...validAuditLog,
+        reason: "",
+      })
+    );
+
+    // admin cannot create audit log without targetCollection
+    await assertFails(
+      setDoc(doc(admin.firestore(), "auditLogs", "test-audit-no-target"), {
+        occurredAt: new Date(),
+        actorUid: "admin-1",
+        reason: "test",
+      })
+    );
+
+    // manager can read audit logs
+    await assertSucceeds(getDoc(doc(manager.firestore(), "auditLogs", auditLogId)));
+
+    // employee cannot read audit logs
+    await assertFails(getDoc(doc(emp1.firestore(), "auditLogs", auditLogId)));
+
+    // unauthenticated cannot read audit logs
+    await assertFails(getDoc(doc(unauth.firestore(), "auditLogs", auditLogId)));
+
+    // IMMUTABLE: admin cannot update audit log
+    await assertFails(
+      setDoc(
+        doc(admin.firestore(), "auditLogs", auditLogId),
+        { reason: "modified reason" },
+        { merge: true }
+      )
+    );
+
+    // IMMUTABLE: admin cannot delete audit log
+    await assertFails(deleteDoc(doc(admin.firestore(), "auditLogs", auditLogId)));
+
+    // IMMUTABLE: manager cannot delete audit log
+    await assertFails(deleteDoc(doc(manager.firestore(), "auditLogs", auditLogId)));
+
+    // employee cannot create audit log
+    await assertFails(
+      setDoc(doc(emp1.firestore(), "auditLogs", "test-audit-emp-create"), validAuditLog)
+    );
+
+    // manager cannot create audit log
+    await assertFails(
+      setDoc(doc(manager.firestore(), "auditLogs", "test-audit-mgr-create"), validAuditLog)
+    );
+
     console.log("✅ Firestore rules tests passed.");
 
     // Extra sanity: ensure assertions actually ran
