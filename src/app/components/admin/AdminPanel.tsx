@@ -29,6 +29,7 @@ import { UserPlus, Upload, Download, Edit, Trash2, UserCog, MoreVertical, CheckC
 import { provisionUser } from '../../../services/authService';
 import { calculateLunchMinutes, calculateTotalWorkMinutes, validateTimeEntry } from '../../../utils/timeCalculations';
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
+import { auditLogService } from '../../../services/auditLogService';
 
 interface AdminPanelProps {
   currentUser: User;
@@ -255,6 +256,37 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       const ot = calculateDailyOvertimeBreakdown(totalWorkMinutes);
       const workWeekStartDate = getWorkWeekStartDate(correctionEntry.date, DEFAULT_WORKWEEK_START_DAY);
 
+      // === IMMUTABLE AUDIT TRAIL (Phase 1 requirement) ===
+      // Build before / after snapshots for defensibility.
+      // Source of truth = the original loaded entry (captured at loadCorrectionEntry) + the values the admin is saving.
+      const beforeSnapshot = originalCorrectionEntry
+        ? JSON.parse(JSON.stringify(originalCorrectionEntry))
+        : {};
+
+      const afterSnapshot = {
+        ...correctionEntry,
+        lunchMinutes,
+        totalWorkMinutes,
+        regularMinutes: ot.regularMinutes,
+        otMinutes: ot.otMinutes,
+        doubleTimeMinutes: ot.doubleTimeMinutes,
+        correctedAt: now.toMillis(),
+        correctedBy: currentUser.uid,
+        correctionNotes: adminNotes.trim(),
+      };
+
+      // Write audit log FIRST. This is the non-repudiable record.
+      // The service itself enforces non-empty reason.
+      await auditLogService.logTimeCorrection({
+        actorUid: currentUser.uid,
+        actorName: currentUser.name,
+        targetId: correctionEntry.id,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+        reason: adminNotes.trim(),
+      });
+
+      // Only after durable audit row exists do we mutate the time record.
       await updateDoc(doc(db, 'timeEntries', correctionEntry.id), {
         clockInManual: correctionEntry.clockInManual,
         lunchOutManual: correctionEntry.skipLunch ? '' : (correctionEntry.lunchOutManual || ''),
@@ -271,12 +303,13 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         currentStep: 'complete',
         correctedAt: now,
         correctedBy: currentUser.uid,
-        correctionNotes: adminNotes,
+        correctionNotes: adminNotes.trim(),
+        status: 'corrected',
         updatedAt: now,
         updatedBy: currentUser.uid,
       } as any);
 
-      toast.success('Entry corrected successfully');
+      toast.success('Entry corrected successfully (audit trail recorded)');
       setCorrectionEntry(null);
       setOriginalCorrectionEntry(null);
       setCorrectionUserId('');
@@ -284,7 +317,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       setAdminNotes('');
       setCorrectEntryOpen(false);
     } catch (error) {
-      toast.error('Failed to save correction');
+      const msg = error instanceof Error ? error.message : 'Failed to save correction';
+      // If audit log itself failed, the error message already explains the safety block.
+      toast.error(msg);
     }
   };
 
