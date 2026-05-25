@@ -3,6 +3,7 @@ import tsPlugin from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
+import globals from 'globals';
 
 export default [
   { ignores: ['build_output', 'dist', 'node_modules', 'scripts'] },
@@ -11,6 +12,10 @@ export default [
     languageOptions: {
       parser: tsParser,
       parserOptions: { ecmaVersion: 2022, sourceType: 'module' },
+      globals: {
+        ...globals.browser,
+        ...globals.es2022,
+      },
     },
     plugins: {
       '@typescript-eslint': tsPlugin,
@@ -24,6 +29,16 @@ export default [
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+    },
+  },
+  {
+    files: ['**/*.test.{ts,tsx}', '**/*.spec.{ts,tsx}'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        ...globals.es2022,
+        ...globals.jest,
+      },
     },
   },
 ];
