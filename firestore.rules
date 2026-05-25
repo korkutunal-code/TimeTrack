@@ -96,6 +96,24 @@ service cloud.firestore {
       // All authenticated users can read payroll settings to respect lock dates
       allow read: if isAuthenticated() && document == 'payroll';
     }
+
+    // auditLogs collection — immutable append-only audit trail
+    // Created by Phase 1 admin correction hardening
+    match /auditLogs/{logId} {
+      // Admins and managers can read audit logs
+      allow read: if hasRole('admin') || hasRole('manager');
+      
+      // Only admins can create audit log entries (service-layer enforced)
+      // Entry must have required fields and non-empty reason
+      allow create: if hasRole('admin') && 
+                       request.resource.data.reason is string &&
+                       request.resource.data.reason.size() > 0 &&
+                       request.resource.data.targetCollection is string &&
+                       request.resource.data.occurredAt != null;
+      
+      // IMMUTABLE: no updates or deletes for any role
+      allow update, delete: if false;
+    }
   }
 }
 
