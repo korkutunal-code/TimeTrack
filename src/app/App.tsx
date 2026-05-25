@@ -3,6 +3,7 @@ import { authService, User } from './lib/auth';
 import { dbService } from './lib/database';
 import { LoginPage } from './components/LoginPage';
 import { TodayEntry } from './components/employee/TodayEntry';
+import { ClockPunch } from './components/employee/ClockPunch';
 import { HistoryView } from './components/employee/HistoryView';
 import { TeamDashboard } from './components/manager/TeamDashboard';
 import { AdminPanel } from './components/admin/AdminPanel';
@@ -164,7 +165,11 @@ export default function App() {
   const renderEmployeeView = () => (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {employeeView === 'today' ? (
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-4xl mx-auto space-y-6">
+          <ClockPunch
+            user={currentUser}
+            onViewHistory={() => setEmployeeView('history')}
+          />
           <TodayEntry
             user={currentUser}
             onViewHistory={() => setEmployeeView('history')}
@@ -198,17 +203,23 @@ export default function App() {
         </TabsContent>
 
         <TabsContent value="my-time">
-          {employeeView === 'today' ? (
-            <TodayEntry
+          <div className="space-y-6">
+            <ClockPunch
               user={currentUser}
               onViewHistory={() => setEmployeeView('history')}
             />
-          ) : (
-            <HistoryView
-              user={currentUser}
-              onBack={() => setEmployeeView('today')}
-            />
-          )}
+            {employeeView === 'today' ? (
+              <TodayEntry
+                user={currentUser}
+                onViewHistory={() => setEmployeeView('history')}
+              />
+            ) : (
+              <HistoryView
+                user={currentUser}
+                onBack={() => setEmployeeView('today')}
+              />
+            )}
+          </div>
         </TabsContent>
       </Tabs>
     </div>

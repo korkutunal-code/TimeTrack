@@ -3,6 +3,8 @@
  * Ensures logical time entry and prevents negative hours
  */
 
+import type { TimeEntry, TimeSegment } from '../app/lib/database';
+
 /**
  * Convert time string to minutes since midnight
  * @param timeStr - Time in HH:MM format
@@ -317,4 +319,85 @@ export function checkTimeAnomalies(
     }
 
     return { hasAnomaly: false };
+}
+
+// ---------------------------------------------------------------------------
+// Punch clock business rules (Phase 1 — Clock Agent)
+// These are the single source of truth for "can I punch now?" checks.
+// Enforces: 1 open segment max per employee per (PT) day.
+// Re-uses the existing TimeSegment model (skipLunch + lunch* fields).
+// All new ClockPunch / clockService code must call these before any write.
+// ---------------------------------------------------------------------------
+
+export interface PunchValidationResult {
+  valid: boolean;
+  message?: string;
+}
+
+/**
+ * Returns true if the given entry has an incomplete (open) segment.
+ * Mirrors database.hasOpenSegment but kept here for pure validation use.
+ */
+function hasOpenSegmentLocal(entry: TimeEntry | null | undefined): boolean {
+  if (!entry?.segments?.length) return false;
+  const last = entry.segments[entry.segments.length - 1];
+  return !!last && last.complete !== true;
+}
+
+/**
+ * Can the employee perform a clock-in / start new segment right now?
+ * Rule: No open segment allowed on the same logical PT workDate.
+ */
+export function validateCanPunchIn(entry: TimeEntry | null | undefined): PunchValidationResult {
+  if (hasOpenSegmentLocal(entry)) {
+    return {
+      valid: false,
+      message: 'You already have an open shift today. Clock out before starting a new one.',
+    };
+  }
+  return { valid: true };
+}
+
+/**
+ * Can the employee clock out (close the current open segment)?
+ */
+export function validateCanPunchOut(entry: TimeEntry | null | undefined): PunchValidationResult {
+  if (!hasOpenSegmentLocal(entry)) {
+    return {
+      valid: false,
+      message: 'No open shift to clock out of. Clock in first.',
+    };
+  }
+  return { valid: true };
+}
+
+/**
+ * Can the employee toggle lunch (out or in) on the current open segment?
+ * Lunch is only valid on an open segment and follows the existing sequential rules
+ * (lunchOut before lunchIn; optional skipLunch path).
+ */
+export function validateCanToggleLunch(entry: TimeEntry | null | undefined): PunchValidationResult {
+  const active = hasOpenSegmentLocal(entry);
+  if (!active) {
+    return {
+      valid: false,
+      message: 'You must be clocked in to start or end a lunch break.',
+    };
+  }
+  return { valid: true };
+}
+
+/**
+ * Given an active segment, decide what the next lunch action label should be.
+ * Pure helper for UI toggle button text.
+ */
+export function getLunchActionLabel(activeSegment: TimeSegment | null): string {
+  if (!activeSegment) return 'LUNCH';
+  if (!activeSegment.lunchOutManual && !activeSegment.lunchOutSystem) {
+    return 'START LUNCH';
+  }
+  if (!activeSegment.lunchInManual && !activeSegment.lunchInSystem) {
+    return 'END LUNCH';
+  }
+  return 'LUNCH DONE';
 }
