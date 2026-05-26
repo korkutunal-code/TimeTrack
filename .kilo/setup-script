@@ -1,0 +1,43 @@
+#!/bin/bash
+set -e
+
+echo "=== TimeTrack Worktree Setup ==="
+echo "Worktree: $WORKTREE_PATH"
+echo "Repo root: $REPO_PATH"
+
+# Copy environment files (never commit secrets)
+if [ -f "$REPO_PATH/.env" ]; then
+    cp "$REPO_PATH/.env" "$WORKTREE_PATH/.env"
+    echo "Copied .env"
+fi
+if [ -f "$REPO_PATH/.env.local" ]; then
+    cp "$REPO_PATH/.env.local" "$WORKTREE_PATH/.env.local"
+    echo "Copied .env.local"
+fi
+if [ -f "$REPO_PATH/.env.example" ] && [ ! -f "$WORKTREE_PATH/.env" ]; then
+    cp "$REPO_PATH/.env.example" "$WORKTREE_PATH/.env"
+    echo "Copied .env.example as .env"
+fi
+
+# Install dependencies
+if [ -f "$WORKTREE_PATH/package.json" ]; then
+    echo "Installing root dependencies..."
+    cd "$WORKTREE_PATH"
+    npm install --prefer-offline --no-audit --no-fund
+fi
+
+# Optional: if a functions/ directory ever appears
+if [ -f "$WORKTREE_PATH/functions/package.json" ]; then
+    echo "Installing functions dependencies..."
+    cd "$WORKTREE_PATH/functions"
+    npm install --prefer-offline --no-audit --no-fund
+fi
+
+# Quick sanity for this project
+if [ -f "$WORKTREE_PATH/package.json" ]; then
+    echo "Running quick lint check (non-blocking)..."
+    cd "$WORKTREE_PATH"
+    npm run lint -- --max-warnings=0 || echo "Lint warnings present (acceptable in worktree)"
+fi
+
+echo "=== Setup complete for worktree at $WORKTREE_PATH ==="

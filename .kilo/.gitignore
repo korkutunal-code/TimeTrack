@@ -1,0 +1,32 @@
+# .kilo/.gitignore
+# Controls what inside .kilo/ is version controlled.
+# Goal: Survive Kilo Code extension removal, reinstall, or fresh clone.
+
+# === RUNTIME (never commit) ===
+node_modules/
+package.json
+package-lock.json
+pnpm-lock.yaml
+bun.lock
+yarn.lock
+
+# === TRANSIENT STATE (local machine only) ===
+agent-manager.json
+worktrees/
+
+# === FORCE COMMIT THESE (critical for setup survival) ===
+# Negation rules ensure they are never accidentally ignored
+!kilo.json
+!personas/
+!personas/**
+!rules/
+!rules/**
+!setup-script
+!run-script
+!MODEL_STRATEGY.md
+!README.md
+!.gitignore
+
+# You may also want to keep important shared plans:
+# !plans/1779682548059-brave-garden.md
+# etc.

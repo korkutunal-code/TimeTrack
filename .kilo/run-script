@@ -1,0 +1,30 @@
+#!/bin/bash
+set -e
+
+echo "=== TimeTrack Worktree Run Script ==="
+echo "Worktree: $WORKTREE_PATH"
+
+cd "$WORKTREE_PATH"
+
+# Start Vite dev server in background on a worktree-friendly port if possible
+# Default Vite port 5173; we can offset for parallel worktrees
+PORT_OFFSET=${WORKTREE_PORT_OFFSET:-0}
+DEV_PORT=$((5173 + PORT_OFFSET))
+
+echo "Starting Vite dev server on port $DEV_PORT..."
+npm run dev -- --port $DEV_PORT --host 0.0.0.0 &
+VITE_PID=$!
+
+# Optional: if user has firebase emulators configured and wants them per-worktree
+# (commented by default to avoid port conflicts; uncomment in worktree .env if needed)
+# if [ -f ".firebaserc" ]; then
+#   echo "Starting Firebase emulators (auth, firestore)..."
+#   npx firebase emulators:start --only auth,firestore --project demo-time-track &
+#   EMU_PID=$!
+# fi
+
+echo "Dev server running (PID $VITE_PID) on http://localhost:$DEV_PORT"
+echo "Use Ctrl+C or close the worktree terminal to stop."
+
+# Keep the script alive so Kilo's integrated terminal stays attached to the processes
+wait $VITE_PID
