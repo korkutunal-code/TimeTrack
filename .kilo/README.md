@@ -59,3 +59,10 @@ Then push so the whole team benefits.
 - The global Kilo settings (in `~/.config/kilo/`) are machine-specific. Only project-level config in this repo is portable.
 
 This structure was deliberately designed after losing configuration in the past. Committing these files is the only reliable way to make the setup survive extension removal, reinstall, or moving between machines.
+
+## Delivery
+
+The initial hardening of this setup (personas, rules, scripts, MODEL_STRATEGY, and this recovery guide) was delivered in:
+https://github.com/torosasik/TimeTrack/pull/6
+
+Once that PR is merged, the protection is active for the whole team.
