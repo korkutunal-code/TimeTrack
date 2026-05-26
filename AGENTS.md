@@ -53,6 +53,76 @@ Welcome to the **TimeTrack** codebase. This document helps AI agents understand 
 - **Dragme Integration**: `src/services/dragmeService.ts` is an optional external task-sync service. Requires `VITE_DRAGME_API_URL` and `VITE_DRAGME_API_KEY` env vars. All methods silently no-op when unconfigured — do not add hard failures.
 - **Linting**: `eslint.config.mjs` uses flat config (ESLint v9). Run `npm run lint` before commits.
 
+## 🤖 Kilo Code Agent Manager & Continuous Work (2026)
+
+This project is developed primarily through **Kilo Code's Agent Manager** using isolated git worktrees, parallel sessions, and role-specialized agents. The patterns below make long-running, high-quality, multi-agent work repeatable and safe.
+
+### Model Strategy (Role-Based)
+- **Manager / Orchestrator / Architect / Planner / Reviewer / Debug**: `anthropic/claude-opus-4.7` (or `kilo-auto/frontier`).
+- **Implementation workers** (`code` / `build` / `explore`): `anthropic/claude-sonnet-4.6` (default) or `google/gemini-3.1-pro` for large-context work.
+- **Parallel experiments** (Multi-Version Mode): Mix Opus (1) + Sonnet (1) + Gemini 3.1 Pro (1) + DeepSeek V4 Pro (1). Use the diff panel to choose the winner.
+- **Budget / high-volume / test generation**: `deepseek/deepseek-v4-pro` or Flash variants.
+- Full details and cost guidelines live in `.kilo/MODEL_STRATEGY.md`.
+
+### Required Personas
+Always load the project personas when starting serious work:
+- `reviewer` — Read-only, blocks any violation of AGENTS.md (timezone, audit, segments, overtime).
+- `planner` — Produces plans in `.kilo/plans/`. Never writes source code.
+- `doc-agent` — Maintains CHANGELOG, planning docs, and AGENTS.md.
+- `payroll-guardian` — Domain expert for overtime math, `segments[]`, and audit invariants.
+
+These live in `.kilo/personas/`. Reference them explicitly in prompts or via the sidebar model/persona picker.
+
+### Worktree & Agent Manager Etiquette
+- Every significant feature or risky refactor **MUST** be done in its own git worktree via Agent Manager (never directly on main or a shared branch).
+- Use **Sections** in the Agent Manager sidebar to organize parallel streams (Payroll Core, HR Features, Admin & Audit, Security & Rules, Infra).
+- The manager agent owns coordination artifacts (`PROJECT_AGENT_PLAN.md`, `WORKTREE_ASSIGNMENTS.md`, `MERGE_ORDER.md`) and is the only one allowed to propose cross-worktree file ownership changes.
+- **Merge order is sacred** — follow the documented sequence. Never "merge everything at once."
+- Every agent output must explicitly reference at least one rule from `AGENTS.md` (or the injected `.kilo/rules/*.md` files).
+- Use the built-in `setup-script` and `run-script` (in `.kilo/`) — they copy env files, run `npm install`, start the dev server with worktree-aware ports, etc.
+
+### Continuous / Multi-Day Work Patterns
+- Start a long-running session (e.g. "implement full leave approval flow + payroll export impact") in a dedicated worktree.
+- Close VS Code when pausing — the session state persists.
+- Resume later. Gemini's thought preservation and Claude Opus 4.7's "dreaming" (cross-session memory) help maintain continuity.
+- For true background agents spanning days/weeks, consider moving orchestration to Gemini Enterprise Agent Platform + Agent Executor while continuing to use Kilo for IDE-centric planning and review.
+
+### Automation You Must Use
+- `.kilo/setup-script` — Runs automatically on new worktree creation.
+- `.kilo/run-script` — Starts the Vite dev server (and optionally emulators) for that worktree.
+- `.kilo/rules/*.md` — Short injectable guardrails (timezone, mandatory audit reason, soft-delete + segments). Add these to your `instructions` array in global or project config.
+
+### Persistence & Recovery (Do Not Lose Your Setup Again)
+All real configuration lives in `.kilo/` and **must be committed to git**:
+
+- `kilo.json`
+- `personas/`
+- `rules/`
+- `setup-script` + `run-script`
+- `MODEL_STRATEGY.md`
+- `README.md` (recovery instructions)
+- Important shared plans
+
+Transient state (`agent-manager.json`, `worktrees/`, `node_modules/`) is correctly gitignored.
+
+**After Kilo Code extension reinstall, removal, or opening on a new machine:**
+1. Pull latest code (the `.kilo/` config must be present).
+2. Open the folder in VS Code + install the extension.
+3. Everything (personas, rules, scripts, model strategy) reloads automatically from the committed files.
+
+See `.kilo/README.md` for the full recovery process. This is the only reliable way to survive what happened to you before.
+
+### Verification
+After any batch of agent-driven changes, re-run:
+```bash
+npm run lint
+npm run test
+npm run test:rules   # if firestore.rules were touched
+```
+The code-skeptic custom agent (defined in `.kilo/kilo.json`) is available to act as an independent critical reviewer on any claim that "everything is good."
+
+**This section exists because the team has already successfully used sophisticated multi-agent worktree workflows (see `.kilo/plans/1779682548059-brave-garden.md` and the various feature/* and architecture/* worktrees). These rules make that style of development the default, safe, and cost-effective way to build TimeTrack.**
+
 ## 📚 Documentation Index
 - [Onboarding Runbook](docs/guides/ONBOARDING_RUNBOOK.md)
 - [California Overtime Guide](docs/guides/CALIFORNIA_OVERTIME_SYSTEM.md)
