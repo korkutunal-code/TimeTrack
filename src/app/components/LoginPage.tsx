@@ -4,8 +4,9 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Alert, AlertDescription } from './ui/alert';
 import { toast } from 'sonner';
-import { Clock, Eye, EyeOff } from 'lucide-react';
+import { AlertCircle, Clock, Eye, EyeOff } from 'lucide-react';
 
 interface LoginPageProps {
   onLoginSuccess: () => void;
@@ -18,15 +19,20 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<'login' | 'register' | 'reset'>('login');
   const [showPassword, setShowPassword] = useState(false);
+  // A11y fix: surface auth errors as a persistent inline alert instead of an
+  // ephemeral Sonner toast that auto-dismisses in ~4s. Screen-reader users
+  // and anyone with a slow response time would miss it.
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const handleGoogleLogin = async () => {
     try {
       setLoading(true);
+      setErrorMsg(null);
       await authService.loginWithGoogle();
       toast.success('Logged in with Google!');
       onLoginSuccess();
     } catch (error: any) {
-      toast.error(error.message || 'Failed to log in with Google');
+      setErrorMsg(error.message || 'Failed to log in with Google');
       setLoading(false);
     }
   };
@@ -34,6 +40,7 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
   const handleAuthAction = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setErrorMsg(null);
 
     try {
       if (view === 'login') {
@@ -41,7 +48,7 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
         toast.success('Login successful!');
       } else if (view === 'register') {
         if (!name) {
-          toast.error('Please enter your full name');
+          setErrorMsg('Please enter your full name');
           setLoading(false);
           return;
         }
@@ -65,7 +72,7 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
         msg = 'Your account has been deactivated. Please contact an administrator.';
       }
 
-      toast.error(msg);
+      setErrorMsg(msg);
     } finally {
       setLoading(false);
     }
@@ -120,6 +127,12 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
           </CardHeader>
           <CardContent className="pb-8 px-8">
             <form onSubmit={view === 'reset' ? handleResetPassword : handleAuthAction}>
+              {errorMsg && (
+                <Alert variant="destructive" className="mb-4" role="alert" aria-live="assertive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{errorMsg}</AlertDescription>
+                </Alert>
+              )}
               <div className="space-y-5">
                 {view === 'register' && (
                   <div className="space-y-2">

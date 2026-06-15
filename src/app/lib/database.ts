@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, orderBy, query, Timestamp, updateDoc, where, limit, deleteDoc, addDoc, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, orderBy, query, Timestamp, updateDoc, where, limit, startAfter, deleteDoc, addDoc, setDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import type { User } from './auth';
 
@@ -394,14 +394,40 @@ class DatabaseService {
     return snap.docs.map(d => mapEntry(d.id, d.data()));
   }
 
+  /**
+   * Fetch all time entries, paginating through Firestore so we don't silently
+   * truncate payroll at 500 docs. Returns ALL entries ordered by workDate desc.
+   *
+   * Cost: O(N) reads. The previous 500-cap silently dropped entries and broke
+   * biweekly payroll for any company with more than ~5 weeks of history.
+   */
   async getAllTimeEntries(): Promise<TimeEntry[]> {
-    const q = query(
-      collection(db, 'timeEntries'),
-      orderBy('workDate', 'desc'),
-      limit(500)
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map(d => mapEntry(d.id, d.data()));
+    const PAGE_SIZE = 500;
+    const all: TimeEntry[] = [];
+    let lastDoc: any = null;
+
+    // First page
+    const firstQ = lastDoc
+      ? query(collection(db, 'timeEntries'), orderBy('workDate', 'desc'), startAfter(lastDoc), limit(PAGE_SIZE))
+      : query(collection(db, 'timeEntries'), orderBy('workDate', 'desc'), limit(PAGE_SIZE));
+    let snap = await getDocs(firstQ);
+    all.push(...snap.docs.map(d => mapEntry(d.id, d.data())));
+
+    // Subsequent pages until exhausted
+    while (snap.size === PAGE_SIZE) {
+      lastDoc = snap.docs[snap.docs.length - 1];
+      const nextQ = query(
+        collection(db, 'timeEntries'),
+        orderBy('workDate', 'desc'),
+        startAfter(lastDoc),
+        limit(PAGE_SIZE),
+      );
+      snap = await getDocs(nextQ);
+      if (snap.empty) break;
+      all.push(...snap.docs.map(d => mapEntry(d.id, d.data())));
+    }
+
+    return all;
   }
 
   async getAllUsers(): Promise<User[]> {

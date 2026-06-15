@@ -132,8 +132,13 @@ export function checkWrongDay(workDate, schedule) {
     if (!schedule || schedule.type === SCHEDULE_TYPES.FREELANCE) return null;
     if (!schedule.workDays || !workDate) return null;
 
-    const date = new Date(workDate);
-    const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
+    // Bug fix: previously used `new Date(workDate).getDay()` which depends on
+    // the runtime's local TZ. For a UTC server, `new Date('2025-01-04')` was
+    // parsed as 2025-01-04 00:00 UTC = 2025-01-03 16:00 PT, giving the wrong
+    // day-of-week. Now UTC-anchored.
+    const [y, m, d] = workDate.split('-').map(Number);
+    if (!y || !m || !d) return null;
+    const dayOfWeek = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sun, 6 = Sat
 
     if (!schedule.workDays.includes(dayOfWeek)) {
         return {
