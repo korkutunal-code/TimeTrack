@@ -1,0 +1,57 @@
+{
+  "summary": {
+    "passed": 8,
+    "failed": 0,
+    "total": 8
+  },
+  "results": [
+    {
+      "name": "CLOCK IN",
+      "status": "PASS",
+      "detail": "status pill",
+      "screenshot": "01_after_clock_in.png"
+    },
+    {
+      "name": "START LUNCH",
+      "status": "PASS",
+      "detail": "lunch state",
+      "screenshot": "02_lunch_started.png"
+    },
+    {
+      "name": "END LUNCH",
+      "status": "PASS",
+      "detail": "clicked",
+      "screenshot": "03_lunch_ended.png"
+    },
+    {
+      "name": "CLOCK OUT",
+      "status": "PASS",
+      "detail": "clicked",
+      "screenshot": "04_after_clock_out.png"
+    },
+    {
+      "name": "History view renders",
+      "status": "PASS",
+      "detail": "history loaded",
+      "screenshot": "05_history.png"
+    },
+    {
+      "name": "No page errors during full shift",
+      "status": "PASS",
+      "detail": "errors=0",
+      "screenshot": null
+    },
+    {
+      "name": "Payroll: Current preset",
+      "status": "PASS",
+      "detail": "clicked",
+      "screenshot": null
+    },
+    {
+      "name": "Payroll report renders with employee data",
+      "status": "PASS",
+      "detail": "employee2 visible=True",
+      "screenshot": "08_payroll_generated.png"
+    }
+  ]
+}

@@ -150,7 +150,7 @@ export async function punchOut(userId: string): Promise<TimeEntry> {
 
   // Write closed legacy + replace the open segment in the array with the closed one
   const archived = (pre?.segments || []).filter((s) => s.id !== active.id);
-  const finalSegments = [...archived, closedSeg];
+  const finalSegments = [...archived, closedSeg].map((s) => stripUndefined(s as any));
 
   await updateDoc(doc(db, 'timeEntries', entryId), {
     clockOutManual: ptTime,
@@ -210,7 +210,7 @@ export async function toggleLunch(userId: string, skip = false): Promise<TimeEnt
 
   // Rebuild segments array with the updated one
   const newSegments = (pre?.segments || []).map((s) =>
-    s.id === active.id ? updatedSeg : s
+    s.id === active.id ? stripUndefined(updatedSeg as any) : stripUndefined(s as any)
   );
   patch.segments = newSegments;
 

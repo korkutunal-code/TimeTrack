@@ -1,6 +1,7 @@
 import { collection, doc, getDoc, getDocs, orderBy, query, Timestamp, updateDoc, where, limit, startAfter, deleteDoc, addDoc, setDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import type { User } from './auth';
+import { stripUndefined } from './segmentOps';
 
 /**
  * A single continuous work session ("shift"). A day may contain multiple
@@ -182,43 +183,77 @@ function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
   // or most-recently-completed) segment lives in the legacy top-level fields.
   // Hydrated entry.segments = [...archived, current (if present)].
   const archivedRaw = Array.isArray(data.segments) ? data.segments : [];
-  const archived: TimeSegment[] = archivedRaw.map((s: any, i: number) => ({
-    id: String(s.id ?? `${id}_arch_${i}`),
-    clockInManual: s.clockInManual || undefined,
-    clockInSystem: tsToMillis(s.clockInSystemTime ?? s.clockInSystem),
-    lunchOutManual: s.lunchOutManual || undefined,
-    lunchOutSystem: tsToMillis(s.lunchOutSystemTime ?? s.lunchOutSystem),
-    lunchInManual: s.lunchInManual || undefined,
-    lunchInSystem: tsToMillis(s.lunchInSystemTime ?? s.lunchInSystem),
-    clockOutManual: s.clockOutManual || undefined,
-    clockOutSystem: tsToMillis(s.clockOutSystemTime ?? s.clockOutSystem),
-    skipLunch: s.skipLunch === true || s.lunchSkipped === true,
-    workMinutes: typeof s.workMinutes === 'number' ? s.workMinutes : undefined,
-    complete: true,
-    taskId: s.taskId || undefined,
-    autoClosed: s.autoClosed === true,
-  }));
+  const archived: TimeSegment[] = archivedRaw.map((s: any, i: number) => {
+    const out: TimeSegment = {
+      id: String(s.id ?? `${id}_arch_${i}`),
+      clockInManual: s.clockInManual || undefined,
+      clockInSystem: tsToMillis(s.clockInSystemTime ?? s.clockInSystem),
+      lunchOutManual: s.lunchOutManual || undefined,
+      lunchOutSystem: tsToMillis(s.lunchOutSystemTime ?? s.lunchOutSystem),
+      lunchInManual: s.lunchInManual || undefined,
+      lunchInSystem: tsToMillis(s.lunchInSystemTime ?? s.lunchInSystem),
+      clockOutManual: s.clockOutManual || undefined,
+      clockOutSystem: tsToMillis(s.clockOutSystemTime ?? s.clockOutSystem),
+      skipLunch: s.skipLunch === true || s.lunchSkipped === true,
+      workMinutes: typeof s.workMinutes === 'number' ? s.workMinutes : undefined,
+      complete: true,
+      autoClosed: s.autoClosed === true,
+    };
+    if (s.taskId) (out as any).taskId = s.taskId; // omit when not set; never write undefined
+    return out;
+  });
 
   const current: TimeSegment | null = entry.clockInManual
-    ? {
-        id: `${id}_current`,
-        clockInManual: entry.clockInManual,
-        clockInSystem: entry.clockInSystem,
-        lunchOutManual: entry.lunchOutManual,
-        lunchOutSystem: entry.lunchOutSystem,
-        lunchInManual: entry.lunchInManual,
-        lunchInSystem: entry.lunchInSystem,
-        clockOutManual: entry.clockOutManual,
-        clockOutSystem: entry.clockOutSystem,
-        skipLunch: entry.skipLunch,
-        workMinutes: deriveCurrentSegmentMinutes(entry, archived),
-        complete: !!entry.clockOutManual,
-        taskId: data.taskId || undefined,
-        autoClosed: data.autoClosed === true,
-      }
+    ? (() => {
+        // Build the current segment WITHOUT undefined fields. Firestore rejects
+        // any field with value `undefined`; if this segment is later written
+        // back to the document (e.g. via toggleLunch's updateDoc), the whole
+        // write fails. We use stripUndefined on the entry-derived fields then
+        // force-include the always-present ones.
+        const fromEntry: any = {
+          clockInManual: entry.clockInManual,
+          clockInSystem: entry.clockInSystem,
+          lunchOutManual: entry.lunchOutManual,
+          lunchOutSystem: entry.lunchOutSystem,
+          lunchInManual: entry.lunchInManual,
+          lunchInSystem: entry.lunchInSystem,
+          clockOutManual: entry.clockOutManual,
+          clockOutSystem: entry.clockOutSystem,
+          skipLunch: entry.skipLunch,
+          workMinutes: deriveCurrentSegmentMinutes(entry, archived),
+        };
+        const out: TimeSegment = {
+          id: `${id}_current`,
+          complete: !!entry.clockOutManual,
+          autoClosed: data.autoClosed === true,
+          ...stripUndefined(fromEntry),
+        };
+        if (data.taskId) (out as any).taskId = data.taskId; // omit when not set
+        return out;
+      })()
     : null;
 
-  entry.segments = current ? [...archived, current] : archived;
+  // DEDUP: historical data has accumulated multiple `${id}_current` segments
+  // because older versions of the code (and writes that round-trip through this
+  // same mapEntry) appended a new current segment on every read. If we keep all
+  // of them, every subsequent write to `segments` grows the array by one copy,
+  // and Firestore's "no undefined" check fires because some legacy segments
+  // don't have the fields our newer code expects. Keep only one segment per id,
+  // preferring the LAST occurrence (most recent data).
+  const dedup = (segs: TimeSegment[]): TimeSegment[] => {
+    const byId = new Map<string, TimeSegment>();
+    for (const s of segs) byId.set(s.id, s);
+    return Array.from(byId.values());
+  };
+
+  if (current) {
+    // Remove any pre-existing _current segment from the archived list (legacy data
+    // may have it there), then append the fresh one.
+    const archivedClean = archived.filter((s) => s.id !== `${id}_current`);
+    entry.segments = dedup([...archivedClean, current]);
+  } else {
+    entry.segments = dedup(archived);
+  }
 
   // Override day-level hours to include all archived segments too.
   if (archived.length > 0) {
