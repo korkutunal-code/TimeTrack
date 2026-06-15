@@ -69,51 +69,60 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
     today.setHours(0, 0, 0, 0);
 
     if (cycleType === 'weekly') {
-      const day = today.getDay();
+      // Bug fix: was `today.getDay()` (local TZ) — inconsistent for non-UTC users.
+      // Now derived from a UTC-anchored YMD so the week boundary is stable.
+      const todayYmd = today.toISOString().slice(0, 10);
+      const [ty, tm, td] = todayYmd.split('-').map(Number);
+      const day = new Date(Date.UTC(ty, tm - 1, td)).getUTCDay();
       const startDay = payrollSettings.weekly_start_day;
       const diff = day >= startDay ? day - startDay : 7 - (startDay - day);
 
-      const currentStart = new Date(today);
-      currentStart.setDate(today.getDate() - diff);
+      const currentStart = new Date(Date.UTC(ty, tm - 1, td - diff));
       const currentEnd = new Date(currentStart);
-      currentEnd.setDate(currentStart.getDate() + 6);
+      currentEnd.setUTCDate(currentStart.getUTCDate() + 6);
 
       if (preset === 'current') {
-        setStartDate(currentStart.toISOString().split('T')[0]);
-        setEndDate(currentEnd.toISOString().split('T')[0]);
+        setStartDate(currentStart.toISOString().slice(0, 10));
+        setEndDate(currentEnd.toISOString().slice(0, 10));
       } else {
         const lastStart = new Date(currentStart);
-        lastStart.setDate(lastStart.getDate() - 7);
+        lastStart.setUTCDate(lastStart.getUTCDate() - 7);
         const lastEnd = new Date(lastStart);
-        lastEnd.setDate(lastStart.getDate() + 6);
-        setStartDate(lastStart.toISOString().split('T')[0]);
-        setEndDate(lastEnd.toISOString().split('T')[0]);
+        lastEnd.setUTCDate(lastStart.getUTCDate() + 6);
+        setStartDate(lastStart.toISOString().slice(0, 10));
+        setEndDate(lastEnd.toISOString().slice(0, 10));
       }
     } else if (cycleType === 'biweekly' || cycleType === 'custom') {
       // Use anchor date to determine current biweekly block
       let anchorStr = payrollSettings.biweekly_start_date;
       if (!anchorStr) anchorStr = '2024-01-01';
-      const anchor = new Date(anchorStr + 'T00:00:00');
+      // UTC-anchored to avoid local-TZ drift
+      const [ay, am, ad] = anchorStr.split('-').map(Number);
+      const anchor = new Date(Date.UTC(ay, am - 1, ad));
 
-      const diffTime = today.getTime() - anchor.getTime();
+      const todayYmd = today.toISOString().slice(0, 10);
+      const [ty, tm, td] = todayYmd.split('-').map(Number);
+      const todayUtc = new Date(Date.UTC(ty, tm - 1, td));
+
+      const diffTime = todayUtc.getTime() - anchor.getTime();
       const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
       const cyclesPassed = Math.floor(diffDays / 14);
       const currentStart = new Date(anchor);
-      currentStart.setDate(anchor.getDate() + (cyclesPassed * 14));
+      currentStart.setUTCDate(anchor.getUTCDate() + (cyclesPassed * 14));
       const currentEnd = new Date(currentStart);
-      currentEnd.setDate(currentStart.getDate() + 13);
-
+      currentEnd.setUTCDate(currentStart.getUTCDate() + 13);
+      
       if (preset === 'current') {
-        setStartDate(currentStart.toISOString().split('T')[0]);
-        setEndDate(currentEnd.toISOString().split('T')[0]);
+        setStartDate(currentStart.toISOString().slice(0, 10));
+        setEndDate(currentEnd.toISOString().slice(0, 10));
       } else {
         const lastStart = new Date(currentStart);
-        lastStart.setDate(lastStart.getDate() - 14);
+        lastStart.setUTCDate(lastStart.getUTCDate() - 14);
         const lastEnd = new Date(lastStart);
-        lastEnd.setDate(lastStart.getDate() + 13);
-        setStartDate(lastStart.toISOString().split('T')[0]);
-        setEndDate(lastEnd.toISOString().split('T')[0]);
+        lastEnd.setUTCDate(lastStart.getUTCDate() + 13);
+        setStartDate(lastStart.toISOString().slice(0, 10));
+        setEndDate(lastEnd.toISOString().slice(0, 10));
       }
     } else if (cycleType === 'monthly') {
       if (preset === 'current') {
