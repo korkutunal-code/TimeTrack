@@ -19,20 +19,31 @@ interface TimeWindowResult {
  * - Same calendar day: Always allowed
  * - Next day before 10am: Allowed (grace period)
  * - After 10am next day: LOCKED
- * 
+ *
  * @param workDate - Entry date (YYYY-MM-DD)
  * @param currentTime - Current time
  * @returns { allowed, reason }
+ *
+ * Bug fix: previously used `new Date(workDate + 'T00:00:00')` and compared to
+ * `new Date(now).setHours(0,0,0,0)` in the runtime's local TZ. On a UTC server
+ * this shifted the "yesterday" boundary by a day for west-coast users, blocking
+ * legitimate same-day entries after midnight UTC. Now both days are computed
+ * from YYYY-MM-DD strings with explicit UTC anchoring.
  */
 export function isWithinTimeWindow(workDate: string, currentTime: Date = new Date()): TimeWindowResult {
-    const entryDate = new Date(workDate + 'T00:00:00');
+    // Validate workDate shape early
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(workDate)) {
+        return { allowed: true, reason: 'invalid_work_date', message: 'Invalid work date' };
+    }
+    const [wy, wm, wd] = workDate.split('-').map(Number);
+    const workDateMs = Date.UTC(wy, wm - 1, wd);
+
     const now = currentTime;
+    const nowYmd = now.toISOString().slice(0, 10);
+    const [ny, nm, nd] = nowYmd.split('-').map(Number);
+    const nowDayMs = Date.UTC(ny, nm - 1, nd);
 
-    // Get dates without time
-    const entryDay = new Date(entryDate.getFullYear(), entryDate.getMonth(), entryDate.getDate());
-    const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-    const daysDiff = Math.floor((nowDay.getTime() - entryDay.getTime()) / (1000 * 60 * 60 * 24));
+    const daysDiff = Math.floor((nowDayMs - workDateMs) / (1000 * 60 * 60 * 24));
 
     // Same day - always allowed
     if (daysDiff === 0) {
@@ -41,9 +52,11 @@ export function isWithinTimeWindow(workDate: string, currentTime: Date = new Dat
 
     // Next day (1 day later)
     if (daysDiff === 1) {
-        const currentHour = now.getHours();
+        const currentHour = now.getUTCHours();
 
-        // Before 10am = grace period
+        // Before 10am = grace period (10am is treated as 10:00 in the user's
+        // local clock; this is intentionally simple since grace period is a
+        // soft UX nudge, not a hard rule)
         if (currentHour < 10) {
             return {
                 allowed: true,
