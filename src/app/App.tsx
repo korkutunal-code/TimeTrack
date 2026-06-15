@@ -36,6 +36,12 @@ export default function App() {
   const usingEmulators =
     import.meta.env.VITE_USE_EMULATORS === 'true' ||
     (import.meta.env.DEV && new URLSearchParams(window.location.search).has('emu'));
+  // Audit fix: previously both `ClockPunch` (new, one-tap) and `TodayEntry`
+  // (legacy, multi-step form) rendered stacked for every employee. Two
+  // competing UIs caused inconsistent behaviour across users. Now ClockPunch
+  // is the primary employee surface; TodayEntry is opt-in via ?classic=1 so
+  // pilot users can fall back if needed.
+  const useClassicEntry = new URLSearchParams(window.location.search).get('classic') === '1';
 
   // View state
   const [employeeView, setEmployeeView] = useState<EmployeeView>('today');
@@ -168,14 +174,17 @@ export default function App() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {employeeView === 'today' ? (
         <div className="max-w-4xl mx-auto space-y-6">
-          <ClockPunch
-            user={currentUser}
-            onViewHistory={() => setEmployeeView('history')}
-          />
-          <TodayEntry
-            user={currentUser}
-            onViewHistory={() => setEmployeeView('history')}
-          />
+          {useClassicEntry ? (
+            <TodayEntry
+              user={currentUser}
+              onViewHistory={() => setEmployeeView('history')}
+            />
+          ) : (
+            <ClockPunch
+              user={currentUser}
+              onViewHistory={() => setEmployeeView('history')}
+            />
+          )}
         </div>
       ) : (
         <HistoryView
@@ -205,12 +214,8 @@ export default function App() {
         </TabsContent>
 
         <TabsContent value="my-time">
-          <div className="space-y-6">
-            <ClockPunch
-              user={currentUser}
-              onViewHistory={() => setEmployeeView('history')}
-            />
-            {employeeView === 'today' ? (
+          {useClassicEntry ? (
+            employeeView === 'today' ? (
               <TodayEntry
                 user={currentUser}
                 onViewHistory={() => setEmployeeView('history')}
@@ -220,8 +225,13 @@ export default function App() {
                 user={currentUser}
                 onBack={() => setEmployeeView('today')}
               />
-            )}
-          </div>
+            )
+          ) : (
+            <ClockPunch
+              user={currentUser}
+              onViewHistory={() => setEmployeeView('history')}
+            />
+          )}
         </TabsContent>
       </Tabs>
     </div>
