@@ -98,40 +98,51 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
   };
 
   const setQuickDate = (preset: string) => {
+    // Bug fix: previously used `today.getDay()` and `setDate()` in local TZ.
+    // UTC-anchored so the week boundary is stable regardless of runtime TZ.
     const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
+    const todayStr = today.toISOString().slice(0, 10);
+    const [ty, tm, td] = todayStr.split('-').map(Number);
+    const todayUtc = new Date(Date.UTC(ty, tm - 1, td));
+    const day = todayUtc.getUTCDay();
+
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
     switch (preset) {
       case 'today':
         setStartDate(todayStr);
         setEndDate(todayStr);
         break;
-      case 'yesterday':
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().split('T')[0];
-        setStartDate(yesterdayStr);
-        setEndDate(yesterdayStr);
+      case 'yesterday': {
+        const y = new Date(todayUtc);
+        y.setUTCDate(y.getUTCDate() - 1);
+        const yStr = fmt(y);
+        setStartDate(yStr);
+        setEndDate(yStr);
         break;
-      case 'this_week':
-        const weekStart = new Date(today);
-        weekStart.setDate(today.getDate() - today.getDay());
-        setStartDate(weekStart.toISOString().split('T')[0]);
+      }
+      case 'this_week': {
+        const weekStart = new Date(todayUtc);
+        weekStart.setUTCDate(weekStart.getUTCDate() - day);
+        setStartDate(fmt(weekStart));
         setEndDate(todayStr);
         break;
-      case 'last_week':
-        const lastWeekEnd = new Date(today);
-        lastWeekEnd.setDate(today.getDate() - today.getDay() - 1);
+      }
+      case 'last_week': {
+        const lastWeekEnd = new Date(todayUtc);
+        lastWeekEnd.setUTCDate(lastWeekEnd.getUTCDate() - day - 1);
         const lastWeekStart = new Date(lastWeekEnd);
-        lastWeekStart.setDate(lastWeekEnd.getDate() - 6);
-        setStartDate(lastWeekStart.toISOString().split('T')[0]);
-        setEndDate(lastWeekEnd.toISOString().split('T')[0]);
+        lastWeekStart.setUTCDate(lastWeekEnd.getUTCDate() - 6);
+        setStartDate(fmt(lastWeekStart));
+        setEndDate(fmt(lastWeekEnd));
         break;
-      case 'this_month':
-        const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-        setStartDate(monthStart.toISOString().split('T')[0]);
+      }
+      case 'this_month': {
+        const monthStart = new Date(Date.UTC(ty, tm - 1, 1));
+        setStartDate(fmt(monthStart));
         setEndDate(todayStr);
         break;
+      }
     }
   };
 

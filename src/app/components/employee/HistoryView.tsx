@@ -25,26 +25,30 @@ function getWeekBounds(timezone: string, offset: 'this' | 'last'): { start: stri
   const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
   const todayStr = formatter.format(now); // YYYY-MM-DD in employee TZ
   const [y, m, d] = todayStr.split('-').map(Number);
-  const today = new Date(y, m - 1, d);
+  // Bug fix: previously `new Date(y, m-1, d)` then `.getDay()` which depended on
+  // the runtime's local TZ. For a UTC server + a non-UTC user, the JS Date is
+  // built as local-midnight on the server which is the wrong wall-clock.
+  // Now use UTC-anchored Date so getUTCDay() is stable.
+  const todayUtc = new Date(Date.UTC(y, m - 1, d));
 
   // JS getDay(): 0=Sun. We want Monday=0.
-  const dayOfWeek = today.getDay();
+  const dayOfWeek = todayUtc.getUTCDay();
   const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
 
-  const monday = new Date(today);
-  monday.setDate(today.getDate() - daysSinceMonday);
+  const monday = new Date(todayUtc);
+  monday.setUTCDate(todayUtc.getUTCDate() - daysSinceMonday);
 
   if (offset === 'last') {
-    monday.setDate(monday.getDate() - 7);
+    monday.setUTCDate(monday.getUTCDate() - 7);
   }
 
   const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
 
   const fmt = (dt: Date) => {
-    const yy = dt.getFullYear();
-    const mm = String(dt.getMonth() + 1).padStart(2, '0');
-    const dd = String(dt.getDate()).padStart(2, '0');
+    const yy = dt.getUTCFullYear();
+    const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getUTCDate()).padStart(2, '0');
     return `${yy}-${mm}-${dd}`;
   };
 

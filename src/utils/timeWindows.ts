@@ -4,6 +4,7 @@
  */
 
 import { TimeEntry } from '../app/lib/database';
+import { dayOfWeekUTC } from './tzCalendar';
 
 interface TimeWindowResult {
     allowed: boolean;
@@ -194,9 +195,8 @@ export function getHoursUntilDeadline(workDate: string, currentTime: Date = new 
  * @returns True if Saturday or Sunday
  */
 export function isWeekend(dateStr: string): boolean {
-    const date = new Date(dateStr + 'T00:00:00');
-    const day = date.getDay();
-    return day === 0 || day === 6; // Sunday or Saturday
+    // Bug fix: was `new Date(dateStr + 'T00:00:00').getDay()` — runtime local TZ
+    return dayOfWeekUTC(dateStr) === 0 || dayOfWeekUTC(dateStr) === 6;
 }
 
 /**
