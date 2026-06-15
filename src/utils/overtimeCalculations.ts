@@ -30,22 +30,32 @@ const WEEKLY_REGULAR_MAX = 2400;    // 40 hours
 
 /**
  * Calculate workweek start date for a given date
- * @param dateStr - Date in YYYY-MM-DD format
+ * @param dateStr - Date in YYYY-MM-DD format (interpreted as a calendar date, not a TZ-relative instant)
  * @param workweekStartDay - Day of week workweek starts (0=Sunday)
  * @returns Workweek start date in YYYY-MM-DD format
+ *
+ * Bug fix: previously used `new Date(dateStr + 'T00:00:00').getDay()`, which is
+ * parsed in the *runtime's* local timezone. On a UTC server, an LA employee's
+ * "2024-03-15" could be read as 2024-03-15 00:00 UTC = 2024-03-14 17:00 PT,
+ * shifting their workweek boundary by a day and corrupting weekly OT. Now
+ * uses UTC-anchored parsing so the calendar day is the calendar day regardless
+ * of runtime timezone.
  */
 export function getWorkWeekStartDate(dateStr: string, workweekStartDay: number = DEFAULT_WORKWEEK_START_DAY): string {
-    const date = new Date(dateStr + 'T00:00:00');
-    const dayOfWeek = date.getDay();
+    const [y, m, d] = dateStr.split('-').map(Number);
+    if (!y || !m || !d) return dateStr; // graceful fallback
+    const date = new Date(Date.UTC(y, m - 1, d));
+    const dayOfWeek = date.getUTCDay();
 
     // Calculate how many days back to the workweek start
     let daysBack = (dayOfWeek - workweekStartDay + 7) % 7;
 
-    // Go back to workweek start
-    const workweekStart = new Date(date);
-    workweekStart.setDate(date.getDate() - daysBack);
+    date.setUTCDate(date.getUTCDate() - daysBack);
 
-    return workweekStart.toISOString().split('T')[0];
+    const yy = date.getUTCFullYear();
+    const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(date.getUTCDate()).padStart(2, '0');
+    return `${yy}-${mm}-${dd}`;
 }
 
 interface DailyOvertimeBreakdown {
@@ -142,6 +152,7 @@ export function calculateWeeklyOvertimeAdjustments(weekEntries: OvertimeEntry[])
             const canTake = Math.min(entry.regularMinutes, remainingExcess);
 
             if (canTake > 0) {
+                remainingExcess -= canTake;
                 return {
                     ...entry,
                     regularMinutes: entry.regularMinutes - canTake,
@@ -152,9 +163,6 @@ export function calculateWeeklyOvertimeAdjustments(weekEntries: OvertimeEntry[])
 
             return entry;
         });
-
-        // Update remaining excess
-        remainingExcess -= weeklyExcess;
 
         return adjustedEntries;
     }

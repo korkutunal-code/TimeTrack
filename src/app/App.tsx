@@ -18,6 +18,8 @@ import { Badge } from './components/ui/badge';
 import { UserAvatar } from './components/ui/user-avatar';
 import { Toaster } from './components/ui/sonner';
 import { LogOut, Clock, Users, Settings, FileText, Search, TrendingUp, FileWarning } from 'lucide-react';
+import { QABar } from './components/QABar';
+import { ReportProblemButton } from './components/ReportProblemButton';
 
 type EmployeeView = 'today' | 'history';
 type ManagerView = 'dashboard';
@@ -306,6 +308,8 @@ export default function App() {
       {currentUser.role === 'admin' && renderAdminView()}
 
       <Toaster />
+      <QABar />
+      <ReportProblemButton />
     </div>
   );
 }
