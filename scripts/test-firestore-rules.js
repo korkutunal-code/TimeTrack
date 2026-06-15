@@ -8,42 +8,52 @@
  *        npm run test:rules
  *
  * Notes:
- * - Uses @firebase/rules-unit-testing and requires the Firestore emulator.
- * - Seeds required user documents with security rules disabled.
+ * - Uses @firebase/rules-unit-testing v3 which exposes the v8 namespaced API
+ *   via the test-environment contexts (ctx.firestore() returns a Firestore
+ *   client; we then use .collection().doc() chains instead of v9 modular helpers).
+ * - We deliberately do NOT import the v9 modular `firebase/firestore` SDK —
+ *   that import auto-initializes a global Firestore client which conflicts
+ *   with rules-unit-testing's own client.
  */
-
 import fs from "node:fs";
 import net from "node:net";
 import assert from "node:assert/strict";
 
-import {
-  initializeTestEnvironment,
-  assertFails,
-  assertSucceeds,
-} from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc, deleteDoc } from "firebase/firestore";
+// CRITICAL: set the emulator-host env var BEFORE any firebase import.
+process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || "127.0.0.1:8080";
 
-const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "atd-time-tracking-rules-test";
-const FIRESTORE_HOST = process.env.FIRESTORE_EMULATOR_HOST?.split(":")[0] || "127.0.0.1";
-const FIRESTORE_PORT = Number(process.env.FIRESTORE_EMULATOR_HOST?.split(":")[1] || 8080);
+import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
+
+const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || "atd-time-tracking";
+const FIRESTORE_HOST = process.env.FIRESTORE_EMULATOR_HOST.split(":")[0] || "127.0.0.1";
+const FIRESTORE_PORT = Number(process.env.FIRESTORE_EMULATOR_HOST.split(":")[1] || 8080);
 
 function canConnect(host, port, timeoutMs = 800) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     const done = (ok) => {
-      try {
-        socket.destroy();
-      } catch {
-        // ignore
-      }
+      try { socket.destroy(); } catch { /* ignore */ }
       resolve(ok);
     };
-
     socket.setTimeout(timeoutMs);
     socket.once("error", () => done(false));
     socket.once("timeout", () => done(false));
     socket.connect(port, host, () => done(true));
   });
+}
+
+// Build a DocumentReference from path segments:
+//   dref(db, 'users', 'emp-1')  →  db.collection('users').doc('emp-1')
+//   dref(db, 'a', '1', 'b', '2')  →  db.collection('a').doc('1').collection('b').doc('2')
+function dref(db, ...segments) {
+  if (segments.length < 2 || segments.length % 2 !== 0) {
+    throw new Error("dref() needs (db, collection, id, [collection, id, ...])");
+  }
+  let ref = db.collection(segments[0]).doc(segments[1]);
+  for (let i = 2; i < segments.length; i += 2) {
+    ref = ref.collection(segments[i]).doc(segments[i + 1]);
+  }
+  return ref;
 }
 
 async function main() {
@@ -58,7 +68,7 @@ async function main() {
         "",
         "Then re-run:",
         "  npm run test:rules",
-      ].join("\n")
+      ].join("\n"),
     );
     process.exit(1);
   }
@@ -79,28 +89,28 @@ async function main() {
     // Seed users with rules disabled so role checks can work.
     await testEnv.withSecurityRulesDisabled(async (ctx) => {
       const db = ctx.firestore();
-      await setDoc(doc(db, "users", "admin-1"), {
+      await dref(db, "users", "admin-1").set({
         uid: "admin-1",
         email: "admin@example.com",
         name: "Admin",
         role: "admin",
         active: true,
       });
-      await setDoc(doc(db, "users", "manager-1"), {
+      await dref(db, "users", "manager-1").set({
         uid: "manager-1",
         email: "manager@example.com",
         name: "Manager",
         role: "manager",
         active: true,
       });
-      await setDoc(doc(db, "users", "emp-1"), {
+      await dref(db, "users", "emp-1").set({
         uid: "emp-1",
         email: "emp1@example.com",
         name: "Employee 1",
         role: "employee",
         active: true,
       });
-      await setDoc(doc(db, "users", "emp-2"), {
+      await dref(db, "users", "emp-2").set({
         uid: "emp-2",
         email: "emp2@example.com",
         name: "Employee 2",
@@ -116,26 +126,18 @@ async function main() {
     const admin = testEnv.authenticatedContext("admin-1");
 
     // --- users rules ---
-    await assertFails(getDoc(doc(unauth.firestore(), "users", "emp-1")));
-    await assertSucceeds(getDoc(doc(emp1.firestore(), "users", "emp-1")));
-    await assertFails(getDoc(doc(emp1.firestore(), "users", "emp-2")));
-    await assertSucceeds(getDoc(doc(manager.firestore(), "users", "emp-2")));
-    await assertSucceeds(getDoc(doc(admin.firestore(), "users", "emp-2")));
+    await assertFails(dref(unauth.firestore(), "users", "emp-1").get());
+    await assertSucceeds(dref(emp1.firestore(), "users", "emp-1").get());
+    await assertFails(dref(emp1.firestore(), "users", "emp-2").get());
+    await assertSucceeds(dref(manager.firestore(), "users", "emp-2").get());
+    await assertSucceeds(dref(admin.firestore(), "users", "emp-2").get());
 
     // only admin can update users
     await assertFails(
-      setDoc(
-        doc(emp1.firestore(), "users", "emp-1"),
-        { name: "Employee 1 Updated" },
-        { merge: true }
-      )
+      dref(emp1.firestore(), "users", "emp-1").set({ name: "Employee 1 Updated" }, { merge: true }),
     );
     await assertSucceeds(
-      setDoc(
-        doc(admin.firestore(), "users", "emp-1"),
-        { name: "Employee 1 Updated" },
-        { merge: true }
-      )
+      dref(admin.firestore(), "users", "emp-1").set({ name: "Employee 1 Updated" }, { merge: true }),
     );
 
     // --- timeEntries rules ---
@@ -143,36 +145,35 @@ async function main() {
     const entryId2 = "emp-2_2025-12-22";
 
     await assertSucceeds(
-      setDoc(doc(emp1.firestore(), "timeEntries", entryId1), {
+      dref(emp1.firestore(), "timeEntries", entryId1).set({
         userId: "emp-1",
         workDate: "2025-12-22",
         currentStep: "clockIn",
         clockInManual: "08:00",
         clockInSubmitted: true,
         dayComplete: false,
-      })
+      }),
     );
 
     // employee cannot write someone else's entry
     await assertFails(
-      setDoc(doc(emp1.firestore(), "timeEntries", entryId2), {
+      dref(emp1.firestore(), "timeEntries", entryId2).set({
         userId: "emp-2",
         workDate: "2025-12-22",
-      })
+      }),
     );
 
     // manager can read others' entries
-    await assertSucceeds(getDoc(doc(manager.firestore(), "timeEntries", entryId1)));
+    await assertSucceeds(dref(manager.firestore(), "timeEntries", entryId1).get());
 
     // employee cannot delete
-    await assertFails(deleteDoc(doc(emp1.firestore(), "timeEntries", entryId1)));
+    await assertFails(dref(emp1.firestore(), "timeEntries", entryId1).delete());
     // admin can delete
-    await assertSucceeds(deleteDoc(doc(admin.firestore(), "timeEntries", entryId1)));
+    await assertSucceeds(dref(admin.firestore(), "timeEntries", entryId1).delete());
 
     // employee can update their own entry (and must be active)
     await assertSucceeds(
-      setDoc(
-        doc(emp2.firestore(), "timeEntries", entryId2),
+      dref(emp2.firestore(), "timeEntries", entryId2).set(
         {
           userId: "emp-2",
           workDate: "2025-12-22",
@@ -181,8 +182,8 @@ async function main() {
           clockInSubmitted: true,
           dayComplete: false,
         },
-        { merge: true }
-      )
+        { merge: true },
+      ),
     );
 
     // --- auditLogs rules (Phase 1) ---
@@ -201,63 +202,60 @@ async function main() {
 
     // admin can create audit log with valid fields
     await assertSucceeds(
-      setDoc(doc(admin.firestore(), "auditLogs", auditLogId), validAuditLog)
+      dref(admin.firestore(), "auditLogs", auditLogId).set(validAuditLog),
     );
 
     // admin cannot create audit log without reason
     await assertFails(
-      setDoc(doc(admin.firestore(), "auditLogs", "test-audit-no-reason"), {
+      dref(admin.firestore(), "auditLogs", "test-audit-no-reason").set({
         ...validAuditLog,
         reason: "",
-      })
+      }),
     );
 
     // admin cannot create audit log without targetCollection
     await assertFails(
-      setDoc(doc(admin.firestore(), "auditLogs", "test-audit-no-target"), {
+      dref(admin.firestore(), "auditLogs", "test-audit-no-target").set({
         occurredAt: new Date(),
         actorUid: "admin-1",
         reason: "test",
-      })
+      }),
     );
 
     // manager can read audit logs
-    await assertSucceeds(getDoc(doc(manager.firestore(), "auditLogs", auditLogId)));
+    await assertSucceeds(dref(manager.firestore(), "auditLogs", auditLogId).get());
 
     // employee cannot read audit logs
-    await assertFails(getDoc(doc(emp1.firestore(), "auditLogs", auditLogId)));
+    await assertFails(dref(emp1.firestore(), "auditLogs", auditLogId).get());
 
     // unauthenticated cannot read audit logs
-    await assertFails(getDoc(doc(unauth.firestore(), "auditLogs", auditLogId)));
+    await assertFails(dref(unauth.firestore(), "auditLogs", auditLogId).get());
 
     // IMMUTABLE: admin cannot update audit log
     await assertFails(
-      setDoc(
-        doc(admin.firestore(), "auditLogs", auditLogId),
+      dref(admin.firestore(), "auditLogs", auditLogId).set(
         { reason: "modified reason" },
-        { merge: true }
-      )
+        { merge: true },
+      ),
     );
 
     // IMMUTABLE: admin cannot delete audit log
-    await assertFails(deleteDoc(doc(admin.firestore(), "auditLogs", auditLogId)));
+    await assertFails(dref(admin.firestore(), "auditLogs", auditLogId).delete());
 
     // IMMUTABLE: manager cannot delete audit log
-    await assertFails(deleteDoc(doc(manager.firestore(), "auditLogs", auditLogId)));
+    await assertFails(dref(manager.firestore(), "auditLogs", auditLogId).delete());
 
     // employee cannot create audit log
     await assertFails(
-      setDoc(doc(emp1.firestore(), "auditLogs", "test-audit-emp-create"), validAuditLog)
+      dref(emp1.firestore(), "auditLogs", "test-audit-emp-create").set(validAuditLog),
     );
 
     // manager cannot create audit log
     await assertFails(
-      setDoc(doc(manager.firestore(), "auditLogs", "test-audit-mgr-create"), validAuditLog)
+      dref(manager.firestore(), "auditLogs", "test-audit-mgr-create").set(validAuditLog),
     );
 
     console.log("✅ Firestore rules tests passed.");
-
-    // Extra sanity: ensure assertions actually ran
     assert.ok(true);
   } finally {
     await testEnv.cleanup();
@@ -267,7 +265,7 @@ async function main() {
 main().catch((err) => {
   console.error("❌ Firestore rules tests failed:");
   console.error(err);
+  console.error("--- STACK ---");
+  console.error(err.stack);
   process.exit(1);
 });
-
-

@@ -15,6 +15,7 @@ import {
   createInitialSegment,
   closeActiveSegment,
   applyLunchToSegment,
+  stripUndefined,
 } from '../app/lib/database';
 import {
   getCurrentPTDate,
@@ -93,7 +94,14 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
 
     const newSeg = createInitialSegment(ptTime, now.toMillis(), taskId);
 
-    // Dual-write: legacy current fields + segments array (first segment)
+    // Dual-write: legacy current fields + segments array (first segment).
+    // Build the payload carefully:
+    //   - Only include createdAt if the existing doc already has one (otherwise Firestore
+    //     errors with "Unsupported field value: undefined" when merge would write undefined).
+    //   - Strip undefined values from the segment so an absent taskId doesn't poison the doc.
+    //   - The newSeg is already a clean object from createInitialSegment; we still run
+    //     stripUndefined defensively in case future fields are added without thinking.
+    const existingCreatedAt = snap.exists() ? snap.data().createdAt : undefined;
     const payload: any = {
       userId,
       workDate: ptDate,
@@ -103,14 +111,15 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
       currentStep: 2,
       dayComplete: false,
       complete: false,
-      segments: [newSeg],
-      createdAt: snap.exists() ? snap.data().createdAt : now,
+      segments: [stripUndefined(newSeg as any)],
       createdBy: userId,
       updatedAt: now,
       updatedBy: userId,
       status: 'active',
       timezoneAtCreation: 'America/Los_Angeles',
     };
+    if (existingCreatedAt !== undefined) payload.createdAt = existingCreatedAt;
+    else payload.createdAt = now;
 
     tx.set(ref, payload, { merge: true });
     return { entryId, newSeg, ptDate, ptTime };

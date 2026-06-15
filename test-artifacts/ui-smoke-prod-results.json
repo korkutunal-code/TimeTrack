@@ -1,0 +1,86 @@
+{
+  "total": 12,
+  "passed": 10,
+  "failed": 2,
+  "results": [
+    {
+      "name": "App loads",
+      "status": "PASS",
+      "detail": "1403ms, title='TimeTrack - Employee Time Tracking'",
+      "screenshot": "01_initial_load.png"
+    },
+    {
+      "name": "Email input",
+      "status": "PASS",
+      "detail": "input[type=email] rendered",
+      "screenshot": null
+    },
+    {
+      "name": "Password input",
+      "status": "PASS",
+      "detail": "input[type='password']",
+      "screenshot": null
+    },
+    {
+      "name": "Submit button",
+      "status": "PASS",
+      "detail": "button[type='submit']",
+      "screenshot": null
+    },
+    {
+      "name": "Sign-In label visible",
+      "status": "PASS",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "name": "Register view shows name field",
+      "status": "PASS",
+      "detail": "name input present",
+      "screenshot": "02_register_view.png"
+    },
+    {
+      "name": "Password toggle changes input type",
+      "status": "FAIL",
+      "detail": "Locator.get_attribute: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\"input[name='password'], input#password, input[type='text'], input[type='password']\").first\n",
+      "screenshot": null
+    },
+    {
+      "name": "Invalid login shows error",
+      "status": "FAIL",
+      "detail": "no error text in DOM",
+      "screenshot": "03_invalid_login.png"
+    },
+    {
+      "name": "Mobile viewport renders",
+      "status": "PASS",
+      "detail": "390x844",
+      "screenshot": "04_mobile_view.png"
+    },
+    {
+      "name": "No unexpected 4xx/5xx on origin",
+      "status": "PASS",
+      "detail": "0 unexpected bad responses: []",
+      "screenshot": null
+    },
+    {
+      "name": "No pageerror exceptions",
+      "status": "PASS",
+      "detail": "0 uncaught: []",
+      "screenshot": null
+    },
+    {
+      "name": "No unexpected console.error entries",
+      "status": "PASS",
+      "detail": "0 unexpected console errors: []",
+      "screenshot": null
+    }
+  ],
+  "console_messages": [
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 400 ()"
+    }
+  ],
+  "page_errors": []
+}

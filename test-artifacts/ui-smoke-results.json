@@ -1,0 +1,134 @@
+{
+  "total": 12,
+  "passed": 9,
+  "failed": 3,
+  "results": [
+    {
+      "name": "App loads",
+      "status": "PASS",
+      "detail": "2330ms, title='TimeTrack - Employee Time Tracking'",
+      "screenshot": "01_initial_load.png"
+    },
+    {
+      "name": "Email input",
+      "status": "PASS",
+      "detail": "input[type=email] rendered",
+      "screenshot": null
+    },
+    {
+      "name": "Password input",
+      "status": "PASS",
+      "detail": "input[type='password']",
+      "screenshot": null
+    },
+    {
+      "name": "Submit button",
+      "status": "PASS",
+      "detail": "button[type='submit']",
+      "screenshot": null
+    },
+    {
+      "name": "Sign-In label visible",
+      "status": "PASS",
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "name": "Register view shows name field",
+      "status": "PASS",
+      "detail": "name input present",
+      "screenshot": "02_register_view.png"
+    },
+    {
+      "name": "Password toggle changes input type",
+      "status": "FAIL",
+      "detail": "Locator.get_attribute: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator(\"input[name='password'], input#password, input[type='text'], input[type='password']\").first\n",
+      "screenshot": null
+    },
+    {
+      "name": "Invalid login shows error",
+      "status": "FAIL",
+      "detail": "no error text in DOM",
+      "screenshot": "03_invalid_login.png"
+    },
+    {
+      "name": "Mobile viewport renders",
+      "status": "PASS",
+      "detail": "390x844",
+      "screenshot": "04_mobile_view.png"
+    },
+    {
+      "name": "No 4xx/5xx on local origin",
+      "status": "PASS",
+      "detail": "0 bad responses: []",
+      "screenshot": null
+    },
+    {
+      "name": "No pageerror exceptions",
+      "status": "PASS",
+      "detail": "0 uncaught: []",
+      "screenshot": null
+    },
+    {
+      "name": "No console.error entries",
+      "status": "FAIL",
+      "detail": "1 console errors",
+      "screenshot": null
+    }
+  ],
+  "console_messages": [
+    {
+      "type": "debug",
+      "text": "[vite] connecting..."
+    },
+    {
+      "type": "debug",
+      "text": "[vite] connected."
+    },
+    {
+      "type": "info",
+      "text": "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold"
+    },
+    {
+      "type": "debug",
+      "text": "[vite] connecting..."
+    },
+    {
+      "type": "debug",
+      "text": "[vite] connected."
+    },
+    {
+      "type": "info",
+      "text": "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold"
+    },
+    {
+      "type": "debug",
+      "text": "[vite] connecting..."
+    },
+    {
+      "type": "debug",
+      "text": "[vite] connected."
+    },
+    {
+      "type": "info",
+      "text": "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 400 ()"
+    },
+    {
+      "type": "debug",
+      "text": "[vite] connecting..."
+    },
+    {
+      "type": "debug",
+      "text": "[vite] connected."
+    },
+    {
+      "type": "info",
+      "text": "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold"
+    }
+  ],
+  "page_errors": []
+}
