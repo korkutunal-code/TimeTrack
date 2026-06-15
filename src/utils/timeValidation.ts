@@ -262,13 +262,18 @@ export function checkTimeAnomalies(
 
     // 1. Weekend Check
     try {
-        const date = new Date(workDate + 'T00:00:00');
-        const day = date.getDay();
-        if (day === 0 || day === 6) { // Sunday or Saturday
-            return {
-                hasAnomaly: true,
-                message: standardWarningMessage
-            };
+        // Bug fix: previously used `new Date(workDate + 'T00:00:00').getDay()`
+        // which parsed in runtime local TZ. Now UTC-anchored so the calendar
+        // day is the calendar day regardless of server timezone.
+        const [wy, wm, wd] = workDate.split('-').map(Number);
+        if (wy && wm && wd) {
+            const day = new Date(Date.UTC(wy, wm - 1, wd)).getUTCDay();
+            if (day === 0 || day === 6) { // Sunday or Saturday
+                return {
+                    hasAnomaly: true,
+                    message: standardWarningMessage
+                };
+            }
         }
     } catch (e) { /* ignore date parse errors */ }
 

@@ -9,6 +9,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
     "jsx": "react-jsx",
     "types": ["vite/client", "jest"],
     "baseUrl": ".",

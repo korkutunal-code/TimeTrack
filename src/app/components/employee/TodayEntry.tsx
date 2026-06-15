@@ -556,21 +556,22 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
   const calculateEstimatedHours = () => {
     if (!entry?.clockInManual) return null;
 
-    const [hours, minutes] = currentTime.split(':').map(Number);
-    const currentTimeMs = new Date(today).setHours(hours, minutes, 0, 0);
-    const [inHours, inMinutes] = entry.clockInManual.split(':').map(Number);
-    const clockInMs = new Date(today).setHours(inHours, inMinutes, 0, 0);
-
-    let totalMs = currentTimeMs - clockInMs;
+    // Bug fix: previously `new Date(today).setHours(...)` mixed the YYYY-MM-DD
+    // string (UTC-anchored) with setHours (local-TZ). For users in Asia/Bangkok
+    // on a UTC server this produced an Invalid Date, making "hours so far"
+    // show NaN. Now use minute arithmetic instead of Date math — the wall-clock
+    // times are in the user's TZ so direct subtraction is correct.
+    const toMin = (s: string): number => {
+      const [h, m] = s.split(':').map(Number);
+      return h * 60 + m;
+    };
+    let totalMin = toMin(currentTime) - toMin(entry.clockInManual);
 
     if (entry.lunchOutManual && entry.lunchInManual && !entry.skipLunch) {
-      const [lunchOutH, lunchOutM] = entry.lunchOutManual.split(':').map(Number);
-      const [lunchInH, lunchInM] = entry.lunchInManual.split(':').map(Number);
-      const lunchMs = new Date(today).setHours(lunchInH, lunchInM, 0, 0) - new Date(today).setHours(lunchOutH, lunchOutM, 0, 0);
-      totalMs -= lunchMs;
+      totalMin -= toMin(entry.lunchInManual) - toMin(entry.lunchOutManual);
     }
 
-    const totalHours = totalMs / (1000 * 60 * 60);
+    const totalHours = totalMin / 60;
     return totalHours > 0 ? totalHours : 0;
   };
 
@@ -586,6 +587,22 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
   };
 
   const renderStepForm = () => {
+    // UX fix: when access is blocked (e.g. yesterday-incomplete, time-window
+    // closed, payroll locked), don't just disable the submit button — hide
+    // the input form entirely. Showing editable fields next to a red block
+    // banner is confusing and made testers think the system was broken.
+    if (blockedMessage && !entry?.complete) {
+      return (
+        <div className="rounded-xl border border-red-200 bg-red-50/60 p-6 text-center space-y-2">
+          <AlertCircle className="mx-auto size-8 text-red-500" />
+          <p className="text-sm text-red-800 font-medium">Entry locked</p>
+          <p className="text-xs text-red-700">
+            Resolve the issue above to enable the time entry form.
+          </p>
+        </div>
+      );
+    }
+
     const step = entry?.currentStep || 0;
 
     if (entry?.complete) {
