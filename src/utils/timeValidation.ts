@@ -342,11 +342,21 @@ export interface PunchValidationResult {
 /**
  * Returns true if the given entry has an incomplete (open) segment.
  * Mirrors database.hasOpenSegment but kept here for pure validation use.
+ *
+ * Falls back to legacy top-level fields (clockInManual / clockOutManual) when
+ * the entry has no segments[] — handles docs written by the legacy TodayEntry
+ * form which only writes top-level fields.
  */
 function hasOpenSegmentLocal(entry: TimeEntry | null | undefined): boolean {
-  if (!entry?.segments?.length) return false;
-  const last = entry.segments[entry.segments.length - 1];
-  return !!last && last.complete !== true;
+  if (!entry) return false;
+  if (entry.segments?.length) {
+    const last = entry.segments[entry.segments.length - 1];
+    if (last && last.complete !== true) return true;
+  }
+  const cur = (entry as any).currentSegment as { complete?: boolean } | undefined;
+  if (cur && cur.complete !== true) return true;
+  if (entry.clockInManual && !entry.clockOutManual && !entry.complete) return true;
+  return false;
 }
 
 /**
@@ -382,8 +392,7 @@ export function validateCanPunchOut(entry: TimeEntry | null | undefined): PunchV
  * (lunchOut before lunchIn; optional skipLunch path).
  */
 export function validateCanToggleLunch(entry: TimeEntry | null | undefined): PunchValidationResult {
-  const active = hasOpenSegmentLocal(entry);
-  if (!active) {
+  if (!hasOpenSegmentLocal(entry)) {
     return {
       valid: false,
       message: 'You must be clocked in to start or end a lunch break.',

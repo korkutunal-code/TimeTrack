@@ -20,6 +20,9 @@ import {
     getMinTimeForStep,
     formatTimeWithAMPM,
     checkTimeAnomalies,
+    validateCanPunchIn,
+    validateCanPunchOut,
+    validateCanToggleLunch,
 } from './timeValidation';
 
 describe('timeValidation.timeToMinutes', () => {
@@ -227,5 +230,126 @@ describe('timeValidation.checkTimeAnomalies', () => {
     it('does not flag a normal 9-hour shift', () => {
         const r = checkTimeAnomalies(3, '17:00', '2025-01-15', { clockInManual: '08:00' });
         expect(r.hasAnomaly).toBe(false);
+    });
+});
+
+/**
+ * Regression tests for the legacy-clockIn half-baked doc shape.
+ *
+ * Bug found 2026-06-15: legacy TodayEntry form writes legacy top-level fields
+ * (`clockInManual`, etc.) but no `segments[]` and no `clockInSystem` (millis).
+ * If a user clocked in via that form, then re-loaded the page, the new
+ * ClockPunch UI would show "CLOCKED OUT" and the punchIn transaction would
+ * also pass the "no open segment" check — letting them clock in twice for
+ * the same day.
+ *
+ * Fix: `hasOpenSegmentLocal` and the `validateCanPunchIn/Out/ToggleLunch`
+ * functions fall back to the legacy top-level fields.
+ */
+describe('validateCanPunchIn — legacy fallback', () => {
+    it('allows clock-in for an empty entry', () => {
+        expect(validateCanPunchIn(null).valid).toBe(true);
+        expect(validateCanPunchIn(undefined as any).valid).toBe(true);
+        expect(validateCanPunchIn({ id: 'u1_d', userId: 'u1', date: 'd', complete: false, currentStep: 0 } as any).valid).toBe(true);
+    });
+
+    it('rejects clock-in when segments[] has an open segment', () => {
+        const entry = {
+            id: 'u1_2026-06-15',
+            userId: 'u1',
+            date: '2026-06-15',
+            segments: [{ id: 's1', clockInManual: '08:00', complete: false }],
+            complete: false,
+            currentStep: 2,
+        } as any;
+        const r = validateCanPunchIn(entry);
+        expect(r.valid).toBe(false);
+        expect(r.message).toMatch(/open shift/i);
+    });
+
+    it('rejects clock-in when currentSegment is open (synthesized view)', () => {
+        const entry = {
+            id: 'u1_2026-06-15',
+            userId: 'u1',
+            date: '2026-06-15',
+            segments: [],
+            currentSegment: { id: 'u1_2026-06-15_current', clockInManual: '08:00', complete: false },
+            complete: false,
+            currentStep: 2,
+        } as any;
+        const r = validateCanPunchIn(entry);
+        expect(r.valid).toBe(false);
+    });
+
+    it('REGRESSION (the TodayEntry bug): rejects clock-in for legacy half-baked open-shift doc', () => {
+        const entry = {
+            id: 'u1_2026-06-15',
+            userId: 'u1',
+            date: '2026-06-15',
+            // No segments, no currentSegment — only legacy top-level fields
+            clockInManual: '08:30',
+            clockInSystem: 1700000000000,
+            complete: false,
+            currentStep: 2,
+        } as any;
+        const r = validateCanPunchIn(entry);
+        expect(r.valid).toBe(false);
+        expect(r.message).toMatch(/open shift/i);
+    });
+
+    it('allows clock-in for a closed legacy doc (clockIn AND clockOut set)', () => {
+        const entry = {
+            id: 'u1_2026-06-15',
+            userId: 'u1',
+            date: '2026-06-15',
+            clockInManual: '08:30',
+            clockOutManual: '17:00',
+            complete: true,
+            currentStep: 4,
+        } as any;
+        expect(validateCanPunchIn(entry).valid).toBe(true);
+    });
+});
+
+describe('validateCanPunchOut — legacy fallback', () => {
+    it('REGRESSION (the TodayEntry bug): allows clock-out for legacy half-baked open-shift doc', () => {
+        const entry = {
+            id: 'u1_2026-06-15',
+            userId: 'u1',
+            date: '2026-06-15',
+            clockInManual: '08:30',
+            complete: false,
+            currentStep: 2,
+        } as any;
+        const r = validateCanPunchOut(entry);
+        expect(r.valid).toBe(true);
+    });
+
+    it('rejects clock-out for a closed entry', () => {
+        const entry = {
+            id: 'u1_2026-06-15',
+            userId: 'u1',
+            date: '2026-06-15',
+            clockInManual: '08:30',
+            clockOutManual: '17:00',
+            complete: true,
+            currentStep: 4,
+        } as any;
+        expect(validateCanPunchOut(entry).valid).toBe(false);
+    });
+});
+
+describe('validateCanToggleLunch — legacy fallback', () => {
+    it('REGRESSION (the TodayEntry bug): allows lunch toggle for legacy half-baked open-shift doc', () => {
+        const entry = {
+            id: 'u1_2026-06-15',
+            userId: 'u1',
+            date: '2026-06-15',
+            clockInManual: '08:30',
+            complete: false,
+            currentStep: 2,
+        } as any;
+        const r = validateCanToggleLunch(entry);
+        expect(r.valid).toBe(true);
     });
 });

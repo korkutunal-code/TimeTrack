@@ -11,7 +11,7 @@
  * node without an emulator). Splitting them out keeps the pure logic pure.
  */
 
-import type { TimeSegment } from './database';
+import type { TimeEntry, TimeSegment } from './database';
 
 /**
  * Strip undefined values from an object. Firestore rejects any field with
@@ -93,4 +93,52 @@ export function applyLunchToSegment(
     return { ...seg, lunchInManual: timeManual, lunchInSystem: timeSystem };
   }
   return seg;
+}
+
+/**
+ * Returns the currently-active (open, not yet clocked-out) segment, if any.
+ *
+ * Reads from `entry.segments[]` first (the canonical split-shift source). If
+ * segments is empty but the entry has legacy `clockInManual` set and no
+ * `clockOutManual`, synthesizes a current segment from the legacy top-level
+ * fields. This handles the case where a clock-in was written by the legacy
+ * `TodayEntry` UI (which only writes top-level fields, no `segments[]`).
+ *
+ * Also returns `entry.currentSegment` (the synthesized view exposed by
+ * `mapEntry`) when the persisted segments are empty.
+ */
+export function getActiveSegment(entry: TimeEntry | null | undefined): TimeSegment | null {
+  if (!entry) return null;
+
+  // Canonical: an open segment in the persisted array.
+  if (entry.segments?.length) {
+    const last = entry.segments[entry.segments.length - 1];
+    if (last && !last.complete) return last;
+  }
+
+  // Fallback 1: synthesized current view from mapEntry (used when the doc has
+  // BOTH legacy fields and segments[] that we deliberately excluded).
+  const cur = (entry as any).currentSegment as TimeSegment | null | undefined;
+  if (cur && !cur.complete) return cur;
+
+  // Fallback 2: legacy half-baked doc (clockInManual written, no segments, no
+  // currentSegment because mapEntry sees no clockInManual either). Build a
+  // minimal open segment so the UI and validation recognize this as an open
+  // shift. This is the case where the user clocked in via the legacy
+  // TodayEntry form which only writes top-level fields.
+  if (entry.clockInManual && !entry.clockOutManual && !entry.complete) {
+    return {
+      id: `${entry.id || entry.userId || 'unknown'}_legacy_current`,
+      clockInManual: entry.clockInManual,
+      clockInSystem: entry.clockInSystem,
+      complete: false,
+    };
+  }
+
+  return null;
+}
+
+/** True if the day has any open (in-progress) segment. */
+export function hasOpenSegment(entry: TimeEntry | null | undefined): boolean {
+  return getActiveSegment(entry) !== null;
 }

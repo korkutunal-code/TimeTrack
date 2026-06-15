@@ -111,3 +111,126 @@ describe('closeActiveSegment', () => {
     expect(closed2.clockOutManual).toBe('17:00');
   });
 });
+
+/**
+ * Regression tests for the legacy-clockIn half-baked doc shape.
+ *
+ * Bug found 2026-06-15 in live Playwright: when an employee clocked in via the
+ * legacy `?classic=1` TodayEntry form, the Firestore doc got legacy top-level
+ * fields (`clockInManual`, `clockInSystemTime`, etc.) but NO `segments[]` and
+ * NO `clockInSystem` (millis). The next read via `getActiveSegment` returned
+ * null, so the ClockPunch UI showed "CLOCKED OUT" even though the user was
+ * still on the clock.
+ *
+ * Fix: `getActiveSegment` and `hasOpenSegment` now fall back to the legacy
+ * top-level fields when segments[] is empty.
+ */
+import { getActiveSegment, hasOpenSegment } from './segmentOps';
+
+describe('getActiveSegment — legacy fallback', () => {
+  it('returns null for a null entry', () => {
+    expect(getActiveSegment(null)).toBeNull();
+  });
+
+  it('returns null for an entry with no segments and no clockIn', () => {
+    expect(getActiveSegment({ id: 'u1_2026-06-15', userId: 'u1', date: '2026-06-15', complete: false, currentStep: 0 } as any)).toBeNull();
+  });
+
+  it('returns null for an entry with no segments and complete=true', () => {
+    expect(getActiveSegment({
+      id: 'u1_2026-06-15',
+      userId: 'u1',
+      date: '2026-06-15',
+      clockInManual: '08:00',
+      clockOutManual: '17:00',
+      complete: true,
+      currentStep: 4,
+    } as any)).toBeNull();
+  });
+
+  it('returns the open segment when segments[] has an open one (canonical path)', () => {
+    const seg = { id: 'seg_1', clockInManual: '08:00', clockInSystem: 1, complete: false };
+    const entry = { id: 'u1_2026-06-15', userId: 'u1', date: '2026-06-15', segments: [seg], complete: false, currentStep: 2 } as any;
+    expect(getActiveSegment(entry)).toBe(seg);
+  });
+
+  it('returns null when segments[] has only closed segments', () => {
+    const closed = { id: 'seg_1', clockInManual: '08:00', clockInSystem: 1, clockOutManual: '17:00', complete: true };
+    const entry = { id: 'u1_2026-06-15', userId: 'u1', date: '2026-06-15', segments: [closed], complete: true, currentStep: 4 } as any;
+    expect(getActiveSegment(entry)).toBeNull();
+  });
+
+  it('returns entry.currentSegment when persisted segments is empty (synthesized view)', () => {
+    const cur = { id: 'u1_2026-06-15_current', clockInManual: '08:00', clockInSystem: 1, complete: false };
+    const entry = {
+      id: 'u1_2026-06-15',
+      userId: 'u1',
+      date: '2026-06-15',
+      segments: [],
+      currentSegment: cur,
+      clockInManual: '08:00',
+      complete: false,
+      currentStep: 2,
+    } as any;
+    expect(getActiveSegment(entry)).toBe(cur);
+  });
+
+  it('FALLBACK: synthesizes a current segment from legacy clockInManual when segments[] and currentSegment are missing (the TodayEntry bug)', () => {
+    const entry = {
+      id: 'u1_2026-06-15',
+      userId: 'u1',
+      date: '2026-06-15',
+      // No segments, no currentSegment
+      clockInManual: '08:30',
+      clockInSystem: 1700000000000,
+      // No clockOutManual, not complete
+      complete: false,
+      currentStep: 2,
+    } as any;
+    const active = getActiveSegment(entry);
+    expect(active).not.toBeNull();
+    expect(active!.clockInManual).toBe('08:30');
+    expect(active!.clockInSystem).toBe(1700000000000);
+    expect(active!.complete).toBe(false);
+  });
+
+  it('FALLBACK: returns null for legacy half-baked doc when clockInManual is set but clockOutManual is also set (already closed)', () => {
+    const entry = {
+      id: 'u1_2026-06-15',
+      userId: 'u1',
+      date: '2026-06-15',
+      clockInManual: '08:30',
+      clockOutManual: '17:00',
+      complete: true,
+      currentStep: 4,
+    } as any;
+    expect(getActiveSegment(entry)).toBeNull();
+  });
+});
+
+describe('hasOpenSegment — legacy fallback', () => {
+  it('returns true for legacy half-baked open-shift doc (the TodayEntry bug)', () => {
+    const entry = {
+      id: 'u1_2026-06-15',
+      userId: 'u1',
+      date: '2026-06-15',
+      clockInManual: '08:30',
+      complete: false,
+      currentStep: 2,
+    } as any;
+    expect(hasOpenSegment(entry)).toBe(true);
+  });
+
+  it('returns false for legacy closed-shift doc', () => {
+    const entry = {
+      id: 'u1_2026-06-15',
+      userId: 'u1',
+      date: '2026-06-15',
+      clockInManual: '08:30',
+      clockOutManual: '17:00',
+      complete: true,
+      currentStep: 4,
+    } as any;
+    expect(hasOpenSegment(entry)).toBe(false);
+  });
+});

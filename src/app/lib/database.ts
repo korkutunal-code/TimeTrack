@@ -246,14 +246,29 @@ function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
     return Array.from(byId.values());
   };
 
+  // CRITICAL DESIGN NOTE:
+  // `entry.segments` is meant to be the PERSISTED segments (the ones in the
+  // Firestore document). The synthesized "current" is a *view* for UI / clock
+  // state, NOT a stored object. If we put the synthesized current into
+  // entry.segments, then every write (toggleLunch, punchOut) that uses
+  // pre.segments as the source for the next write will round-trip the
+  // synthesized current back to Firestore, growing the array indefinitely.
+  //
+  // So: entry.segments = persisted segments only. `current` is exposed on the
+  // entry separately (see below) for UI components.
   if (current) {
-    // Remove any pre-existing _current segment from the archived list (legacy data
-    // may have it there), then append the fresh one.
-    const archivedClean = archived.filter((s) => s.id !== `${id}_current`);
-    entry.segments = dedup([...archivedClean, current]);
+    // The current segment is a view, not a stored object. Remove any
+    // legacy `${id}_current` rows from the persisted list (older code wrote
+    // them into segments[]).
+    const persistedOnly = archived.filter((s) => s.id !== `${id}_current`);
+    entry.segments = dedup(persistedOnly);
   } else {
     entry.segments = dedup(archived);
   }
+
+  // Expose the current segment on the entry for UI consumers.
+  // Cast because TimeEntry's interface doesn't have this field declared.
+  (entry as any).currentSegment = current;
 
   // Override day-level hours to include all archived segments too.
   if (archived.length > 0) {
@@ -268,17 +283,17 @@ function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
   return entry;
 }
 
-/** Returns the currently-active (open, not yet clocked-out) segment, if any. */
-export function getActiveSegment(entry: TimeEntry | null | undefined): TimeSegment | null {
-  if (!entry?.segments?.length) return null;
-  const last = entry.segments[entry.segments.length - 1];
-  return last && !last.complete ? last : null;
-}
-
-/** True if the day has any open (in-progress) segment. */
-export function hasOpenSegment(entry: TimeEntry | null | undefined): boolean {
-  return getActiveSegment(entry) !== null;
-}
+// Segment operation helpers live in segmentOps.ts so they can be unit-tested
+// without importing the firebase-firestore web SDK. Re-exported here for
+// backward compat with existing callers.
+export {
+  stripUndefined,
+  createInitialSegment,
+  closeActiveSegment,
+  applyLunchToSegment,
+  getActiveSegment,
+  hasOpenSegment,
+} from './segmentOps';
 
 function timeToMinutes(time: string): number {
   const [hours, minutes] = time.split(':').map(Number);
@@ -327,16 +342,6 @@ export function calculateFlags(entry: TimeEntry): string[] {
 // New clockService.ts MUST use these + runTransaction for double-punch safety.
 // Legacy flat fields are dual-written for backward compat with History/Payroll.
 // ---------------------------------------------------------------------------
-
-// Segment operation helpers live in segmentOps.ts so they can be unit-tested
-// without importing the firebase-firestore web SDK. Re-exported here for
-// backward compat with existing callers.
-export {
-  stripUndefined,
-  createInitialSegment,
-  closeActiveSegment,
-  applyLunchToSegment,
-} from './segmentOps';
 
 class DatabaseService {
   calculateTotalHours(entry: Partial<TimeEntry>): number {
