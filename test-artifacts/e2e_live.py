@@ -54,7 +54,7 @@ def run():
         page.on("pageerror", lambda e: errs.append(str(e)[:300]))
 
         print("\n========== EMPLOYEE: full shift ==========")
-        login(page, "employee2@test.com", "Test123!")
+        login(page, "test@test.com", "123456")
         # If already clocked in (from prior test), clock out first
         try:
             clock_out_btn = page.get_by_role("button", name="CLOCK OUT")
@@ -126,7 +126,7 @@ def run():
             time.sleep(3)
         except Exception:
             pass
-        login(page, "admin@test.com", "Test123!")
+        login(page, "test@test.com", "123456")
 
         # Go to Payroll
         page.get_by_role("tab", name="Payroll").first.click()

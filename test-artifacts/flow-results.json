@@ -1,8 +1,8 @@
 {
   "summary": {
-    "passed": 13,
-    "failed": 0,
-    "total": 13
+    "passed": 8,
+    "failed": 4,
+    "total": 12
   },
   "results": [
     {
@@ -30,34 +30,28 @@
       "screenshot": null
     },
     {
-      "name": "[admin] Payroll tab loads",
-      "status": "PASS",
-      "detail": "rendered",
-      "screenshot": "04_admin_payroll.png"
+      "name": "[admin] Payroll tab",
+      "status": "FAIL",
+      "detail": "exception: Locator.click: Timeout 5000ms exceeded.\nCall log:\n  - waiting for get_by_role(\"tab\", name=\"Payroll\").first\n",
+      "screenshot": null
     },
     {
-      "name": "[admin] Payroll generate works",
-      "status": "PASS",
-      "detail": "report rendered (or loading)",
-      "screenshot": "05_admin_payroll_generated.png"
+      "name": "[admin] Audit tab",
+      "status": "FAIL",
+      "detail": "exception: Locator.click: Timeout 5000ms exceeded.\nCall log:\n  - waiting for get_by_role(\"tab\", name=\"Audit\").first\n",
+      "screenshot": null
     },
     {
-      "name": "[admin] Audit tab loads",
-      "status": "PASS",
-      "detail": "rendered",
-      "screenshot": "06_admin_audit.png"
+      "name": "[admin] Metrics tab",
+      "status": "FAIL",
+      "detail": "exception: Locator.click: Timeout 5000ms exceeded.\nCall log:\n  - waiting for get_by_role(\"tab\", name=\"Metrics\").first\n",
+      "screenshot": null
     },
     {
-      "name": "[admin] Metrics tab loads",
-      "status": "PASS",
-      "detail": "rendered",
-      "screenshot": "07_admin_metrics.png"
-    },
-    {
-      "name": "[admin] Corrections tab loads",
-      "status": "PASS",
-      "detail": "rendered",
-      "screenshot": "08_admin_corrections.png"
+      "name": "[admin] Corrections tab",
+      "status": "FAIL",
+      "detail": "exception: Locator.click: Timeout 5000ms exceeded.\nCall log:\n  - waiting for get_by_role(\"tab\", name=\"Corrections\").first\n",
+      "screenshot": null
     },
     {
       "name": "[admin] No page errors",

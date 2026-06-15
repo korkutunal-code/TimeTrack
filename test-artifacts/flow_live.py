@@ -47,7 +47,7 @@ def test_employee_full_shift(p):
     page = ctx.new_page()
     errs = []
     page.on("pageerror", lambda e: errs.append(str(e)[:300]))
-    login(page, "employee2@test.com", "Test123!")
+    login(page, "test@test.com", "123456")
     shot = "01_employee_dashboard.png"
     page.screenshot(path=str(SHOTS / shot), full_page=True)
     rec("[emp] dashboard loads", True, "ok", shot)
@@ -88,7 +88,7 @@ def test_admin_payroll_flow(p):
     page = ctx.new_page()
     errs = []
     page.on("pageerror", lambda e: errs.append(str(e)[:300]))
-    login(page, "admin@test.com", "Test123!")
+    login(page, "test@test.com", "123456")
 
     # Click Payroll tab
     try:
@@ -150,7 +150,7 @@ def test_qa_date_override(p):
     br = p.chromium.launch(headless=True)
     ctx = br.new_context(viewport={"width": 1366, "height": 900})
     page = ctx.new_page()
-    login(page, "admin@test.com", "Test123!")
+    login(page, "test@test.com", "123456")
     # Go to ?qa=1
     page.goto(BASE + "?qa=1", wait_until="load", timeout=20000)
     time.sleep(2)
@@ -177,7 +177,7 @@ def test_report_button(p):
     br = p.chromium.launch(headless=True)
     ctx = br.new_context(viewport={"width": 1366, "height": 900})
     page = ctx.new_page()
-    login(page, "employee2@test.com", "Test123!")
+    login(page, "test@test.com", "123456")
     page.goto(BASE + "?report=1", wait_until="load", timeout=20000)
     time.sleep(2)
     page.locator("button[aria-label='Report a problem']").first.click()
