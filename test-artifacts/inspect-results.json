@@ -1,8 +1,8 @@
 {
   "summary": {
-    "passed": 8,
+    "passed": 21,
     "failed": 0,
-    "total": 8
+    "total": 21
   },
   "results": [
     {
@@ -49,6 +49,84 @@
     },
     {
       "name": "[employee] No HTTP errors",
+      "status": "PASS",
+      "detail": "0",
+      "screenshot": null
+    },
+    {
+      "name": "[admin] Login",
+      "status": "PASS",
+      "detail": "title='TimeTrack - Employee Time Tracking', url=https://atd-time-tracking.web.app/",
+      "screenshot": "admin_01_after_login.png"
+    },
+    {
+      "name": "[admin] QABar visible (?qa=1)",
+      "status": "PASS",
+      "detail": "qa-buttons=1",
+      "screenshot": "admin_02_qa_bar.png"
+    },
+    {
+      "name": "[admin] QABar opens",
+      "status": "PASS",
+      "detail": "panel rendered",
+      "screenshot": "admin_03_qa_panel.png"
+    },
+    {
+      "name": "[admin] Report button visible",
+      "status": "PASS",
+      "detail": "buttons=1",
+      "screenshot": "admin_04_report_button.png"
+    },
+    {
+      "name": "[admin] tab 'panel' loads",
+      "status": "PASS",
+      "detail": "clicked, screenshot saved",
+      "screenshot": "admin_tab_panel.png"
+    },
+    {
+      "name": "[admin] tab 'payroll' loads",
+      "status": "PASS",
+      "detail": "clicked, screenshot saved",
+      "screenshot": "admin_tab_payroll.png"
+    },
+    {
+      "name": "[admin] tab 'audit' loads",
+      "status": "PASS",
+      "detail": "clicked, screenshot saved",
+      "screenshot": "admin_tab_audit.png"
+    },
+    {
+      "name": "[admin] tab 'metrics' loads",
+      "status": "PASS",
+      "detail": "clicked, screenshot saved",
+      "screenshot": "admin_tab_metrics.png"
+    },
+    {
+      "name": "[admin] tab 'team' loads",
+      "status": "PASS",
+      "detail": "clicked, screenshot saved",
+      "screenshot": "admin_tab_team.png"
+    },
+    {
+      "name": "[admin] tab 'corrections' loads",
+      "status": "PASS",
+      "detail": "clicked, screenshot saved",
+      "screenshot": "admin_tab_corrections.png"
+    },
+    {
+      "name": "[admin] No uncaught page errors",
+      "status": "PASS",
+      "detail": "0 errors",
+      "screenshot": null
+    },
+    {
+      "name": "[admin] No console errors",
+      "status": "PASS",
+      "detail": "0 (filtered 0 total)",
+      "screenshot": null
+    },
+    {
+      "name": "[admin] No HTTP errors",
       "status": "PASS",
       "detail": "0",
       "screenshot": null
