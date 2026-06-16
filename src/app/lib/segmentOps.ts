@@ -110,6 +110,12 @@ export function applyLunchToSegment(
 export function getActiveSegment(entry: TimeEntry | null | undefined): TimeSegment | null {
   if (!entry) return null;
 
+  // Voided/archived entries have no active shift. The legacy 1-entry-per-day
+  // rule and the punchIn validator both need to treat these as "no open
+  // shift" so test data cleanup (soft-voiding old docs) can recover state
+  // without manually rewriting segments[].
+  if (entry.status === 'voided' || entry.status === 'archived') return null;
+
   // Canonical: an open segment in the persisted array.
   if (entry.segments?.length) {
     const last = entry.segments[entry.segments.length - 1];

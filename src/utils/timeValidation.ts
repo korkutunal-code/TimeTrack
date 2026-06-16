@@ -349,6 +349,11 @@ export interface PunchValidationResult {
  */
 function hasOpenSegmentLocal(entry: TimeEntry | null | undefined): boolean {
   if (!entry) return false;
+  // Voided/archived entries are not active. Mirrors segmentOps.getActiveSegment
+  // (the canonical implementation). Without this guard, the punchIn validator
+  // and the UI both treat soft-voided test data as an open shift, which
+  // makes cleanup scripts useless and forces a manual segments[] rewrite.
+  if ((entry as any).status === 'voided' || (entry as any).status === 'archived') return false;
   if (entry.segments?.length) {
     const last = entry.segments[entry.segments.length - 1];
     if (last && last.complete !== true) return true;

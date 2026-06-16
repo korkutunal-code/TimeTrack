@@ -233,4 +233,73 @@ describe('hasOpenSegment — legacy fallback', () => {
     } as any;
     expect(hasOpenSegment(entry)).toBe(false);
   });
+
+  it('returns null/false for a voided entry even with an open segment in segments[] (cleanup case)', () => {
+    // Real-world: cleanup script soft-voids a doc but doesn't rewrite
+    // segments[]. The validator must still treat this as "no open shift"
+    // so punchIn can proceed.
+    const openSeg = { id: 'seg_1', clockInManual: '08:30', clockInSystem: 1, complete: false };
+    const entry = {
+      id: 'u1_2026-06-15',
+      userId: 'u1',
+      date: '2026-06-15',
+      segments: [openSeg],
+      clockInManual: '08:30',
+      complete: false,
+      currentStep: 2,
+      status: 'voided',
+    } as any;
+    expect(getActiveSegment(entry)).toBeNull();
+    expect(hasOpenSegment(entry)).toBe(false);
+  });
+
+  it('returns null/false for an archived entry (parity with voided)', () => {
+    const openSeg = { id: 'seg_1', clockInManual: '08:30', clockInSystem: 1, complete: false };
+    const entry = {
+      id: 'u1_2026-06-15',
+      userId: 'u1',
+      date: '2026-06-15',
+      segments: [openSeg],
+      complete: false,
+      currentStep: 2,
+      status: 'archived',
+    } as any;
+    expect(getActiveSegment(entry)).toBeNull();
+    expect(hasOpenSegment(entry)).toBe(false);
+  });
+});
+
+/**
+ * Regression: `mapEntry` used to hardcode `complete: true` for every segment
+ * in `segments[]`, hiding the open segment that `punchIn` writes. The result
+ * was that `getActiveSegment` returned null even though the user was just
+ * clocked in, and the ClockPunch UI flipped to "CLOCKED OUT" right after a
+ * successful click. Fix: respect the persisted `complete` value.
+ *
+ * The downstream effect (and what the user actually saw) is exercised here
+ * via getActiveSegment on the shape mapEntry would produce.
+ */
+describe('mapEntry segments[].complete — must respect persisted value', () => {
+  it('REGRESSION: an open segment in segments[] is detected as the active segment even when clockOutManual is stale', () => {
+    // This entry shape mirrors what a freshly clocked-in doc looks like after
+    // mapEntry hydrates it, INCLUDING the stale clockOutManual from a previous
+    // test run. Pre-fix, mapEntry would force complete:true on the segment
+    // and getActiveSegment would return null. Post-fix, it returns the
+    // open segment.
+    const entry = {
+      id: 'u1_2026-06-16',
+      userId: 'u1',
+      date: '2026-06-16',
+      segments: [{ id: 'seg_1', clockInManual: '10:00', clockInSystem: 1, complete: false }],
+      clockInManual: '10:00',
+      clockOutManual: '09:00', // stale
+      complete: false,
+      currentStep: 2,
+      status: 'active',
+    };
+    const active = getActiveSegment(entry as any);
+    expect(active).not.toBeNull();
+    expect(active!.complete).toBe(false);
+    expect(hasOpenSegment(entry as any)).toBe(true);
+  });
 });

@@ -1,0 +1,75 @@
+{
+  "summary": {
+    "passed": 11,
+    "failed": 0,
+    "total": 11
+  },
+  "results": [
+    {
+      "name": "State recovered to CLOCK OUT",
+      "status": "PASS",
+      "detail": "CLOCK IN visible=True",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/A01_state_clean.png"
+    },
+    {
+      "name": "CLOCK IN click",
+      "status": "PASS",
+      "detail": "status='CLOCKED IN', clicked at 10:54",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/A02_after_clock_in.png"
+    },
+    {
+      "name": "START LUNCH click",
+      "status": "PASS",
+      "detail": "END LUNCH visible=True",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/A03_lunch_started.png"
+    },
+    {
+      "name": "END LUNCH click",
+      "status": "PASS",
+      "detail": "CLOCK OUT visible=True",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/A04_lunch_ended.png"
+    },
+    {
+      "name": "CLOCK OUT click",
+      "status": "PASS",
+      "detail": "status='CLOCKED OUT', total worked: <30s",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/A05_after_clock_out.png"
+    },
+    {
+      "name": "History view loads",
+      "status": "PASS",
+      "detail": "history rendered",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/A06_history.png"
+    },
+    {
+      "name": "No page errors during realistic flow",
+      "status": "PASS",
+      "detail": "errors=0",
+      "screenshot": null
+    },
+    {
+      "name": "Logged in (classic UI)",
+      "status": "PASS",
+      "detail": "title='TimeTrack - Employee Time Tracking'",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/B01_logged_in_classic.png"
+    },
+    {
+      "name": "Classic UI shows time input",
+      "status": "PASS",
+      "detail": "input[type='time'] count=1",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/B02_classic_form.png"
+    },
+    {
+      "name": "Submitted 08:30 clock-in",
+      "status": "PASS",
+      "detail": "clicked submit",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/B03_after_submit.png"
+    },
+    {
+      "name": "No page errors during classic flow",
+      "status": "PASS",
+      "detail": "errors=0",
+      "screenshot": null
+    }
+  ]
+}

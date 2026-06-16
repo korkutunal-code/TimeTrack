@@ -179,6 +179,7 @@ def test_role(p, role, email, password):
 def main():
     with sync_playwright() as p:
         test_role(p, "employee", "test@test.com", "123456")
+        test_role(p, "admin", "admin@test.com", "123456")
 
     # Save structured results
     out = ART / "inspect-results.json"

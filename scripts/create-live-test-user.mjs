@@ -1,8 +1,10 @@
 /**
- * Create test@test.com as a live Firebase Auth + Firestore user (employee).
+ * Create a live Firebase Auth + Firestore user with a given role.
+ * The script is idempotent: re-running is safe.
+ *
  * Use:
  *   GOOGLE_APPLICATION_CREDENTIALS=~/secrets/timetrack-firebase-sa.json \
- *     node scripts/create-live-test-user.mjs
+ *     node scripts/create-live-test-user.mjs [--role=admin] [--email=admin@test.com] [--password=123456]
  */
 import process from 'node:process';
 import { readFileSync } from 'node:fs';
@@ -12,15 +14,25 @@ import admin from 'firebase-admin';
 const KEY_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 if (!KEY_PATH) { console.error('Set GOOGLE_APPLICATION_CREDENTIALS'); process.exit(1); }
 
+const args = Object.fromEntries(
+  process.argv.slice(2)
+    .filter((a) => a.startsWith('--'))
+    .map((a) => { const [k, v] = a.replace('--', '').split('='); return [k, v ?? 'true']; }),
+);
+const EMAIL = args.email ?? 'test@test.com';
+const PASSWORD = args.password ?? '123456';
+const ROLE = args.role ?? 'employee';
+const NAME = args.name ?? `Test ${ROLE[0].toUpperCase() + ROLE.slice(1)}`;
+
+if (!['employee', 'manager', 'admin'].includes(ROLE)) {
+  console.error(`Invalid --role=${ROLE} (must be employee|manager|admin)`);
+  process.exit(1);
+}
+
 const serviceAccount = JSON.parse(readFileSync(resolve(KEY_PATH), 'utf8'));
 if (!admin.apps.length) admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const auth = admin.auth();
 const db = admin.firestore();
-
-const EMAIL = 'test@test.com';
-const PASSWORD = '123456';
-const NAME = 'Test User';
-const ROLE = 'employee';
 
 async function main() {
   let fbUser;
@@ -36,7 +48,13 @@ async function main() {
   const ref = db.collection('users').doc(fbUser.uid);
   const snap = await ref.get();
   if (snap.exists) {
-    console.log(`firestore: profile already exists`);
+    const prev = snap.data();
+    if (prev.role !== ROLE) {
+      console.log(`firestore: role mismatch (existing=${prev.role}, requested=${ROLE}) — updating`);
+      await ref.update({ role: ROLE, name: NAME, active: true });
+    } else {
+      console.log(`firestore: profile already exists role=${prev.role}`);
+    }
   } else {
     await ref.set({
       uid: fbUser.uid,
@@ -51,6 +69,7 @@ async function main() {
     });
     console.log(`firestore: created profile uid=${fbUser.uid} role=${ROLE}`);
   }
+  console.log(`\nLogin: ${EMAIL} / ${PASSWORD}`);
   process.exit(0);
 }
 

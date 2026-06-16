@@ -196,7 +196,14 @@ function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
       clockOutSystem: tsToMillis(s.clockOutSystemTime ?? s.clockOutSystem),
       skipLunch: s.skipLunch === true || s.lunchSkipped === true,
       workMinutes: typeof s.workMinutes === 'number' ? s.workMinutes : undefined,
-      complete: true,
+      // The "complete: true" default was a relic of the assumption that
+      // Firestore's `segments[]` is always archived. In practice, `punchIn`
+      // dual-writes a fresh OPEN segment into `segments[]` (alongside the
+      // legacy top-level fields). Forcing `complete: true` here hid the
+      // open segment from getActiveSegment and caused the ClockPunch UI to
+      // flip to "CLOCKED OUT" right after a successful clock-in. Respect the
+      // segment's actual persisted value instead.
+      complete: s.complete === true,
       autoClosed: s.autoClosed === true,
     };
     if (s.taskId) (out as any).taskId = s.taskId; // omit when not set; never write undefined

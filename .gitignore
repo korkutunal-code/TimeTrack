@@ -25,3 +25,4 @@ time-entries-*.csv
 # (Uncomment if you add secrets to config file)
 # src/config/firebase.config.js
 functions/.env
+test-artifacts/__pycache__/

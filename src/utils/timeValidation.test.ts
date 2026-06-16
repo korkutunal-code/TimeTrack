@@ -353,3 +353,50 @@ describe('validateCanToggleLunch — legacy fallback', () => {
         expect(r.valid).toBe(true);
     });
 });
+
+describe('voided/archived entries are never "open"', () => {
+    it('validateCanPunchIn allows clock-in for a voided entry even with open segment in segments[]', () => {
+        // Real-world: cleanup script soft-voids a doc but doesn't rewrite
+        // segments[]. The validator must still treat this as "no open shift".
+        const openSeg = { id: 'seg_1', clockInManual: '08:30', clockInSystem: 1, complete: false };
+        const entry = {
+            id: 'u1_2026-06-15',
+            userId: 'u1',
+            date: '2026-06-15',
+            segments: [openSeg],
+            clockInManual: '08:30',
+            complete: false,
+            currentStep: 2,
+            status: 'voided',
+        } as any;
+        expect(validateCanPunchIn(entry).valid).toBe(true);
+    });
+
+    it('validateCanPunchOut rejects (no open shift to close) for a voided entry', () => {
+        const openSeg = { id: 'seg_1', clockInManual: '08:30', clockInSystem: 1, complete: false };
+        const entry = {
+            id: 'u1_2026-06-15',
+            userId: 'u1',
+            date: '2026-06-15',
+            segments: [openSeg],
+            complete: false,
+            currentStep: 2,
+            status: 'voided',
+        } as any;
+        expect(validateCanPunchOut(entry).valid).toBe(false);
+    });
+
+    it('validateCanToggleLunch rejects for an archived entry', () => {
+        const openSeg = { id: 'seg_1', clockInManual: '08:30', clockInSystem: 1, complete: false };
+        const entry = {
+            id: 'u1_2026-06-15',
+            userId: 'u1',
+            date: '2026-06-15',
+            segments: [openSeg],
+            complete: false,
+            currentStep: 2,
+            status: 'archived',
+        } as any;
+        expect(validateCanToggleLunch(entry).valid).toBe(false);
+    });
+});

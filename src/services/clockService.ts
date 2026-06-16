@@ -82,12 +82,19 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
         id: snap.id,
         userId,
         date: ptDate,
+        // Include status so the voided/archived check in hasOpenSegmentLocal
+        // can short-circuit. Without this, soft-voided test docs are still
+        // treated as an open shift by validateCanPunchIn.
+        status: snap.data().status,
         segments: Array.isArray(snap.data().segments) ? snap.data().segments : undefined,
         // minimal for hasOpen check
       } as any;
     }
 
     const v = validateCanPunchIn(existing as any);
+    if (!v.valid) {
+      throw new Error(v.message || 'Cannot punch in');
+    }
     if (!v.valid) {
       throw new Error(v.message || 'Cannot punch in');
     }
