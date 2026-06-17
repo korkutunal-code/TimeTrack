@@ -32,11 +32,13 @@ describe('dateHelpers', () => {
         expect(formatDateYYYYMMDD(new Date(2025, 0, 5))).toBe('2025-01-05');
     });
 
-    it('parseDate round-trips', () => {
+    it('parseDate returns UTC-anchored date — use UTC getters for verification', () => {
+        // parseDate now uses Date.UTC, so UTC getters always return the YYYY-MM-DD
+        // components regardless of runtime TZ
         const d = parseDate('2025-01-15');
-        expect(d.getFullYear()).toBe(2025);
-        expect(d.getMonth()).toBe(0);
-        expect(d.getDate()).toBe(15);
+        expect(d.getUTCFullYear()).toBe(2025);
+        expect(d.getUTCMonth()).toBe(0);  // January
+        expect(d.getUTCDate()).toBe(15);
     });
 
     it('isEntryComplete requires a non-blank clockOutManual', () => {
@@ -183,5 +185,298 @@ describe('scheduleHelpers', () => {
             expect(getRedFlagClass({ severity: 'medium' })).toBe('flag-medium');
             expect(getRedFlagClass({ severity: 'low' })).toBe('flag-low');
         });
+    });
+});
+
+// =============================================================================
+// TZ Safety Regression Tests for dateHelpers (W2 audit)
+//
+// BUG FIXED: getTodayDate / getYesterdayDate used `new Date()` + `setDate()` +
+// formatDateYYYYMMDD(date)` (local TZ methods). On a UTC server or non-PT runtime,
+// the wrong calendar date was returned near midnight PT boundary.
+//
+// BUG FIXED: formatDateDisplay used `toLocaleDateString()` without explicit TZ.
+//
+// BUG FIXED: parseDate used `new Date(y, m-1, d)` (local TZ constructor),
+// returning a Date whose UTC-interpreted components differ from the calendar day.
+//
+// Now all use Intl.DateTimeFormat with `timeZone: 'America/Los_Angeles'` or
+// UTC-anchored construction.
+// =============================================================================
+describe('dateHelpers — TZ safety regression (W2 audit)', () => {
+    describe('getTodayDate — must return PT calendar date', () => {
+        it('returns PT 2026-06-15 when UTC is 2026-06-15T19:00:00Z (12:00 PT)', () => {
+            // Jun 15 19:00 UTC = 12:00 PT same calendar day
+            const fakeNow = new Date('2026-06-15T19:00:00Z');
+            const savedDate = global.Date;
+            const MockDate = class extends (savedDate as any) {
+                constructor(...args: unknown[]) {
+                    if (args.length === 0) super(fakeNow);
+                    else super(...(args as unknown[]));
+                }
+            };
+            (global as any).Date = MockDate;
+            try {
+                const result = getTodayDate();
+                expect(result).toBe('2026-06-15');
+            } finally {
+                (global as any).Date = savedDate;
+            }
+        });
+
+        it('returns PT 2026-06-14 when UTC is 2026-06-15T06:30:00Z (23:30 PT prev day)', () => {
+            // Jun 15 06:30 UTC = 23:30 PT on Jun 14 (previous calendar day in PT)
+            const fakeNow = new Date('2026-06-15T06:30:00Z');
+            const savedDate = global.Date;
+            const MockDate = class extends (savedDate as any) {
+                constructor(...args: unknown[]) {
+                    if (args.length === 0) super(fakeNow);
+                    else super(...(args as unknown[]));
+                }
+            };
+            (global as any).Date = MockDate;
+            try {
+                const result = getTodayDate();
+                expect(result).toBe('2026-06-14');
+            } finally {
+                (global as any).Date = savedDate;
+            }
+        });
+
+        it('differs from UTC date near PT midnight boundary', () => {
+            // Jun 15 06:59 UTC = 23:59 PT on Jun 14 — not Jun 15
+            const fakeNow = new Date('2026-06-15T06:59:59Z');
+            const savedDate = global.Date;
+            const MockDate = class extends (savedDate as any) {
+                constructor(...args: unknown[]) {
+                    if (args.length === 0) super(fakeNow);
+                    else super(...(args as unknown[]));
+                }
+            };
+            (global as any).Date = MockDate;
+            try {
+                const result = getTodayDate();
+                expect(result).toBe('2026-06-14');
+            } finally {
+                (global as any).Date = savedDate;
+            }
+        });
+    });
+
+    describe('getYesterdayDate — must return PT calendar day before today in PT', () => {
+        it('returns PT 2026-06-14 when now is PT 2026-06-15T12:00 (fake UTC noon)', () => {
+            const fakeNow = new Date('2026-06-15T19:00:00Z'); // PT noon
+            const result = getYesterdayDate(fakeNow);
+            expect(result).toBe('2026-06-14');
+        });
+
+        it('returns PT 2026-06-13 when now is PT 2026-06-14T23:30 (fake UTC 06:30)', () => {
+            // Jun 15 06:30 UTC = Jun 14 23:30 PT → yesterday = Jun 13
+            const fakeNow = new Date('2026-06-15T06:30:00Z');
+            const result = getYesterdayDate(fakeNow);
+            expect(result).toBe('2026-06-13');
+        });
+
+        it('handles month boundary: Jun 1 → May 31', () => {
+            // UTC: Jun 1 07:00 = PT Jun 1 00:00 (midnight PT)
+            // PT date = Jun 1 → yesterday = May 31
+            const fakeNow = new Date('2026-06-01T07:00:00Z');
+            const result = getYesterdayDate(fakeNow);
+            expect(result).toBe('2026-05-31');
+        });
+
+        it('handles year boundary: Jan 1 2026 → Dec 30 prior year', () => {
+            // UTC: Jan 1 07:00 = PT Dec 31 23:00 (11pm PT Dec 31)
+            // PT date = Dec 31 → yesterday = Dec 30
+            const fakeNow = new Date('2026-01-01T07:00:00Z');
+            const result = getYesterdayDate(fakeNow);
+            expect(result).toBe('2025-12-30');
+        });
+    });
+
+    describe('formatDateDisplay — must use PT timezone', () => {
+        it('formats a PT weekday correctly in PT', () => {
+            // Jun 14 2026 = Sunday in PT
+            const result = formatDateDisplay('2026-06-14');
+            expect(result).toMatch(/Sunday/);
+            expect(result).toMatch(/Jun/);
+        });
+
+        it('formats a PT weekday correctly for mid-year date', () => {
+            // Sep 1 2026 = Tuesday in PT
+            const result = formatDateDisplay('2026-09-01');
+            expect(result).toMatch(/Tuesday/);
+            expect(result).toMatch(/Sep/);
+        });
+    });
+
+    describe('parseDate — UTC-anchored construction', () => {
+        it('parses YYYY-MM-DD as UTC midnight regardless of runtime TZ', () => {
+            // In any TZ, parseDate('2026-01-15') should give a Date whose
+            // getUTCFullYear/getUTCMonth/getUTCDate return 2026/0/15
+            const originalTZ = process.env.TZ;
+            process.env.TZ = 'America/New_York'; // UTC-5
+            try {
+                const d = parseDate('2026-01-15');
+                expect(d.getUTCFullYear()).toBe(2026);
+                expect(d.getUTCMonth()).toBe(0);  // January
+                expect(d.getUTCDate()).toBe(15);
+            } finally {
+                process.env.TZ = originalTZ ?? '';
+            }
+        });
+
+        it('round-trips with UTC getters in any TZ', () => {
+            const originalTZ = process.env.TZ;
+            process.env.TZ = 'Europe/London'; // UTC+1 summer
+            try {
+                const d = parseDate('2026-06-15');
+                expect(d.getUTCFullYear()).toBe(2026);
+                expect(d.getUTCMonth()).toBe(5);  // June
+                expect(d.getUTCDate()).toBe(15);
+            } finally {
+                process.env.TZ = originalTZ ?? '';
+            }
+        });
+    });
+
+    describe('formatDateYYYYMMDD — PT-anchored formatting', () => {
+        it('formats a Date as PT calendar date', () => {
+            // Jun 15 12:00 UTC = Jun 15 05:00 PT (same calendar day)
+            expect(formatDateYYYYMMDD(new Date('2026-06-15T12:00:00Z'))).toBe('2026-06-15');
+        });
+
+        it('formats a late-night UTC instant to prior PT calendar day', () => {
+            // Jun 15 06:30 UTC = Jun 14 23:30 PT (prior calendar day)
+            expect(formatDateYYYYMMDD(new Date('2026-06-15T06:30:00Z'))).toBe('2026-06-14');
+        });
+    });
+});
+
+// =============================================================================
+// TZ Regression Tests for timeWindows.getYesterdayDate (W2 audit)
+//
+// BUG FIXED: previously used `setDate` (local TZ) + `toISOString()` (UTC).
+// On a UTC server, "yesterday" in PT could shift by a day near the PT midnight
+// boundary. Now uses Intl PT formatting + UTC date arithmetic.
+// =============================================================================
+import { getYesterdayDate as twGetYesterdayDate } from './timeWindows';
+
+describe('timeWindows.getYesterdayDate — TZ safety regression (W2 audit)', () => {
+    it('returns PT 2026-06-14 when now is PT noon 2026-06-15', () => {
+        const fakeNow = new Date('2026-06-15T19:00:00Z'); // PT noon
+        const result = twGetYesterdayDate(fakeNow);
+        expect(result).toBe('2026-06-14');
+    });
+
+    it('returns PT 2026-06-13 when now is PT 23:30 Jun 14 (UTC 06:30)', () => {
+        const fakeNow = new Date('2026-06-15T06:30:00Z'); // PT 23:30 Jun 14
+        const result = twGetYesterdayDate(fakeNow);
+        expect(result).toBe('2026-06-13');
+    });
+
+    it('handles month boundary: Jun 1 → May 31', () => {
+        // UTC Jun 1 07:00 = PT May 31 00:00 (midnight)
+        const fakeNow = new Date('2026-06-01T07:00:00Z');
+        const result = twGetYesterdayDate(fakeNow);
+        expect(result).toBe('2026-05-31');
+    });
+
+    it('handles year boundary: Jan 1 2026 → Dec 30 2025', () => {
+        // 2026-01-01T07:00:00Z = 23:00 PT Dec 31 2025 (PT is UTC-8 in winter)
+        // PT date = Dec 31 → yesterday = Dec 30
+        const fakeNow = new Date('2026-01-01T07:00:00Z');
+        const result = twGetYesterdayDate(fakeNow);
+        expect(result).toBe('2025-12-30');
+    });
+
+    it('stable in Europe/London TZ (regression)', () => {
+        const originalTZ = process.env.TZ;
+        process.env.TZ = 'Europe/London';
+        try {
+            // UTC 2026-06-15T07:00:00Z = 08:00 BST = 00:00 PT Jun 15
+            // PT now = Jun 15 00:00 → yesterday = Jun 14
+            const fakeNow = new Date('2026-06-15T07:00:00Z');
+            const result = twGetYesterdayDate(fakeNow);
+            expect(result).toBe('2026-06-14');
+        } finally {
+            process.env.TZ = originalTZ ?? '';
+        }
+    });
+});
+
+// =============================================================================
+// TZ Regression Tests for uiHelpers.getMaxDate (W2 audit)
+//
+// BUG FIXED: previously used `new Date().toISOString().split('T')[0]` (UTC).
+// On a UTC server after 00:00 UTC, this returns the next UTC calendar day,
+// not the current PT calendar day. Now uses Intl PT formatting.
+// =============================================================================
+import { getMaxDate } from './uiHelpers';
+
+describe('uiHelpers.getMaxDate — TZ safety regression (W2 audit)', () => {
+    it('returns PT calendar date when UTC date is same as PT date', () => {
+        // UTC noon Jun 15 = PT noon Jun 15 → max date = Jun 15
+        const fakeNow = new Date('2026-06-15T19:00:00Z');
+        const savedDate = global.Date;
+        const MockDate = class extends (savedDate as any) {
+            constructor(...args: unknown[]) {
+                if (args.length === 0) super(fakeNow);
+                else super(...(args as unknown[]));
+            }
+        };
+        (global as any).Date = MockDate;
+        try {
+            expect(getMaxDate()).toBe('2026-06-15');
+        } finally {
+            (global as any).Date = savedDate;
+        }
+    });
+
+    it('returns prior PT calendar day when UTC has rolled to next day but PT has not', () => {
+        // UTC 2026-06-15T06:30:00Z = PT 2026-06-14T23:30 (still Jun 14 PT)
+        // toISOString().split('T')[0] would give '2026-06-15' (wrong)
+        // PT-anchored should give '2026-06-14'
+        const fakeNow = new Date('2026-06-15T06:30:00Z');
+        const savedDate = global.Date;
+        const MockDate = class extends (savedDate as any) {
+            constructor(...args: unknown[]) {
+                if (args.length === 0) super(fakeNow);
+                else super(...(args as unknown[]));
+            }
+        };
+        (global as any).Date = MockDate;
+        try {
+            expect(getMaxDate()).toBe('2026-06-14');
+        } finally {
+            (global as any).Date = savedDate;
+        }
+    });
+
+    it('stable in Europe/London TZ (regression)', () => {
+        const originalTZ = process.env.TZ;
+        process.env.TZ = 'Europe/London';
+        try {
+            // UTC 2026-06-15T07:00:00Z = 08:00 BST = 00:00 PT Jun 15
+            // toISOString = '2026-06-15' but PT date = '2026-06-15' (same, no bug)
+            // Let's use UTC 2026-06-15T02:00:00Z = 03:00 BST = 19:00 PT Jun 14
+            const fakeNow = new Date('2026-06-15T02:00:00Z');
+            const savedDate = global.Date;
+            const MockDate = class extends (savedDate as any) {
+                constructor(...args: unknown[]) {
+                    if (args.length === 0) super(fakeNow);
+                    else super(...(args as unknown[]));
+                }
+            };
+            (global as any).Date = MockDate;
+            try {
+                // PT is Jun 14 → max date should be Jun 14
+                expect(getMaxDate()).toBe('2026-06-14');
+            } finally {
+                (global as any).Date = savedDate;
+            }
+        } finally {
+            process.env.TZ = originalTZ ?? '';
+        }
     });
 });

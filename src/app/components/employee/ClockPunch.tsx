@@ -51,7 +51,16 @@ export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
     return () => clearInterval(id);
   }, [load]);
 
+  const requireOnline = () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      toast.error('You are offline. Connect to the internet before recording a punch.');
+      return false;
+    }
+    return true;
+  };
+
   const doPunchIn = async () => {
+    if (!requireOnline()) return;
     setActionLoading('in');
     try {
       await punchIn(user.uid);
@@ -65,6 +74,7 @@ export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
   };
 
   const doPunchOut = async () => {
+    if (!requireOnline()) return;
     setActionLoading('out');
     try {
       await punchOut(user.uid);
@@ -78,6 +88,7 @@ export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
   };
 
   const doToggleLunch = async () => {
+    if (!requireOnline()) return;
     setActionLoading('lunch');
     try {
       const s = status;

@@ -400,3 +400,109 @@ describe('voided/archived entries are never "open"', () => {
         expect(validateCanToggleLunch(entry).valid).toBe(false);
     });
 });
+
+// =============================================================================
+// Timezone Safety Regression Tests for checkTimeAnomalies
+// AGENTS.md §2 Guardrails: Never use browser Date directly for payroll math.
+// checkTimeAnomalies must correctly identify weekends in PT regardless of runtime TZ.
+// =============================================================================
+describe('checkTimeAnomalies — TZ safety (W2 audit)', () => {
+    /**
+     * Weekend detection uses Date.UTC (not runtime local TZ) so a PT Monday
+     * must never be flagged as a weekend even when runtime TZ differs.
+     * Bug case: in Europe/London TZ (UTC+1 summer), the runtime getDay()
+     * of 2026-06-15 would be a different weekday than intended if the
+     * implementation used local-TZ parsing. Fixed: UTC-anchored.
+     */
+    it('does NOT flag PT Monday 2026-06-15 as weekend even in Europe/London TZ', () => {
+        const originalTZ = process.env.TZ;
+        process.env.TZ = 'Europe/London';
+        try {
+            const result = checkTimeAnomalies(0, '09:00', '2026-06-15', {});
+            expect(result.hasAnomaly).toBe(false);
+        } finally {
+            process.env.TZ = originalTZ ?? '';
+        }
+    });
+
+    it('flags PT Saturday 2026-06-13 as weekend in Europe/London TZ', () => {
+        const originalTZ = process.env.TZ;
+        process.env.TZ = 'Europe/London';
+        try {
+            // 2026-06-13 is a Saturday in any TZ
+            const result = checkTimeAnomalies(0, '09:00', '2026-06-13', {});
+            expect(result.hasAnomaly).toBe(true);
+        } finally {
+            process.env.TZ = originalTZ ?? '';
+        }
+    });
+
+    it('flags PT Sunday 2026-06-14 as weekend in Europe/London TZ', () => {
+        const originalTZ = process.env.TZ;
+        process.env.TZ = 'Europe/London';
+        try {
+            const result = checkTimeAnomalies(0, '09:00', '2026-06-14', {});
+            expect(result.hasAnomaly).toBe(true);
+        } finally {
+            process.env.TZ = originalTZ ?? '';
+        }
+    });
+
+    it('does NOT flag PT Monday 2026-06-15 as weekend in Asia/Tokyo TZ', () => {
+        const originalTZ = process.env.TZ;
+        process.env.TZ = 'Asia/Tokyo';
+        try {
+            const result = checkTimeAnomalies(0, '09:00', '2026-06-15', {});
+            expect(result.hasAnomaly).toBe(false);
+        } finally {
+            process.env.TZ = originalTZ ?? '';
+        }
+    });
+
+    /**
+     * Anomaly detection: lunch > 90 min, < 20 min, day > 11h, day < 4h.
+     * These use timeToMinutes on HH:MM strings (no date component), so they are
+     * inherently TZ-safe. Regression pins.
+     */
+    it('does NOT flag a normal 30-min lunch', () => {
+        // Lunch anomaly is checked in calculateFlags (database.ts), not checkTimeAnomalies.
+        // Here we verify checkTimeAnomalies itself is TZ-safe for time-only checks.
+        const result = checkTimeAnomalies(1, '12:30', '2026-06-15', {
+            clockInManual: '09:00',
+        });
+        // No anomaly (clock in, going to lunch out at 12:30 - normal)
+        expect(result.hasAnomaly).toBe(false);
+    });
+
+    it('flags clock-out > 11h after clock-in (long day)', () => {
+        // 22:00 - 09:00 = 13h -> > 11h anomaly
+        const result = checkTimeAnomalies(3, '22:00', '2026-06-15', {
+            clockInManual: '09:00',
+        });
+        expect(result.hasAnomaly).toBe(true);
+    });
+
+    it('flags shift < 1h between clock-in and lunch-out (short interval)', () => {
+        const result = checkTimeAnomalies(1, '09:30', '2026-06-15', {
+            clockInManual: '09:00',
+        });
+        expect(result.hasAnomaly).toBe(true);
+    });
+
+    it('does not flag a normal 8.5h shift', () => {
+        const result = checkTimeAnomalies(3, '17:30', '2026-06-15', {
+            clockInManual: '09:00',
+        });
+        expect(result.hasAnomaly).toBe(false);
+    });
+
+    it('returns no anomaly for "complete" step regardless of TZ', () => {
+        const originalTZ = process.env.TZ;
+        process.env.TZ = 'Europe/London';
+        try {
+            expect(checkTimeAnomalies('complete', '', '2026-06-15', {}).hasAnomaly).toBe(false);
+        } finally {
+            process.env.TZ = originalTZ ?? '';
+        }
+    });
+});

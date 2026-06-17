@@ -253,7 +253,7 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
                       <TableCell className="text-xs text-slate-500">
                         {formatTimestamp(req.created_at)}
                       </TableCell>
-                      {isAdminOrManager && (
+                      {currentUser.role === 'admin' && (
                         <TableCell className="text-right">
                           {(req.status === 'Open' || req.status === 'In Progress') && (
                             <Button

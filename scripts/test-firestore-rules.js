@@ -125,19 +125,28 @@ async function main() {
     const manager = testEnv.authenticatedContext("manager-1");
     const admin = testEnv.authenticatedContext("admin-1");
 
+    // Cache firestore clients per context. rules-unit-testing v3 returns the
+    // same underlying firebase app on repeated `.firestore()` calls, and
+    // `useEmulator()` throws "settings can no longer be changed" on the
+    // second call. Caching the instance avoids that.
+    const dbOf = (ctx) => {
+      if (!ctx.__db) ctx.__db = ctx.firestore();
+      return ctx.__db;
+    };
+
     // --- users rules ---
-    await assertFails(dref(unauth.firestore(), "users", "emp-1").get());
-    await assertSucceeds(dref(emp1.firestore(), "users", "emp-1").get());
-    await assertFails(dref(emp1.firestore(), "users", "emp-2").get());
-    await assertSucceeds(dref(manager.firestore(), "users", "emp-2").get());
-    await assertSucceeds(dref(admin.firestore(), "users", "emp-2").get());
+    await assertFails(dref(dbOf(unauth), "users", "emp-1").get());
+    await assertSucceeds(dref(dbOf(emp1), "users", "emp-1").get());
+    await assertFails(dref(dbOf(emp1), "users", "emp-2").get());
+    await assertSucceeds(dref(dbOf(manager), "users", "emp-2").get());
+    await assertSucceeds(dref(dbOf(admin), "users", "emp-2").get());
 
     // only admin can update users
     await assertFails(
-      dref(emp1.firestore(), "users", "emp-1").set({ name: "Employee 1 Updated" }, { merge: true }),
+      dref(dbOf(emp1), "users", "emp-1").set({ name: "Employee 1 Updated" }, { merge: true }),
     );
     await assertSucceeds(
-      dref(admin.firestore(), "users", "emp-1").set({ name: "Employee 1 Updated" }, { merge: true }),
+      dref(dbOf(admin), "users", "emp-1").set({ name: "Employee 1 Updated" }, { merge: true }),
     );
 
     // --- timeEntries rules ---
@@ -145,7 +154,7 @@ async function main() {
     const entryId2 = "emp-2_2025-12-22";
 
     await assertSucceeds(
-      dref(emp1.firestore(), "timeEntries", entryId1).set({
+      dref(dbOf(emp1), "timeEntries", entryId1).set({
         userId: "emp-1",
         workDate: "2025-12-22",
         currentStep: "clockIn",
@@ -157,23 +166,23 @@ async function main() {
 
     // employee cannot write someone else's entry
     await assertFails(
-      dref(emp1.firestore(), "timeEntries", entryId2).set({
+      dref(dbOf(emp1), "timeEntries", entryId2).set({
         userId: "emp-2",
         workDate: "2025-12-22",
       }),
     );
 
     // manager can read others' entries
-    await assertSucceeds(dref(manager.firestore(), "timeEntries", entryId1).get());
+    await assertSucceeds(dref(dbOf(manager), "timeEntries", entryId1).get());
 
     // employee cannot delete
-    await assertFails(dref(emp1.firestore(), "timeEntries", entryId1).delete());
+    await assertFails(dref(dbOf(emp1), "timeEntries", entryId1).delete());
     // admin can delete
-    await assertSucceeds(dref(admin.firestore(), "timeEntries", entryId1).delete());
+    await assertSucceeds(dref(dbOf(admin), "timeEntries", entryId1).delete());
 
     // employee can update their own entry (and must be active)
     await assertSucceeds(
-      dref(emp2.firestore(), "timeEntries", entryId2).set(
+      dref(dbOf(emp2), "timeEntries", entryId2).set(
         {
           userId: "emp-2",
           workDate: "2025-12-22",
@@ -202,12 +211,12 @@ async function main() {
 
     // admin can create audit log with valid fields
     await assertSucceeds(
-      dref(admin.firestore(), "auditLogs", auditLogId).set(validAuditLog),
+      dref(dbOf(admin), "auditLogs", auditLogId).set(validAuditLog),
     );
 
     // admin cannot create audit log without reason
     await assertFails(
-      dref(admin.firestore(), "auditLogs", "test-audit-no-reason").set({
+      dref(dbOf(admin), "auditLogs", "test-audit-no-reason").set({
         ...validAuditLog,
         reason: "",
       }),
@@ -215,7 +224,7 @@ async function main() {
 
     // admin cannot create audit log without targetCollection
     await assertFails(
-      dref(admin.firestore(), "auditLogs", "test-audit-no-target").set({
+      dref(dbOf(admin), "auditLogs", "test-audit-no-target").set({
         occurredAt: new Date(),
         actorUid: "admin-1",
         reason: "test",
@@ -223,36 +232,169 @@ async function main() {
     );
 
     // manager can read audit logs
-    await assertSucceeds(dref(manager.firestore(), "auditLogs", auditLogId).get());
+    await assertSucceeds(dref(dbOf(manager), "auditLogs", auditLogId).get());
 
     // employee cannot read audit logs
-    await assertFails(dref(emp1.firestore(), "auditLogs", auditLogId).get());
+    await assertFails(dref(dbOf(emp1), "auditLogs", auditLogId).get());
 
     // unauthenticated cannot read audit logs
-    await assertFails(dref(unauth.firestore(), "auditLogs", auditLogId).get());
+    await assertFails(dref(dbOf(unauth), "auditLogs", auditLogId).get());
 
     // IMMUTABLE: admin cannot update audit log
     await assertFails(
-      dref(admin.firestore(), "auditLogs", auditLogId).set(
+      dref(dbOf(admin), "auditLogs", auditLogId).set(
         { reason: "modified reason" },
         { merge: true },
       ),
     );
 
     // IMMUTABLE: admin cannot delete audit log
-    await assertFails(dref(admin.firestore(), "auditLogs", auditLogId).delete());
+    await assertFails(dref(dbOf(admin), "auditLogs", auditLogId).delete());
 
     // IMMUTABLE: manager cannot delete audit log
-    await assertFails(dref(manager.firestore(), "auditLogs", auditLogId).delete());
+    await assertFails(dref(dbOf(manager), "auditLogs", auditLogId).delete());
 
     // employee cannot create audit log
     await assertFails(
-      dref(emp1.firestore(), "auditLogs", "test-audit-emp-create").set(validAuditLog),
+      dref(dbOf(emp1), "auditLogs", "test-audit-emp-create").set(validAuditLog),
     );
 
     // manager cannot create audit log
     await assertFails(
-      dref(manager.firestore(), "auditLogs", "test-audit-mgr-create").set(validAuditLog),
+      dref(dbOf(manager), "auditLogs", "test-audit-mgr-create").set(validAuditLog),
+    );
+
+    // --- correctionRequests rules ---
+    const corrReqId = "test-corr-req-1";
+
+    // employee can create correction request for themselves
+    await assertSucceeds(
+      dref(dbOf(emp1), "correctionRequests", corrReqId).set({
+        employee_id: "emp-1",
+        requested_date: "2025-12-22",
+        issue_type: "Wrong Time",
+        notes: "Test note",
+        status: "Open",
+        created_at: Date.now(),
+      }),
+    );
+
+    // manager cannot update correction requests (rules: admin only)
+    await assertFails(
+      dref(dbOf(manager), "correctionRequests", corrReqId).set(
+        { status: "Resolved", resolution_note: "Approved" },
+        { merge: true },
+      ),
+    );
+
+    // admin can update correction requests
+    await assertSucceeds(
+      dref(dbOf(admin), "correctionRequests", corrReqId).set(
+        { status: "Resolved", resolution_note: "Approved" },
+        { merge: true },
+      ),
+    );
+
+    // --- timeEntries.userId immutability on update ---
+    const entryId3 = "emp-1_2025-12-23";
+    await assertSucceeds(
+      dref(dbOf(emp1), "timeEntries", entryId3).set({
+        userId: "emp-1",
+        workDate: "2025-12-23",
+        currentStep: "clockIn",
+        clockInManual: "09:00",
+        clockInSubmitted: true,
+        dayComplete: false,
+      }),
+    );
+
+    // employee cannot change userId on their entry to someone else's userId
+    await assertFails(
+      dref(dbOf(emp1), "timeEntries", entryId3).set(
+        { userId: "emp-2" },
+        { merge: true },
+      ),
+    );
+
+    // --- inactive user cannot write timeEntries ---
+    // Seed an inactive user
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await dref(db, "users", "inactive-1").set({
+        uid: "inactive-1",
+        email: "inactive@example.com",
+        name: "Inactive User",
+        role: "employee",
+        active: false,
+      });
+    });
+
+    const inactiveCtx = testEnv.authenticatedContext("inactive-1");
+    await assertFails(
+      dref(dbOf(inactiveCtx), "timeEntries", "inactive-1_2025-12-23").set({
+        userId: "inactive-1",
+        workDate: "2025-12-23",
+        currentStep: "clockIn",
+        clockInManual: "09:00",
+        clockInSubmitted: true,
+        dayComplete: false,
+      }),
+    );
+
+    // inactive user cannot update their own entry
+    // First create as admin (active) then try to update as inactive
+    await assertSucceeds(
+      dref(dbOf(admin), "timeEntries", "inactive-1_2025-12-24").set({
+        userId: "inactive-1",
+        workDate: "2025-12-24",
+        currentStep: "clockIn",
+        clockInManual: "09:00",
+        clockInSubmitted: true,
+        dayComplete: false,
+      }),
+    );
+
+    await assertFails(
+      dref(dbOf(inactiveCtx), "timeEntries", "inactive-1_2025-12-24").set(
+        { clockOutManual: "17:00" },
+        { merge: true },
+      ),
+    );
+
+    // --- status transitions ---
+    // voided entry can only be modified by admin (not employee)
+    await assertSucceeds(
+      dref(dbOf(admin), "timeEntries", "inactive-1_2025-12-24").set(
+        { status: "voided", voidReason: "Test void" },
+        { merge: true },
+      ),
+    );
+
+    // employee cannot change voided entry back to active
+    await assertFails(
+      dref(dbOf(emp1), "timeEntries", "inactive-1_2025-12-24").set(
+        { status: "active" },
+        { merge: true },
+      ),
+    );
+
+    // --- systemSettings rules ---
+    // all authenticated users can read payroll settings
+    await assertSucceeds(dref(dbOf(emp1), "systemSettings", "payroll").get());
+
+    // only admin can write system settings
+    await assertFails(
+      dref(dbOf(emp1), "systemSettings", "payroll").set(
+        { locked_up_to_date: "2025-12-01" },
+        { merge: true },
+      ),
+    );
+
+    await assertSucceeds(
+      dref(dbOf(admin), "systemSettings", "payroll").set(
+        { locked_up_to_date: "2025-12-01" },
+        { merge: true },
+      ),
     );
 
     console.log("✅ Firestore rules tests passed.");
