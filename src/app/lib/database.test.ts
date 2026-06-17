@@ -361,7 +361,7 @@ describe('split-shift: punchIn must preserve archived segments', () => {
       currentStep: 2,
       status: 'active',
     };
-    const archivedMins = entry.segments!.filter(s => s.complete === true).reduce((sum, s) => sum + (s.workMinutes || 0), 0);
+    const archivedMins = (entry.segments as any[]).filter(s => s.complete === true).reduce((sum, s) => sum + (s.workMinutes || 0), 0);
     expect(archivedMins).toBe(240);
   });
 
