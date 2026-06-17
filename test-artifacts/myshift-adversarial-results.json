@@ -1,0 +1,243 @@
+{
+  "summary": {
+    "passed": 33,
+    "failed": 6,
+    "total": 39
+  },
+  "results": [
+    {
+      "name": "A1_state_clean",
+      "status": "PASS",
+      "detail": "CLOCK IN visible",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/A01_clean.png"
+    },
+    {
+      "name": "A2_single_open_segment_Firestore",
+      "status": "FAIL",
+      "detail": "open segments in Firestore=0",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/A02_after_double_click.png"
+    },
+    {
+      "name": "A3_UI_shows_CLOCKED_IN",
+      "status": "FAIL",
+      "detail": "CLOCKED IN text visible=False",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/A03_clocked_in_visible.png"
+    },
+    {
+      "name": "A4_UI_shows_CLOCK_OUT_not_CLOCK_IN",
+      "status": "FAIL",
+      "detail": "CLOCK OUT visible=False (second click should be rejected)",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/A04_clock_out_shown.png"
+    },
+    {
+      "name": "A5_post_reload_UI_matches_Firestore",
+      "status": "PASS",
+      "detail": "UI_CLOCKED_IN=False Firestore_open=False",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/A05_post_reload.png"
+    },
+    {
+      "name": "A6_no_page_errors",
+      "status": "PASS",
+      "detail": "errors=0",
+      "screenshot": null
+    },
+    {
+      "name": "B1_clocked_in",
+      "status": "PASS",
+      "detail": "clocked in",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/B01_clocked_in.png"
+    },
+    {
+      "name": "B2_lunch_started",
+      "status": "PASS",
+      "detail": "END LUNCH visible=True",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/B02_lunch_started.png"
+    },
+    {
+      "name": "B3_post_reload_END_LUNCH_visible",
+      "status": "PASS",
+      "detail": "END LUNCH visible after reload=True",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/B03_after_reload.png"
+    },
+    {
+      "name": "B4_Firestore_has_lunchOut_no_lunchIn",
+      "status": "PASS",
+      "detail": "lunchOut=20:00 lunchIn=None",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/B04_firestore_state.png"
+    },
+    {
+      "name": "B5_UI_matches_Firestore",
+      "status": "PASS",
+      "detail": "UI_lunch=True FS_lunchOut=True",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/B05_ui_fs_match.png"
+    },
+    {
+      "name": "B6_no_page_errors",
+      "status": "PASS",
+      "detail": "errors=0",
+      "screenshot": null
+    },
+    {
+      "name": "C1_clocked_in",
+      "status": "PASS",
+      "detail": "clocked in",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/C01_clocked_in.png"
+    },
+    {
+      "name": "C2_signed_out",
+      "status": "PASS",
+      "detail": "login form visible",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/C02_signed_out.png"
+    },
+    {
+      "name": "C3_post_login_CLOCK_OUT_visible",
+      "status": "PASS",
+      "detail": "CLOCK OUT visible after re-login=True",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/C03_after_relogin.png"
+    },
+    {
+      "name": "C4_Firestore_has_open_segment",
+      "status": "PASS",
+      "detail": "open segments=1",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/C04_firestore.png"
+    },
+    {
+      "name": "C5_UI_matches_Firestore",
+      "status": "PASS",
+      "detail": "UI_open=True FS_open=True",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/C05_match.png"
+    },
+    {
+      "name": "C6_no_page_errors",
+      "status": "PASS",
+      "detail": "errors=0",
+      "screenshot": null
+    },
+    {
+      "name": "D1_first_clock_in",
+      "status": "PASS",
+      "detail": "first clock in",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/D01_first_in.png"
+    },
+    {
+      "name": "D2_first_clock_out",
+      "status": "PASS",
+      "detail": "first clock out",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/D02_first_out.png"
+    },
+    {
+      "name": "D3_second_clock_in",
+      "status": "PASS",
+      "detail": "second clock in",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/D03_second_in.png"
+    },
+    {
+      "name": "D4_two_segments_in_Firestore",
+      "status": "FAIL",
+      "detail": "segments=1",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/D04_two_segments.png"
+    },
+    {
+      "name": "D5_second_segment_open",
+      "status": "PASS",
+      "detail": "open segments=1",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/D05_second_open.png"
+    },
+    {
+      "name": "D6_UI_shows_CLOCK_OUT",
+      "status": "PASS",
+      "detail": "CLOCK OUT visible=True",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/D06_clock_out.png"
+    },
+    {
+      "name": "D7_totalWorkMinutes_present",
+      "status": "PASS",
+      "detail": "totalWorkMinutes=0",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/D07_total_wm.png"
+    },
+    {
+      "name": "D8_post_reload_UI_matches_Firestore",
+      "status": "PASS",
+      "detail": "UI_open=True FS_open=True",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/D08_post_reload.png"
+    },
+    {
+      "name": "D9_no_page_errors",
+      "status": "PASS",
+      "detail": "errors=0",
+      "screenshot": null
+    },
+    {
+      "name": "E1_no_half_baked_doc_when_offline",
+      "status": "PASS",
+      "detail": "Firestore exists=True clockInManual=None openSegs=1",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/E01_offline_state.png"
+    },
+    {
+      "name": "FLOW_E_EXCEPTED",
+      "status": "FAIL",
+      "detail": "Page.inner_text() missing 1 required positional argument: 'selector'",
+      "screenshot": null
+    },
+    {
+      "name": "F1_classic_UI_ready",
+      "status": "PASS",
+      "detail": "time input visible in classic UI",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/F01_classic_ready.png"
+    },
+    {
+      "name": "F2_classic_clock_in_submitted",
+      "status": "PASS",
+      "detail": "submitted 08:30 in classic UI",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/F02_classic_submitted.png"
+    },
+    {
+      "name": "F3_default_UI_reacts_to_classic_clockin",
+      "status": "PASS",
+      "detail": "CLOCK_OUT=False CLOCK_IN=True FS_exists=False FS_open=1",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/F03_default_ui_response.png"
+    },
+    {
+      "name": "F4_no_double_open_segments",
+      "status": "PASS",
+      "detail": "open segments=1 (should be \u22641)",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/F04_segment_check.png"
+    },
+    {
+      "name": "F5_no_page_errors",
+      "status": "PASS",
+      "detail": "errors=0",
+      "screenshot": null
+    },
+    {
+      "name": "G1_reload_UI_preserves_CLOCK_OUT",
+      "status": "PASS",
+      "detail": "CLOCK_OUT before=False after=False",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/G01_clock_out_reload.png"
+    },
+    {
+      "name": "G2_reload_UI_preserves_CLOCK_IN",
+      "status": "PASS",
+      "detail": "CLOCK_IN before=True after=True",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/G02_clock_in_reload.png"
+    },
+    {
+      "name": "G3_UI_open_state_matches_Firestore",
+      "status": "FAIL",
+      "detail": "UI_open=False FS_open=True",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/G03_ui_fs_match.png"
+    },
+    {
+      "name": "G4_Firestore_state_valid",
+      "status": "PASS",
+      "detail": "status=voided",
+      "screenshot": "/Users/torosasik/Projects/TimeTrack/test-artifacts/myshift/G04_fs_valid.png"
+    },
+    {
+      "name": "G5_no_page_errors",
+      "status": "PASS",
+      "detail": "errors=0",
+      "screenshot": null
+    }
+  ]
+}
