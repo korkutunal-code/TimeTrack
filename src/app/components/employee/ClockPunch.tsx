@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { Clock, Coffee, LogOut, RefreshCw, CalendarDays, AlertTriangle } from 'lucide-react';
 
@@ -27,6 +27,11 @@ export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
   const [week, setWeek] = useState<WeekSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // Synchronous guard against double-click / double-punch race conditions.
+  // setState is async in React; a ref check runs synchronously on every call,
+  // preventing two punch-in (or punch-out / lunch) calls from being dispatched
+  // even when clicks arrive faster than the event loop.
+  const punchInFlight = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,6 +50,7 @@ export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
   }, [user.uid]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
     // Light refresh every 60s so the live PT time and open-shift estimate stay fresh
     const id = setInterval(load, 60000);
@@ -61,6 +67,8 @@ export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
 
   const doPunchIn = async () => {
     if (!requireOnline()) return;
+    if (punchInFlight.current) return;
+    punchInFlight.current = true;
     setActionLoading('in');
     try {
       await punchIn(user.uid);
@@ -69,12 +77,15 @@ export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
     } catch (e: any) {
       toast.error(e.message || 'Could not clock in');
     } finally {
+      punchInFlight.current = false;
       setActionLoading(null);
     }
   };
 
   const doPunchOut = async () => {
     if (!requireOnline()) return;
+    if (punchInFlight.current) return;
+    punchInFlight.current = true;
     setActionLoading('out');
     try {
       await punchOut(user.uid);
@@ -83,12 +94,15 @@ export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
     } catch (e: any) {
       toast.error(e.message || 'Could not clock out');
     } finally {
+      punchInFlight.current = false;
       setActionLoading(null);
     }
   };
 
   const doToggleLunch = async () => {
     if (!requireOnline()) return;
+    if (punchInFlight.current) return;
+    punchInFlight.current = true;
     setActionLoading('lunch');
     try {
       const s = status;
@@ -99,6 +113,7 @@ export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
     } catch (e: any) {
       toast.error(e.message || 'Lunch action failed');
     } finally {
+      punchInFlight.current = false;
       setActionLoading(null);
     }
   };

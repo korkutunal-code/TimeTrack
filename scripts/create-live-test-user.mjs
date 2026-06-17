@@ -2,6 +2,11 @@
  * Create a live Firebase Auth + Firestore user with a given role.
  * The script is idempotent: re-running is safe.
  *
+ * Guardrails:
+ *   - TEST_ACCOUNTS allowlist restricts emails to test accounts only.
+ *   - --dry-run preview what would be created.
+ *   - Pass --force-prod to override the allowlist (requires deliberate opt-in).
+ *
  * Use:
  *   GOOGLE_APPLICATION_CREDENTIALS=~/secrets/timetrack-firebase-sa.json \
  *     node scripts/create-live-test-user.mjs [--role=admin] [--email=admin@test.com] [--password=123456]
@@ -14,6 +19,8 @@ import admin from 'firebase-admin';
 const KEY_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 if (!KEY_PATH) { console.error('Set GOOGLE_APPLICATION_CREDENTIALS'); process.exit(1); }
 
+const TEST_ACCOUNTS = ['test@test.com', 'admin@test.com', 'manager-audit@test.com'];
+
 const args = Object.fromEntries(
   process.argv.slice(2)
     .filter((a) => a.startsWith('--'))
@@ -23,10 +30,27 @@ const EMAIL = args.email ?? 'test@test.com';
 const PASSWORD = args.password ?? '123456';
 const ROLE = args.role ?? 'employee';
 const NAME = args.name ?? `Test ${ROLE[0].toUpperCase() + ROLE.slice(1)}`;
+const DRY_RUN = 'dry-run' in args;
+const FORCE_PROD = 'force-prod' in args;
 
 if (!['employee', 'manager', 'admin'].includes(ROLE)) {
   console.error(`Invalid --role=${ROLE} (must be employee|manager|admin)`);
   process.exit(1);
+}
+
+if (!TEST_ACCOUNTS.includes(EMAIL) && !FORCE_PROD) {
+  console.error(`ERROR: ${EMAIL} is not in TEST_ACCOUNTS allowlist.`);
+  console.error('  Allowed: test@test.com, admin@test.com, manager-audit@test.com');
+  console.error('  Pass --force-prod to override this guard (requires deliberate opt-in).');
+  process.exit(1);
+}
+
+if (DRY_RUN) {
+  console.log(`[dry-run] Would create/update user:`);
+  console.log(`  email: ${EMAIL}`);
+  console.log(`  role:  ${ROLE}`);
+  console.log(`  name:  ${NAME}`);
+  process.exit(0);
 }
 
 const serviceAccount = JSON.parse(readFileSync(resolve(KEY_PATH), 'utf8'));

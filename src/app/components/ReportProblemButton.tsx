@@ -51,7 +51,6 @@ function captureContext(description: string): ContextSnapshot {
 }
 
 function envFlag(name: string, paramName: string): boolean {
-    // @ts-ignore — vite injects
     if (typeof import.meta !== 'undefined' && (import.meta as any).env?.[name] === 'true') return true;
     if (typeof window !== 'undefined') {
         return new URLSearchParams(window.location.search).get(paramName) === '1';
@@ -60,7 +59,6 @@ function envFlag(name: string, paramName: string): boolean {
 }
 
 function getWebhookUrl(): string | null {
-    // @ts-ignore
     const envUrl = (import.meta as any).env?.VITE_FEEDBACK_URL;
     if (typeof envUrl === 'string' && envUrl.length > 0) return envUrl;
     return null;

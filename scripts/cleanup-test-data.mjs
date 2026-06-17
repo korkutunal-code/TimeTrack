@@ -10,6 +10,11 @@
  *   GOOGLE_APPLICATION_CREDENTIALS=~/secrets/timetrack-firebase-sa.json \
  *     node scripts/cleanup-test-data.mjs [--days=7] [--dry-run] [--user=test@test.com]
  *
+ * Guardrails:
+ *   - TEST_ACCOUNTS allowlist restricts this script to test emails only.
+ *   - --dry-run is the default. Omit --dry-run only after reviewing the output.
+ *   - Pass --force-prod to override the allowlist (requires deliberate opt-in).
+ *
  * Why: the live test data dir accumulates half-baked test docs from automated
  * runs. They can mask real bugs (the UI says "locked" because of an old doc
  * with the wrong shape) and make the audit logs noisy.
@@ -22,14 +27,24 @@ import admin from 'firebase-admin';
 const KEY_PATH = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 if (!KEY_PATH) { console.error('Set GOOGLE_APPLICATION_CREDENTIALS'); process.exit(1); }
 
+const TEST_ACCOUNTS = ['test@test.com', 'admin@test.com', 'manager-audit@test.com'];
+
 const args = Object.fromEntries(
   process.argv.slice(2)
     .filter((a) => a.startsWith('--'))
     .map((a) => { const [k, v] = a.replace('--', '').split('='); return [k, v ?? 'true']; }),
 );
 const DAYS = parseInt(args.days ?? '7', 10);
-const DRY_RUN = 'dry-run' in args;
+const DRY_RUN = !('force-prod' in args) || 'dry-run' in args;
+const FORCE_PROD = 'force-prod' in args;
 const EMAIL = args.user ?? 'test@test.com';
+
+if (!TEST_ACCOUNTS.includes(EMAIL) && !FORCE_PROD) {
+  console.error(`ERROR: ${EMAIL} is not in TEST_ACCOUNTS allowlist.`);
+  console.error('  Allowed: test@test.com, admin@test.com, manager-audit@test.com');
+  console.error('  Pass --force-prod to override this guard (requires deliberate opt-in).');
+  process.exit(1);
+}
 
 const serviceAccount = JSON.parse(readFileSync(resolve(KEY_PATH), 'utf8'));
 if (!admin.apps.length) admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });

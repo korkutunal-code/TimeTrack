@@ -37,6 +37,17 @@ const USERS = [
   { email: 'employee2@test.com', name: 'Test Employee 2', role: 'employee' },
 ];
 
+const TEST_ACCOUNTS = USERS.map(u => u.email);
+const DRY_RUN = process.argv.includes('--dry-run');
+
+if (DRY_RUN) {
+  console.log('[seed-live] DRY RUN — no profiles will be written');
+  for (const u of USERS) {
+    console.log(`[dry-run] Would create profile: ${u.email} (${u.role})`);
+  }
+  process.exit(0);
+}
+
 async function main() {
   for (const u of USERS) {
     console.log(`\n[seed-live] ${u.email} (${u.role})`);

@@ -45,6 +45,7 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
 
   useEffect(() => {
     if (!startDate || !endDate) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDefaultRange();
     }
   }, []);

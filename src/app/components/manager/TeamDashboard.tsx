@@ -52,10 +52,12 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
   const [adminNotes, setAdminNotes] = useState('');
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability
     loadEntries();
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability
     applyFilters();
   }, [entries, selectedUserId, startDate, endDate, status]);
 

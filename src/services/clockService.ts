@@ -95,23 +95,13 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
     if (!v.valid) {
       throw new Error(v.message || 'Cannot punch in');
     }
-    if (!v.valid) {
-      throw new Error(v.message || 'Cannot punch in');
-    }
 
     const newSeg = createInitialSegment(ptTime, now.toMillis(), taskId);
 
-    // Dual-write: legacy current fields + segments array (first segment).
-    // Build the payload carefully:
-    //   - Only include createdAt if the existing doc already has one (otherwise Firestore
-    //     errors with "Unsupported field value: undefined" when merge would write undefined).
-    //   - Strip undefined values from the segment so an absent taskId doesn't poison the doc.
-    //   - The newSeg is already a clean object from createInitialSegment; we still run
-    //     stripUndefined defensively in case future fields are added without thinking.
-    //   - CRITICAL: When a split-shift punch-in happens after a punch-out, we must
-    //     PRESERVE the existing closed segments[] so the archived work isn't lost.
-    //     tx.set with merge:true REPLACES array fields, not merges them, so we
-    //     explicitly build the full array here.
+    // Preserve any previously closed segments from this document so a split-shift
+    // punch-in (after a previous punch-out) does not wipe out the archived work.
+    // tx.set with merge:true REPLACES array fields rather than merging them, so
+    // we explicitly build the full array here.
     const existingSegments = snap.exists() ? (snap.data().segments || []) : [];
     const existingCreatedAt = snap.exists() ? snap.data().createdAt : undefined;
 

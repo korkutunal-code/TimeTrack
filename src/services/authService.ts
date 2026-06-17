@@ -36,7 +36,6 @@ interface ProvisionResult {
  */
 export async function provisionUser({ email, name, role, createdByUid, sendInvite = true, password = null, timezone }: ProvisionUserParams): Promise<ProvisionResult> {
     let tempApp: FirebaseApp | null = null;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     let tempAuth: Auth | null = null;
 
     const normalizedEmail = String(email || '').trim().toLowerCase();

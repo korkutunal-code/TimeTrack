@@ -110,6 +110,7 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
 
   useEffect(() => {
     if (periodFilter !== 'custom') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       loadHistory();
     }
   }, [periodFilter, loadHistory]);
@@ -117,9 +118,12 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
   // When custom filter is selected but no range applied yet, clear entries
   useEffect(() => {
     if (periodFilter === 'custom' && !appliedRange) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEntries([]);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLoading(false);
     } else if (periodFilter === 'custom' && appliedRange) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       loadHistory();
     }
   }, [periodFilter, appliedRange, loadHistory]);

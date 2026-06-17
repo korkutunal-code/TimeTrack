@@ -6,9 +6,16 @@
 # `firebase login:ci`, then hand it to `firebase deploy` via FIREBASE_TOKEN.
 #
 # Usage:
-#   scripts/deploy.sh            # build + deploy hosting only
-#   scripts/deploy.sh --rules    # also deploy firestore rules + indexes
-#   scripts/deploy.sh --all      # hosting + rules + indexes + functions
+#   scripts/deploy.sh            # build + deploy hosting only (FAILS without --confirm)
+#   scripts/deploy.sh --confirm  # deploy hosting after confirmation prompt
+#   scripts/deploy.sh --rules --confirm   # also deploy firestore rules + indexes
+#   scripts/deploy.sh --all --confirm     # hosting + rules + indexes + functions
+#
+# Guardrails:
+#   - --confirm is REQUIRED to deploy. The script refuses to run without it.
+#   - The script reads the active project from .firebaserc (no `firebase login`
+#     needed — the SA-JWT flow handles auth). It refuses to deploy to a
+#     known production project unless --force-prod is passed.
 #
 # Requires:
 #   - ~/secrets/timetrack-firebase-sa.json  (service account with Editor role)
@@ -21,9 +28,13 @@ cd "$(dirname "$0")/.."
 
 SA_PATH="${SA_PATH:-$HOME/secrets/timetrack-firebase-sa.json}"
 TARGET="hosting"
+CONFIRM=false
+FORCE_PROD=false
 
 for arg in "$@"; do
   case "$arg" in
+    --confirm)   CONFIRM=true ;;
+    --force-prod) FORCE_PROD=true ;;
     --rules)  TARGET="hosting,firestore:rules,firestore:indexes" ;;
     --all)    TARGET="hosting,firestore:rules,firestore:indexes,functions" ;;
     --help|-h)
@@ -37,6 +48,54 @@ if [[ ! -f "$SA_PATH" ]]; then
   echo "ERROR: service account not found at $SA_PATH" >&2
   echo "Set SA_PATH=/path/to/sa.json or copy your service account there." >&2
   exit 1
+fi
+
+# Guard: require --confirm before any deployment action
+if [[ "$CONFIRM" != "true" ]]; then
+  echo "ERROR: deploy.sh requires --confirm to proceed." >&2
+  echo "" >&2
+  echo "This script DEPLOYS to production Firebase Hosting." >&2
+  echo "Pass --confirm if you are sure you want to deploy." >&2
+  echo "" >&2
+  echo "Usage:" >&2
+  echo "  scripts/deploy.sh --confirm              # deploy hosting" >&2
+  echo "  scripts/deploy.sh --rules --confirm      # deploy hosting + rules" >&2
+  echo "  scripts/deploy.sh --all --confirm        # deploy everything" >&2
+  echo "  scripts/deploy.sh --force-prod --confirm # override project check" >&2
+  exit 1
+fi
+
+# Read the active project from .firebaserc (no `firebase login` required).
+# This script uses a service-account JWT, so it should not depend on the
+# `firebase` CLI's user-auth state.
+ACTIVE_PROJECT=$(node -e "
+  const fs = require('fs');
+  try {
+    const cfg = JSON.parse(fs.readFileSync('.firebaserc', 'utf8'));
+    process.stdout.write(cfg.projects?.default || '');
+  } catch (e) { process.stdout.write(''); }
+")
+if [[ -z "$ACTIVE_PROJECT" ]]; then
+  echo "ERROR: could not read project from .firebaserc" >&2
+  exit 1
+fi
+
+# Guard: refuse to deploy to a non-production project by accident. Pass
+# --force-prod to deploy to atd-time-tracking (the real prod project).
+PROD_PROJECTS="atd-time-tracking"
+STAGING_PATTERN="staging"
+
+if [[ "$ACTIVE_PROJECT" =~ $STAGING_PATTERN ]] && [[ "$FORCE_PROD" != "true" ]]; then
+  : # staging project — fine, deploy normally
+elif [[ " $PROD_PROJECTS " == *" $ACTIVE_PROJECT "* ]] && [[ "$FORCE_PROD" != "true" ]]; then
+  : # known prod project — but require explicit ack
+  echo "ERROR: deploy.sh targets production project '$ACTIVE_PROJECT'." >&2
+  echo "Add --force-prod to confirm you intend to deploy to production." >&2
+  exit 1
+fi
+
+if [[ "$FORCE_PROD" == "true" ]]; then
+  echo "WARNING: --force-prod is set. Deploying to project: $ACTIVE_PROJECT" >&2
 fi
 
 # 1. Build
@@ -81,7 +140,7 @@ TOKEN=$(node -e "
 ")
 
 # 3. Deploy
-echo "==> Deploying to Firebase ($TARGET)"
+echo "==> Deploying to Firebase ($TARGET) — project: ${ACTIVE_PROJECT:-unknown}"
 FIREBASE_TOKEN="$TOKEN" firebase deploy --only "$TARGET" --non-interactive
 
 echo

@@ -1,7 +1,21 @@
+/**
+ * Seed a single yesterday timeEntry for employee2@test.com via client-side SDK.
+ *
+ * Guardrails:
+ *   - Restricts to hardcoded test account UID/email only.
+ *   - --dry-run to preview (replaces hard delete with soft-void in dry-run mode).
+ *
+ * Use:
+ *   node scripts/seed-yesterday.mjs --dry-run   # preview
+ *   node scripts/seed-yesterday.mjs             # actually write
+ */
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc } from 'firebase/firestore';
 import { firebaseConfig } from '../src/config/firebase.config.js';
+
+const TEST_ACCOUNTS = ['employee2@test.com'];
+const DRY_RUN = process.argv.includes('--dry-run');
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -18,6 +32,21 @@ const entryId = `${uid}_${yesterdayStr}`;
 
 const todayStr = new Date().toISOString().split('T')[0];
 const todayEntryId = `${uid}_${todayStr}`;
+
+if (!TEST_ACCOUNTS.includes(email)) {
+  console.error(`ERROR: seed-yesterday.mjs is restricted to ${TEST_ACCOUNTS.join(', ')}`);
+  process.exit(1);
+}
+
+if (DRY_RUN) {
+  console.log('[dry-run] Would seed yesterday entry:');
+  console.log(`  uid:       ${uid}`);
+  console.log(`  entryId:   ${entryId}`);
+  console.log(`  workDate:  ${yesterdayStr}`);
+  console.log('[dry-run] Would soft-void today entry:');
+  console.log(`  todayEntryId: ${todayEntryId}`);
+  process.exit(0);
+}
 
 async function main() {
     console.log(`Signing in as ${email}...`);
@@ -43,12 +72,16 @@ async function main() {
     }, { merge: true });
     console.log('Seeded previous day successfully!');
 
-    console.log(`Deleting today's partial entry for ${uid} at ${todayStr}...`);
+    console.log(`Voiding today's partial entry for ${uid} at ${todayStr}...`);
     try {
-        await deleteDoc(doc(db, 'timeEntries', todayEntryId));
-        console.log('Deleted today\'s entry successfully!');
+        await setDoc(doc(db, 'timeEntries', todayEntryId), {
+            status: 'voided',
+            voidedReason: 'seed-yesterday: cleared before seeding',
+            updatedAt: new Date()
+        }, { merge: true });
+        console.log('Voided today\'s entry successfully!');
     } catch (e) {
-        console.log('No entry to delete today or permission error');
+        console.log('No entry to void today or permission error');
     }
 
     process.exit(0);

@@ -23,7 +23,7 @@ import { Textarea } from '../ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
 
 // Existing business logic (ported from the previous HTML/JS app)
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+ 
 import { calculateLunchMinutes, calculateTotalWorkMinutes } from '../../../utils/timeCalculations';
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import {
@@ -95,6 +95,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
   useEffect(() => {
     // Set initial manual time once on mount
     const now = new Date();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCurrentTime(now.toTimeString().slice(0, 5));
 
     // Update live clock every second

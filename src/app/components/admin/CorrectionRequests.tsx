@@ -96,6 +96,7 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser.uid]);

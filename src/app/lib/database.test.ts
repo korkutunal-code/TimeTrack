@@ -306,16 +306,14 @@ describe('mapEntry segments[].complete — must respect persisted value', () => 
 });
 
 /**
- * Split-shift scenario: After punchOut, the closed segment must remain in
- * segments[] (complete=true). After the next punchIn, a new open segment
- * is appended, giving segments=[closedSeg, openSeg].
+ * Regression: punchIn must preserve previously archived (closed) segments.
  *
- * Bug: punchOut was writing segments=[closedSeg] correctly, but the NEXT
- * punchIn was overwriting the entire array with segments=[newSeg], losing
- * the archived closed segment. The fix: punchIn now preserves existing
- * segments by reading them inside the transaction first.
+ * When an employee does a split shift (clock-in → clock-out → clock-in again),
+ * the first closed segment must remain in segments[]. Previously, punchIn's
+ * payload used `segments: [newSeg]` which overwrote the entire array, losing
+ * the archived segments and making split-shift impossible.
  */
-describe('Split-shift: punchOut then punchIn preserves archived segments', () => {
+describe('split-shift: punchIn must preserve archived segments', () => {
   it('punchOut closes the active segment (complete=true)', () => {
     const openSeg: TimeSegment = {
       id: 'seg_1',
@@ -329,82 +327,59 @@ describe('Split-shift: punchOut then punchIn preserves archived segments', () =>
     expect(closed.workMinutes).toBeGreaterThan(0);
   });
 
-  it('entry.segments after punchOut should have the closed segment', () => {
-    // Simulate what punchOut writes: the existing [openSeg] becomes [closedSeg]
-    const openSeg: TimeSegment = {
-      id: 'seg_1',
-      clockInManual: '09:00',
-      clockInSystem: 1000,
-      complete: false,
-    };
-    const closed = closeActiveSegment(openSeg, '17:00', 8000 * 60 * 60 * 1000 + 1000);
-
-    // After punchOut, the Firestore doc has segments=[closedSeg]
-    const entryAfterPunchOut: any = {
+  it('entry with 2 segments (1 closed, 1 open) is valid — getActiveSegment returns the open one', () => {
+    const closedSeg = { id: 'seg_1', clockInManual: '08:00', clockInSystem: 1, clockOutManual: '12:00', complete: true, workMinutes: 240 };
+    const openSeg = { id: 'seg_2', clockInManual: '13:00', clockInSystem: 2, complete: false };
+    const entry = {
       id: 'u1_2026-06-16',
       userId: 'u1',
       date: '2026-06-16',
-      segments: [closed],
-      clockInManual: '09:00',
-      clockOutManual: '17:00',
-      complete: true,
-      currentStep: 4,
-      status: 'active',
-    };
-
-    // getActiveSegment should return null (no open segment)
-    const active = getActiveSegment(entryAfterPunchOut);
-    expect(active).toBeNull();
-    expect(hasOpenSegment(entryAfterPunchOut)).toBe(false);
-
-    // And the closed segment should be in segments[]
-    expect(entryAfterPunchOut.segments).toHaveLength(1);
-    expect(entryAfterPunchOut.segments[0].complete).toBe(true);
-  });
-
-  it('split-shift punchIn must preserve existing closed segments', () => {
-    // After punchOut: segments=[closedSeg]
-    const closedSeg: TimeSegment = {
-      id: 'seg_1',
-      clockInManual: '09:00',
-      clockInSystem: 1000,
-      clockOutManual: '17:00',
-      clockOutSystem: 8000,
-      workMinutes: 480,
-      complete: true,
-    };
-
-    // Simulate what punchIn should do: append new open segment to existing closed ones
-    const newOpenSeg: TimeSegment = {
-      id: 'seg_2',
-      clockInManual: '18:00',
-      clockInSystem: 9000,
-      complete: false,
-    };
-
-    // The combined segments array should be [closedSeg, newOpenSeg]
-    const allSegments: TimeSegment[] = [closedSeg, newOpenSeg];
-
-    // Verify: 2 segments, first closed, second open
-    expect(allSegments).toHaveLength(2);
-    expect(allSegments[0].complete).toBe(true);
-    expect(allSegments[1].complete).toBe(false);
-
-    // Verify getActiveSegment returns the second (open) segment
-    const entryForActiveCheck: any = {
-      id: 'u1_2026-06-16',
-      userId: 'u1',
-      date: '2026-06-16',
-      segments: allSegments,
-      clockInManual: '18:00',
+      segments: [closedSeg, openSeg],
+      clockInManual: '13:00',
+      clockOutManual: undefined,
       complete: false,
       currentStep: 2,
       status: 'active',
     };
-    const active = getActiveSegment(entryForActiveCheck);
+    const active = getActiveSegment(entry as any);
     expect(active).not.toBeNull();
     expect(active!.id).toBe('seg_2');
     expect(active!.complete).toBe(false);
+    expect(hasOpenSegment(entry as any)).toBe(true);
+  });
+
+  it('closed segment workMinutes are preserved alongside the open segment', () => {
+    const closedSeg = { id: 'seg_1', clockInManual: '08:00', clockInSystem: 1, clockOutManual: '12:00', complete: true, workMinutes: 240 };
+    const openSeg = { id: 'seg_2', clockInManual: '13:00', clockInSystem: 2, complete: false };
+    const entry = {
+      id: 'u1_2026-06-16',
+      userId: 'u1',
+      date: '2026-06-16',
+      segments: [closedSeg, openSeg],
+      clockInManual: '13:00',
+      complete: false,
+      currentStep: 2,
+      status: 'active',
+    };
+    const archivedMins = entry.segments!.filter(s => s.complete === true).reduce((sum, s) => sum + (s.workMinutes || 0), 0);
+    expect(archivedMins).toBe(240);
+  });
+
+  it('voided document with a closed segment: no open segment returned (voided short-circuits)', () => {
+    const closedSeg = { id: 'seg_1', clockInManual: '08:00', clockInSystem: 1, clockOutManual: '12:00', complete: true, workMinutes: 240 };
+    const entry = {
+      id: 'u1_2026-06-16',
+      userId: 'u1',
+      date: '2026-06-16',
+      segments: [closedSeg],
+      clockInManual: '08:00',
+      clockOutManual: '12:00',
+      complete: true,
+      currentStep: 4,
+      status: 'voided',
+    };
+    expect(getActiveSegment(entry as any)).toBeNull();
+    expect(hasOpenSegment(entry as any)).toBe(false);
   });
 
   it('BUG REGRESSION: punchIn was overwriting segments array instead of appending', () => {
@@ -423,16 +398,13 @@ describe('Split-shift: punchOut then punchIn preserves archived segments', () =>
       complete: false,
     };
 
-    // Correct behavior: append new segment to existing
     const correctSegments = [...existingClosedSegments, newOpenSeg];
     expect(correctSegments).toHaveLength(2);
     expect(correctSegments[0].complete).toBe(true);
     expect(correctSegments[1].complete).toBe(false);
 
-    // Incorrect behavior (the bug): replace entire array
     const buggySegments = [newOpenSeg];
     expect(buggySegments).toHaveLength(1);
     expect(buggySegments[0].complete).toBe(false);
-    // Bug: lost the closed segment!
   });
 });

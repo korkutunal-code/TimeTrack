@@ -14,7 +14,6 @@ export const db = getFirestore(app);
 
 // Local-only emulator wiring (opt-in)
 declare global {
-  // eslint-disable-next-line no-var
   var __TT_EMULATORS_CONNECTED__: boolean | undefined;
 }
 

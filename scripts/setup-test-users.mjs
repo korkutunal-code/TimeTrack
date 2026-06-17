@@ -1,3 +1,14 @@
+/**
+ * Create 2 legacy test users via client-side Firebase SDK.
+ *
+ * Guardrails:
+ *   - Restricts to hardcoded test account emails only.
+ *   - --dry-run to preview.
+ *
+ * Use:
+ *   node scripts/setup-test-users.mjs --dry-run  # preview
+ *   node scripts/setup-test-users.mjs             # actually create
+ */
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, doc, setDoc } from 'firebase/firestore';
@@ -10,6 +21,13 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 const testPassword = 'Test123!';
+const TEST_ACCOUNTS = ['employee2@test.com', 'manager2@test.com'];
+const DRY_RUN = process.argv.includes('--dry-run');
+
+if (DRY_RUN) {
+  console.log('[dry-run] Would create users:');
+  for (const u of TEST_ACCOUNTS) console.log(`  ${u}`);
+}
 
 const usersToCreate = [
     { email: 'employee2@test.com', name: 'Test Employee 2', role: 'employee' },
@@ -18,6 +36,11 @@ const usersToCreate = [
 
 async function main() {
     for (const u of usersToCreate) {
+        if (!TEST_ACCOUNTS.includes(u.email)) {
+            console.error(`ERROR: setup-test-users.mjs only handles test accounts. Got: ${u.email}`);
+            process.exit(1);
+        }
+        if (DRY_RUN) { console.log(`[dry-run] Would create: ${u.email}`); continue; }
         try {
             console.log(`Creating user ${u.email}...`);
             const cred = await createUserWithEmailAndPassword(auth, u.email, testPassword);

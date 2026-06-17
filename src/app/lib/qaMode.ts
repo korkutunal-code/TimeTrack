@@ -64,7 +64,6 @@ const SEED_USERS: QAUserOverride[] = [
 ];
 
 function envFlag(name: string, paramName: string): boolean {
-    // @ts-ignore — vite injects import.meta.env
     if (typeof import.meta !== 'undefined' && (import.meta as any).env?.[name] === 'true') return true;
     if (typeof window !== 'undefined') {
         return new URLSearchParams(window.location.search).get(paramName) === '1';
