@@ -203,8 +203,10 @@ export function autoFocusFirstField(form) {
  */
 
 export function getMaxDate() {
-    const today = new Date();
-    return today.toISOString().split('T')[0];
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
 }
 
 /**

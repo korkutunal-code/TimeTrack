@@ -15,6 +15,9 @@ export default [
       globals: {
         ...globals.browser,
         ...globals.es2022,
+        React: 'readonly',
+        JSX: 'readonly',
+        EventListener: 'readonly',
       },
     },
     plugins: {
@@ -38,7 +41,13 @@ export default [
         ...globals.browser,
         ...globals.es2022,
         ...globals.jest,
+        ...globals.node,
       },
+    },
+    rules: {
+      // Tests mock global.Date with a class extending a saved constructor reference;
+      // ESLint cannot statically prove the base is a constructor.
+      'constructor-super': 'off',
     },
   },
 ];

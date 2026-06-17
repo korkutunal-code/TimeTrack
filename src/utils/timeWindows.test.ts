@@ -149,3 +149,103 @@ describe('timeWindows.isPastDeadline', () => {
         expect(isPastDeadline('2025-01-15', new Date('2025-01-15T10:00:00Z'))).toBe(false);
     });
 });
+
+// =============================================================================
+// TZ Safety Regression Tests for timeWindows fixes (W2 audit)
+//
+// Fix 1 — getHoursUntilDeadline:
+//   Before: `new Date(workDate + 'T00:00:00')` + setHours(local TZ) produced a deadline
+//   7–8h off on UTC servers. Now: UTC-anchored arithmetic.
+//
+// Fix 2 — getNextBusinessDay / getPreviousBusinessDay:
+//   Before: `new Date(dateStr + 'T00:00:00')` (local TZ) + isWeekend(UTC interpretation)
+//   caused wrong skip on Friday PT when runtime was UTC. Now: PT-anchored conversion.
+// =============================================================================
+describe('timeWindows TZ safety — W2 audit regression', () => {
+    describe('getHoursUntilDeadline — UTC-anchored fix', () => {
+        it('returns correct hours when deadline is in the future', () => {
+            // workDate = Jun 14 PT; deadline = Jun 15 10:00 PT
+            // When now = Jun 15 05:00 PT (12:00 UTC): 5h remaining
+            const now = new Date('2026-06-15T12:00:00Z'); // 05:00 PT
+            const h = getHoursUntilDeadline('2026-06-14', now);
+            expect(h).toBeCloseTo(5, 0); // ~5 hours (PT 10am - PT 5am)
+        });
+
+        it('returns null when deadline has passed', () => {
+            const now = new Date('2026-06-15T20:00:00Z'); // 13:00 PT
+            expect(getHoursUntilDeadline('2026-06-14', now)).toBeNull();
+        });
+
+        it('returns null on the same day when deadline is past', () => {
+            // workDate = Jun 15 PT; deadline = Jun 16 10am PT
+            // now = Jun 16 11:00 PT (18:00 UTC) — past the 10am deadline
+            const now = new Date('2026-06-16T18:00:00Z'); // 11:00 PT
+            expect(getHoursUntilDeadline('2026-06-15', now)).toBeNull();
+        });
+
+        it('handles malformed workDate gracefully', () => {
+            expect(getHoursUntilDeadline('not-a-date', new Date())).toBeNull();
+        });
+    });
+
+    describe('getNextBusinessDay — PT-anchored fix', () => {
+        it('returns Monday when starting from Friday PT', () => {
+            // 2026-06-12 is a Friday in PT
+            expect(getNextBusinessDay('2026-06-12')).toBe('2026-06-15'); // Monday Jun 15
+        });
+
+        it('returns Monday when starting from Saturday PT', () => {
+            // 2026-06-13 is a Saturday in PT
+            expect(getNextBusinessDay('2026-06-13')).toBe('2026-06-15'); // Monday Jun 15
+        });
+
+        it('returns Tuesday when starting from Sunday PT', () => {
+            // 2026-06-14 is a Sunday in PT
+            expect(getNextBusinessDay('2026-06-14')).toBe('2026-06-15'); // Monday Jun 15
+        });
+
+        it('returns next day when starting from Thursday PT (no weekend skip)', () => {
+            // 2026-06-11 is a Thursday in PT
+            expect(getNextBusinessDay('2026-06-11')).toBe('2026-06-12'); // Friday Jun 12
+        });
+
+        it('works in Europe/London TZ (regression: UTC runtime used to give wrong skip)', () => {
+            const originalTZ = process.env.TZ;
+            process.env.TZ = 'Europe/London';
+            try {
+                // In UTC runtime (TZ=UTC), "2026-06-12T00:00:00" was interpreted as
+                // UTC midnight = Fri UTC, so getNextBusinessDay checked isWeekend(Fri UTC)
+                // which returned false (correct), but then also computed next as Sat UTC
+                // and isWeekend(Sat UTC) = 6 = weekend, so it skipped to Sun (wrong).
+                // The fix anchors to PT calendar day so Fri PT -> Sat PT -> Mon PT.
+                expect(getNextBusinessDay('2026-06-12')).toBe('2026-06-15');
+            } finally {
+                process.env.TZ = originalTZ ?? '';
+            }
+        });
+    });
+
+    describe('getPreviousBusinessDay — PT-anchored fix', () => {
+        it('returns Friday when starting from Monday PT', () => {
+            expect(getPreviousBusinessDay('2026-06-15')).toBe('2026-06-12'); // Monday -> Friday
+        });
+
+        it('returns Friday when starting from Sunday PT', () => {
+            expect(getPreviousBusinessDay('2026-06-14')).toBe('2026-06-12'); // Sunday -> Friday
+        });
+
+        it('returns previous day when starting from Tuesday PT (no weekend skip)', () => {
+            expect(getPreviousBusinessDay('2026-06-16')).toBe('2026-06-15'); // Tuesday -> Monday
+        });
+
+        it('works in Europe/London TZ', () => {
+            const originalTZ = process.env.TZ;
+            process.env.TZ = 'Europe/London';
+            try {
+                expect(getPreviousBusinessDay('2026-06-15')).toBe('2026-06-12');
+            } finally {
+                process.env.TZ = originalTZ ?? '';
+            }
+        });
+    });
+});

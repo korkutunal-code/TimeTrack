@@ -264,6 +264,139 @@ async function main() {
       dref(dbOf(manager), "auditLogs", "test-audit-mgr-create").set(validAuditLog),
     );
 
+    // --- correctionRequests rules ---
+    const corrReqId = "test-corr-req-1";
+
+    // employee can create correction request for themselves
+    await assertSucceeds(
+      dref(dbOf(emp1), "correctionRequests", corrReqId).set({
+        employee_id: "emp-1",
+        requested_date: "2025-12-22",
+        issue_type: "Wrong Time",
+        notes: "Test note",
+        status: "Open",
+        created_at: Date.now(),
+      }),
+    );
+
+    // manager cannot update correction requests (rules: admin only)
+    await assertFails(
+      dref(dbOf(manager), "correctionRequests", corrReqId).set(
+        { status: "Resolved", resolution_note: "Approved" },
+        { merge: true },
+      ),
+    );
+
+    // admin can update correction requests
+    await assertSucceeds(
+      dref(dbOf(admin), "correctionRequests", corrReqId).set(
+        { status: "Resolved", resolution_note: "Approved" },
+        { merge: true },
+      ),
+    );
+
+    // --- timeEntries.userId immutability on update ---
+    const entryId3 = "emp-1_2025-12-23";
+    await assertSucceeds(
+      dref(dbOf(emp1), "timeEntries", entryId3).set({
+        userId: "emp-1",
+        workDate: "2025-12-23",
+        currentStep: "clockIn",
+        clockInManual: "09:00",
+        clockInSubmitted: true,
+        dayComplete: false,
+      }),
+    );
+
+    // employee cannot change userId on their entry to someone else's userId
+    await assertFails(
+      dref(dbOf(emp1), "timeEntries", entryId3).set(
+        { userId: "emp-2" },
+        { merge: true },
+      ),
+    );
+
+    // --- inactive user cannot write timeEntries ---
+    // Seed an inactive user
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await dref(db, "users", "inactive-1").set({
+        uid: "inactive-1",
+        email: "inactive@example.com",
+        name: "Inactive User",
+        role: "employee",
+        active: false,
+      });
+    });
+
+    const inactiveCtx = testEnv.authenticatedContext("inactive-1");
+    await assertFails(
+      dref(dbOf(inactiveCtx), "timeEntries", "inactive-1_2025-12-23").set({
+        userId: "inactive-1",
+        workDate: "2025-12-23",
+        currentStep: "clockIn",
+        clockInManual: "09:00",
+        clockInSubmitted: true,
+        dayComplete: false,
+      }),
+    );
+
+    // inactive user cannot update their own entry
+    // First create as admin (active) then try to update as inactive
+    await assertSucceeds(
+      dref(dbOf(admin), "timeEntries", "inactive-1_2025-12-24").set({
+        userId: "inactive-1",
+        workDate: "2025-12-24",
+        currentStep: "clockIn",
+        clockInManual: "09:00",
+        clockInSubmitted: true,
+        dayComplete: false,
+      }),
+    );
+
+    await assertFails(
+      dref(dbOf(inactiveCtx), "timeEntries", "inactive-1_2025-12-24").set(
+        { clockOutManual: "17:00" },
+        { merge: true },
+      ),
+    );
+
+    // --- status transitions ---
+    // voided entry can only be modified by admin (not employee)
+    await assertSucceeds(
+      dref(dbOf(admin), "timeEntries", "inactive-1_2025-12-24").set(
+        { status: "voided", voidReason: "Test void" },
+        { merge: true },
+      ),
+    );
+
+    // employee cannot change voided entry back to active
+    await assertFails(
+      dref(dbOf(emp1), "timeEntries", "inactive-1_2025-12-24").set(
+        { status: "active" },
+        { merge: true },
+      ),
+    );
+
+    // --- systemSettings rules ---
+    // all authenticated users can read payroll settings
+    await assertSucceeds(dref(dbOf(emp1), "systemSettings", "payroll").get());
+
+    // only admin can write system settings
+    await assertFails(
+      dref(dbOf(emp1), "systemSettings", "payroll").set(
+        { locked_up_to_date: "2025-12-01" },
+        { merge: true },
+      ),
+    );
+
+    await assertSucceeds(
+      dref(dbOf(admin), "systemSettings", "payroll").set(
+        { locked_up_to_date: "2025-12-01" },
+        { merge: true },
+      ),
+    );
+
     console.log("✅ Firestore rules tests passed.");
     assert.ok(true);
   } finally {

@@ -212,3 +212,164 @@ describe('timeCalculations', () => {
         });
     });
 });
+
+// =============================================================================
+// PT Timezone Safety Regression Tests
+// Ref: AGENTS.md §2 Guardrails — canonical timezone is America/Los_Angeles
+// for all payroll math and storage. Never use browser Date directly.
+// =============================================================================
+import {
+    getCurrentPTDate,
+    getCurrentPTTimeHHMM,
+    getPTDate,
+    getPTWeekStart,
+} from './timeCalculations';
+
+describe('PT helpers — timezone safety (W2 audit)', () => {
+    /**
+     * getCurrentPTDate: must return the correct PT calendar date regardless of
+     * the runtime's local timezone. Pin with known UTC instants.
+     */
+    describe('getCurrentPTDate', () => {
+        it('returns PT 2026-06-15 when UTC is 2026-06-15T19:00:00Z (12:00 PT noon)', () => {
+            const fakeNow = new Date('2026-06-15T19:00:00Z');
+            const savedDate = global.Date;
+            const MockDate = class extends (savedDate as any) {
+                constructor(...args: unknown[]) {
+                    if (args.length === 0) super(fakeNow);
+                    else super(...(args as unknown[]));
+                }
+            };
+            (global as any).Date = MockDate;
+            try {
+                const result = getCurrentPTDate();
+                expect(result).toBe('2026-06-15');
+            } finally {
+                (global as any).Date = savedDate;
+            }
+        });
+
+        it('returns PT 2026-06-14 when UTC is 2026-06-15T06:30:00Z (23:30 PT prev day)', () => {
+            // 2026-06-15T06:30:00Z = 23:30 PT on June 14 (previous calendar day)
+            const fakeNow = new Date('2026-06-15T06:30:00Z');
+            const savedDate = global.Date;
+            const MockDate = class extends (savedDate as any) {
+                constructor(...args: unknown[]) {
+                    if (args.length === 0) super(fakeNow);
+                    else super(...(args as unknown[]));
+                }
+            };
+            (global as any).Date = MockDate;
+            try {
+                const result = getCurrentPTDate();
+                expect(result).toBe('2026-06-14');
+            } finally {
+                (global as any).Date = savedDate;
+            }
+        });
+
+        it('PT date differs from UTC date near midnight PT boundary', () => {
+            // 2026-06-15T06:59:59Z = 23:59 PT on June 14
+            const fakeNow = new Date('2026-06-15T06:59:59Z');
+            const savedDate = global.Date;
+            const MockDate = class extends (savedDate as any) {
+                constructor(...args: unknown[]) {
+                    if (args.length === 0) super(fakeNow);
+                    else super(...(args as unknown[]));
+                }
+            };
+            (global as any).Date = MockDate;
+            try {
+                const result = getCurrentPTDate();
+                expect(result).toBe('2026-06-14');
+            } finally {
+                (global as any).Date = savedDate;
+            }
+        });
+    });
+
+    /**
+     * getCurrentPTTimeHHMM: must return wall-clock HH:MM in PT regardless of runtime TZ.
+     */
+    describe('getCurrentPTTimeHHMM', () => {
+        it('returns 12:00 when UTC is 2026-06-15T19:00:00Z (noon PT)', () => {
+            const fakeNow = new Date('2026-06-15T19:00:00Z');
+            const savedDate = global.Date;
+            const MockDate = class extends (savedDate as any) {
+                constructor(...args: unknown[]) {
+                    if (args.length === 0) super(fakeNow);
+                    else super(...(args as unknown[]));
+                }
+            };
+            (global as any).Date = MockDate;
+            try {
+                const result = getCurrentPTTimeHHMM();
+                expect(result).toBe('12:00');
+            } finally {
+                (global as any).Date = savedDate;
+            }
+        });
+
+        it('returns 23:30 when UTC is 2026-06-15T06:30:00Z (23:30 PT prev day)', () => {
+            const fakeNow = new Date('2026-06-15T06:30:00Z');
+            const savedDate = global.Date;
+            const MockDate = class extends (savedDate as any) {
+                constructor(...args: unknown[]) {
+                    if (args.length === 0) super(fakeNow);
+                    else super(...(args as unknown[]));
+                }
+            };
+            (global as any).Date = MockDate;
+            try {
+                const result = getCurrentPTTimeHHMM();
+                expect(result).toBe('23:30');
+            } finally {
+                (global as any).Date = savedDate;
+            }
+        });
+    });
+
+    /**
+     * getPTDate: must convert a JS Date to the correct PT YYYY-MM-DD.
+     */
+    describe('getPTDate', () => {
+        it('maps a UTC noon instant to PT Jun 15', () => {
+            const utcNoon = new Date('2026-06-15T12:00:00Z');
+            expect(getPTDate(utcNoon)).toBe('2026-06-15');
+        });
+
+        it('maps a UTC late-night instant to prior PT day (Jun 14)', () => {
+            const utcLateNight = new Date('2026-06-15T06:30:00Z');
+            expect(getPTDate(utcLateNight)).toBe('2026-06-14');
+        });
+    });
+
+    /**
+     * getPTWeekStart: PT week always starts on Sunday (DEFAULT_WORKWEEK_START_DAY = 0).
+     */
+    describe('getPTWeekStart', () => {
+        it('returns the same PT Sunday when given a PT Sunday', () => {
+            expect(getPTWeekStart('2026-06-14')).toBe('2026-06-14'); // Jun 14 2026 = Sunday
+        });
+
+        it('returns the preceding PT Sunday for a PT Monday', () => {
+            expect(getPTWeekStart('2026-06-15')).toBe('2026-06-14'); // Jun 15 = Monday
+        });
+
+        it('returns the preceding PT Sunday for a PT Saturday', () => {
+            expect(getPTWeekStart('2026-06-20')).toBe('2026-06-14'); // Jun 20 = Saturday
+        });
+
+        it('crosses month boundary: May Monday -> preceding May Sunday', () => {
+            expect(getPTWeekStart('2026-05-04')).toBe('2026-05-03'); // May 4 = Monday
+        });
+
+        it('crosses month boundary: Sunday at month start returns same Sunday (not prior)', () => {
+            expect(getPTWeekStart('2026-03-01')).toBe('2026-03-01'); // Mar 1 2026 = Sunday (same as June 14 case)
+        });
+
+        it('handles default argument without throwing', () => {
+            expect(() => getPTWeekStart()).not.toThrow();
+        });
+    });
+});

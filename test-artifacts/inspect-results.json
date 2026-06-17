@@ -1,8 +1,8 @@
 {
   "summary": {
-    "passed": 21,
+    "passed": 29,
     "failed": 0,
-    "total": 21
+    "total": 29
   },
   "results": [
     {
@@ -127,6 +127,54 @@
     },
     {
       "name": "[admin] No HTTP errors",
+      "status": "PASS",
+      "detail": "0",
+      "screenshot": null
+    },
+    {
+      "name": "[manager] Login",
+      "status": "PASS",
+      "detail": "title='TimeTrack - Employee Time Tracking', url=https://atd-time-tracking.web.app/",
+      "screenshot": "manager_01_after_login.png"
+    },
+    {
+      "name": "[manager] QABar visible (?qa=1)",
+      "status": "PASS",
+      "detail": "qa-buttons=1",
+      "screenshot": "manager_02_qa_bar.png"
+    },
+    {
+      "name": "[manager] QABar opens",
+      "status": "PASS",
+      "detail": "panel rendered",
+      "screenshot": "manager_03_qa_panel.png"
+    },
+    {
+      "name": "[manager] Report button visible",
+      "status": "PASS",
+      "detail": "buttons=1",
+      "screenshot": "manager_04_report_button.png"
+    },
+    {
+      "name": "[manager] Team tab loads",
+      "status": "PASS",
+      "detail": "ok",
+      "screenshot": "manager_tab_team.png"
+    },
+    {
+      "name": "[manager] No uncaught page errors",
+      "status": "PASS",
+      "detail": "0 errors",
+      "screenshot": null
+    },
+    {
+      "name": "[manager] No console errors",
+      "status": "PASS",
+      "detail": "0 (filtered 0 total)",
+      "screenshot": null
+    },
+    {
+      "name": "[manager] No HTTP errors",
       "status": "PASS",
       "detail": "0",
       "screenshot": null

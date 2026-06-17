@@ -62,7 +62,9 @@ service cloud.firestore {
       
       allow update: if isAuthenticated() && 
                        (request.auth.uid == resource.data.userId || hasRole('admin')) &&
-                       isActive();
+                       isActive() &&
+                       // userId field is immutable for non-admins (cannot reassign entry to another user)
+                       (hasRole('admin') || !('userId' in request.resource.data) || request.resource.data.userId == resource.data.userId);
       
       // Only admins can delete entries
       allow delete: if hasRole('admin');

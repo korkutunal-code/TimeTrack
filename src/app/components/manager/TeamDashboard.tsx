@@ -232,6 +232,39 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
       // originalEditingEntry is definitely defined here so we can guarantee we have a date
       const workWeekStartDate = getWorkWeekStartDate(originalEditingEntry.date, DEFAULT_WORKWEEK_START_DAY);
 
+      // === IMMUTABLE AUDIT TRAIL (Phase 1 requirement) ===
+      const beforeSnapshot = JSON.parse(JSON.stringify(originalEditingEntry));
+      const afterSnapshot = {
+        ...originalEditingEntry,
+        clockInManual: editingEntry.clockInManual,
+        lunchOutManual: editingEntry.skipLunch ? '' : (editingEntry.lunchOutManual || ''),
+        lunchInManual: editingEntry.skipLunch ? '' : (editingEntry.lunchInManual || ''),
+        clockOutManual: editingEntry.clockOutManual,
+        lunchSkipped: !!editingEntry.skipLunch,
+        lunchMinutes,
+        totalWorkMinutes,
+        regularMinutes: ot.regularMinutes,
+        otMinutes: ot.otMinutes,
+        doubleTimeMinutes: ot.doubleTimeMinutes,
+        workWeekStartDate,
+        dayComplete: true,
+        currentStep: 'complete',
+        correctedAt: now.toMillis(),
+        correctedBy: user.uid,
+        correctionNotes: adminNotes.trim(),
+      };
+
+      // Write audit log FIRST. The service enforces non-empty reason.
+      await auditLogService.logTimeCorrection({
+        actorUid: user.uid,
+        actorName: user.name || user.email,
+        targetId: originalEditingEntry.id,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+        reason: adminNotes.trim(),
+      });
+
+      // Only after durable audit row exists do we mutate the time record.
       await updateDoc(doc(db, 'timeEntries', originalEditingEntry.id), {
         clockInManual: editingEntry.clockInManual,
         lunchOutManual: editingEntry.skipLunch ? '' : (editingEntry.lunchOutManual || ''),
@@ -248,7 +281,7 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
         currentStep: 'complete',
         correctedAt: now,
         correctedBy: user.uid,
-        correctionNotes: adminNotes,
+        correctionNotes: adminNotes.trim(),
         updatedAt: now,
         updatedBy: user.uid,
       } as any);
@@ -272,7 +305,7 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
       await auditLogService.logVoidEntry({
         actorUid: user.uid,
         actorName: user.name || user.email,
-        actorRole: user.role === 'admin' ? 'admin' : 'manager',
+        actorRole: 'admin',
         targetId: entry.id,
         before,
         reason: reason.trim(),

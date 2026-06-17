@@ -108,7 +108,19 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
     //   - Strip undefined values from the segment so an absent taskId doesn't poison the doc.
     //   - The newSeg is already a clean object from createInitialSegment; we still run
     //     stripUndefined defensively in case future fields are added without thinking.
+    //   - CRITICAL: When a split-shift punch-in happens after a punch-out, we must
+    //     PRESERVE the existing closed segments[] so the archived work isn't lost.
+    //     tx.set with merge:true REPLACES array fields, not merges them, so we
+    //     explicitly build the full array here.
+    const existingSegments = snap.exists() ? (snap.data().segments || []) : [];
     const existingCreatedAt = snap.exists() ? snap.data().createdAt : undefined;
+
+    // When re-using a doc after a previous punch-out (split shift), clear the
+    // legacy top-level clock-out fields so the new shift starts clean.
+    const closedSegmentsTotal = (existingSegments as TimeSegment[])
+      .filter((s) => s.complete)
+      .reduce((sum, s) => sum + (s.workMinutes || 0), 0);
+
     const payload: any = {
       userId,
       workDate: ptDate,
@@ -118,18 +130,28 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
       currentStep: 2,
       dayComplete: false,
       complete: false,
-      segments: [stripUndefined(newSeg as any)],
+      segments: [...existingSegments, stripUndefined(newSeg as any)],
+      totalWorkMinutes: closedSegmentsTotal,
       createdBy: userId,
       updatedAt: now,
       updatedBy: userId,
       status: 'active',
       timezoneAtCreation: 'America/Los_Angeles',
+      // Clear stale legacy fields from any previous closed shift on this doc
+      clockOutManual: null,
+      clockOutSystem: null,
+      clockOutSystemTime: null,
+      completedAt: null,
+      lunchOutManual: null,
+      lunchInManual: null,
+      lunchSkipped: false,
+      skipLunch: false,
     };
     if (existingCreatedAt !== undefined) payload.createdAt = existingCreatedAt;
     else payload.createdAt = now;
 
     tx.set(ref, payload, { merge: true });
-    return { entryId, newSeg, ptDate, ptTime };
+    return { entryId, newSeg, ptDate, ptTime, wasCreated: !snap.exists() };
   });
 
   // Return hydrated view (mapEntry will reconstruct)
@@ -145,33 +167,54 @@ export async function punchOut(userId: string): Promise<TimeEntry> {
   const now = Timestamp.now();
   const entryId = `${userId}_${ptDate}`;
 
-  // Pre-check (UI should have guarded, but defense in depth)
-  const pre = await dbService.getTimeEntry(userId, ptDate);
-  const v = validateCanPunchOut(pre);
-  if (!v.valid) throw new Error(v.message);
+  const result = await runTransaction(db, async (tx) => {
+    const ref = doc(db, 'timeEntries', entryId);
+    const snap = await tx.get(ref);
 
-  const active = getActiveSegment(pre);
-  if (!active) throw new Error('No active segment');
+    let existing: TimeEntry | null = null;
+    if (snap.exists()) {
+      existing = {
+        id: snap.id,
+        userId,
+        date: ptDate,
+        status: snap.data().status,
+        segments: Array.isArray(snap.data().segments) ? snap.data().segments : undefined,
+        clockInManual: snap.data().clockInManual || undefined,
+        clockOutManual: snap.data().clockOutManual || undefined,
+        complete: snap.data().complete || snap.data().dayComplete || false,
+      } as any;
+    }
 
-  const closedSeg = closeActiveSegment(active, ptTime, now.toMillis());
+    const v = validateCanPunchOut(existing as any);
+    if (!v.valid) throw new Error(v.message);
 
-  // Write closed legacy + replace the open segment in the array with the closed one
-  const archived = (pre?.segments || []).filter((s) => s.id !== active.id);
-  const finalSegments = [...archived, closedSeg].map((s) => stripUndefined(s as any));
+    const active = getActiveSegment(existing as any);
+    if (!active) throw new Error('No active segment');
 
-  await updateDoc(doc(db, 'timeEntries', entryId), {
-    clockOutManual: ptTime,
-    clockOutSystemTime: now,
-    clockOutSystem: now.toMillis(),
-    complete: true,
-    currentStep: 4,
-    dayComplete: true,
-    completedAt: now.toMillis(),
-    segments: finalSegments,
-    totalWorkMinutes: (pre?.totalWorkMinutes || 0) + (closedSeg.workMinutes || 0),
-    updatedAt: now,
-    updatedBy: userId,
-  } as any);
+    const closedSeg = closeActiveSegment(active, ptTime, now.toMillis());
+
+    const archived = (existing?.segments || []).filter((s: TimeSegment) => s.id !== active.id);
+    const finalSegments = [...archived, closedSeg].map((s) => stripUndefined(s as any));
+
+    const preTotal = (existing?.totalWorkMinutes as number) || 0;
+    const newTotal = preTotal + (closedSeg.workMinutes || 0);
+
+    tx.update(ref, {
+      clockOutManual: ptTime,
+      clockOutSystemTime: now,
+      clockOutSystem: now.toMillis(),
+      complete: true,
+      currentStep: 4,
+      dayComplete: true,
+      completedAt: now.toMillis(),
+      segments: finalSegments,
+      totalWorkMinutes: newTotal,
+      updatedAt: now,
+      updatedBy: userId,
+    } as any);
+
+    return { entryId, closedSeg, finalSegments, newTotal };
+  });
 
   const fresh = await dbService.getTimeEntry(userId, ptDate);
   if (!fresh) throw new Error('Punch out succeeded but read failed');
@@ -235,22 +278,26 @@ export async function getPunchStatus(userId: string): Promise<PunchStatus> {
   const entry = await dbService.getTimeEntry(userId, ptDate);
   const active = getActiveSegment(entry);
 
-  let todayTotal = 0;
-  if (entry?.segments?.length) {
-    todayTotal = entry.segments.reduce((sum, s) => sum + (s.workMinutes || 0), 0);
-    if (active && !active.complete) {
-      // Rough live estimate for open segment (no lunch yet)
-      const inM = timeStringToMinutes(active.clockInManual || ptTime);
-      const nowM = timeStringToMinutes(ptTime);
-      todayTotal += Math.max(0, nowM - inM);
-    }
-  }
-
   const isOnLunch =
     !!active &&
     (active.lunchOutManual || active.lunchOutSystem) &&
     !(active.lunchInManual || active.lunchInSystem) &&
     !active.skipLunch;
+
+  let todayTotal = 0;
+  if (entry?.segments?.length) {
+    todayTotal = entry.segments.reduce((sum, s) => sum + (s.workMinutes || 0), 0);
+    if (active && !active.complete) {
+      const inM = timeStringToMinutes(active.clockInManual || ptTime);
+      const nowM = timeStringToMinutes(ptTime);
+      if (isOnLunch && active.lunchOutManual) {
+        const lunchOutM = timeStringToMinutes(active.lunchOutManual);
+        todayTotal += Math.max(0, lunchOutM - inM);
+      } else {
+        todayTotal += Math.max(0, nowM - inM);
+      }
+    }
+  }
 
   return {
     entry,

@@ -101,9 +101,16 @@ export function isPastDeadline(workDate: string, currentTime: Date = new Date())
  * @returns Yesterday's date
  */
 export function getYesterdayDate(fromDate: Date = new Date()): string {
-    const yesterday = new Date(fromDate);
-    yesterday.setDate(yesterday.getDate() - 1);
-    return yesterday.toISOString().split('T')[0];
+    const ymd = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(fromDate);
+    const [y, m, d] = ymd.split('-').map(Number);
+    const ptNoonOfYesterday = new Date(Date.UTC(y, m - 1, d - 1, 12, 0, 0, 0));
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(ptNoonOfYesterday);
 }
 
 interface CompletionCheckResult {
@@ -178,14 +185,30 @@ export function getTimeWindowMessage(workDate: string): string | null {
  * @returns Hours until deadline, or null if past
  */
 export function getHoursUntilDeadline(workDate: string, currentTime: Date = new Date()): number | null {
-    const entryDate = new Date(workDate + 'T00:00:00');
-    const deadline = new Date(entryDate);
-    deadline.setDate(deadline.getDate() + 1);
-    deadline.setHours(10, 0, 0, 0); // 10am next day
+    // PT-anchored deadline computation: the deadline is "tomorrow at 10am PT".
+    // Bug fix: previously used Date.UTC(y, m-1, d, 0, 0, 0, 0) which is UTC midnight,
+    // not PT midnight. On a UTC server, UTC midnight = 5pm PT previous day (PST) or
+    // 4pm PT previous day (PDT), causing wrong deadline computation.
+    // Fix: use PT-noon anchor to determine the PT calendar date, then compute
+    // the deadline as (that date + 1 day) at 10am PT.
+    const [wy, wm, wd] = workDate.split('-').map(Number);
+    if (!wy || !wm || !wd) return null;
 
-    const now = currentTime;
-    const hoursRemaining = (deadline.getTime() - now.getTime()) / (1000 * 60 * 60);
+    // PT noon of the workDate calendar day in PT.
+    // Using noon UTC as the anchor: since PT is always UTC-7 or UTC-8, noon UTC
+    // is always AFTER midnight PT on the same calendar day (never on the next or previous day).
+    const ptNoonOfWorkDate = new Date(Date.UTC(wy, wm - 1, wd, 12, 0, 0, 0));
+    const ptDateStr = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(ptNoonOfWorkDate);
 
+    // Parse the PT date string and compute: (that date + 1 day) at 10am PT in UTC.
+    const [y, m, d] = ptDateStr.split('-').map(Number);
+    // Next calendar day: d+1 overflows into next month if needed via Date.UTC
+    const deadlineUtc = Date.UTC(y, m - 1, d + 1, 17, 0, 0, 0); // 10am PT = 17:00 UTC (PDT/PT is always UTC-7)
+
+    const hoursRemaining = (deadlineUtc - currentTime.getTime()) / (1000 * 60 * 60);
     return hoursRemaining > 0 ? hoursRemaining : null;
 }
 
@@ -205,16 +228,31 @@ export function isWeekend(dateStr: string): boolean {
  * @returns Next business day in YYYY-MM-DD
  */
 export function getNextBusinessDay(dateStr: string): string {
-    const date = new Date(dateStr + 'T00:00:00');
-    const nextDay = new Date(date);
-    nextDay.setDate(nextDay.getDate() + 1);
-
-    // Skip weekends
-    while (isWeekend(nextDay.toISOString().split('T')[0])) {
-        nextDay.setDate(nextDay.getDate() + 1);
+    // Convert to PT calendar day first to anchor TZ, then shift by 24h UTC intervals.
+    // Fix: previously used `new Date(dateStr + 'T00:00:00')` (local TZ) then
+    // isWeekend(UTC-interpreted result), causing wrong-skip on Fri PT when runtime is UTC.
+    const [y, m, d] = dateStr.split('-').map(Number);
+    if (!y || !m || !d) return dateStr;
+    const ptYmd = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
+    // ptYmd is YYYY-MM-DD in PT. Add 1 calendar day (24h UTC, safe across DST).
+    const [py, pm, pd] = ptYmd.split('-').map(Number);
+    const nextUtc = Date.UTC(py, pm - 1, pd, 12, 0, 0, 0) + 24 * 60 * 60 * 1000;
+    let candidate = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(nextUtc));
+    while (isWeekend(candidate)) {
+        const [cy, cm, cd] = candidate.split('-').map(Number);
+        const cUtc = Date.UTC(cy, cm - 1, cd, 12, 0, 0, 0) + 24 * 60 * 60 * 1000;
+        candidate = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Los_Angeles',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+        }).format(new Date(cUtc));
     }
-
-    return nextDay.toISOString().split('T')[0];
+    return candidate;
 }
 
 /**
@@ -223,16 +261,28 @@ export function getNextBusinessDay(dateStr: string): string {
  * @returns Previous business day in YYYY-MM-DD
  */
 export function getPreviousBusinessDay(dateStr: string): string {
-    const date = new Date(dateStr + 'T00:00:00');
-    const prevDay = new Date(date);
-    prevDay.setDate(prevDay.getDate() - 1);
-
-    // Skip weekends
-    while (isWeekend(prevDay.toISOString().split('T')[0])) {
-        prevDay.setDate(prevDay.getDate() - 1);
+    // Same TZ fix as getNextBusinessDay: anchor to PT calendar day before shifting.
+    const [y, m, d] = dateStr.split('-').map(Number);
+    if (!y || !m || !d) return dateStr;
+    const ptYmd = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
+    const [py, pm, pd] = ptYmd.split('-').map(Number);
+    const prevUtc = Date.UTC(py, pm - 1, pd, 12, 0, 0, 0) - 24 * 60 * 60 * 1000;
+    let candidate = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(prevUtc));
+    while (isWeekend(candidate)) {
+        const [cy, cm, cd] = candidate.split('-').map(Number);
+        const cUtc = Date.UTC(cy, cm - 1, cd, 12, 0, 0, 0) - 24 * 60 * 60 * 1000;
+        candidate = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Los_Angeles',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+        }).format(new Date(cUtc));
     }
-
-    return prevDay.toISOString().split('T')[0];
+    return candidate;
 }
 
 interface AccessCheckResult {

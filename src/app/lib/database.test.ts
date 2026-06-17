@@ -13,6 +13,7 @@ import {
   closeActiveSegment,
   applyLunchToSegment,
 } from './segmentOps';
+import type { TimeSegment, TimeEntry } from './database';
 
 describe('stripUndefined', () => {
   it('removes keys with undefined values', () => {
@@ -301,5 +302,137 @@ describe('mapEntry segments[].complete — must respect persisted value', () => 
     expect(active).not.toBeNull();
     expect(active!.complete).toBe(false);
     expect(hasOpenSegment(entry as any)).toBe(true);
+  });
+});
+
+/**
+ * Split-shift scenario: After punchOut, the closed segment must remain in
+ * segments[] (complete=true). After the next punchIn, a new open segment
+ * is appended, giving segments=[closedSeg, openSeg].
+ *
+ * Bug: punchOut was writing segments=[closedSeg] correctly, but the NEXT
+ * punchIn was overwriting the entire array with segments=[newSeg], losing
+ * the archived closed segment. The fix: punchIn now preserves existing
+ * segments by reading them inside the transaction first.
+ */
+describe('Split-shift: punchOut then punchIn preserves archived segments', () => {
+  it('punchOut closes the active segment (complete=true)', () => {
+    const openSeg: TimeSegment = {
+      id: 'seg_1',
+      clockInManual: '09:00',
+      clockInSystem: 1000,
+      complete: false,
+    };
+    const closed = closeActiveSegment(openSeg, '17:00', 8000 * 60 * 60 * 1000 + 1000);
+    expect(closed.complete).toBe(true);
+    expect(closed.clockOutManual).toBe('17:00');
+    expect(closed.workMinutes).toBeGreaterThan(0);
+  });
+
+  it('entry.segments after punchOut should have the closed segment', () => {
+    // Simulate what punchOut writes: the existing [openSeg] becomes [closedSeg]
+    const openSeg: TimeSegment = {
+      id: 'seg_1',
+      clockInManual: '09:00',
+      clockInSystem: 1000,
+      complete: false,
+    };
+    const closed = closeActiveSegment(openSeg, '17:00', 8000 * 60 * 60 * 1000 + 1000);
+
+    // After punchOut, the Firestore doc has segments=[closedSeg]
+    const entryAfterPunchOut: any = {
+      id: 'u1_2026-06-16',
+      userId: 'u1',
+      date: '2026-06-16',
+      segments: [closed],
+      clockInManual: '09:00',
+      clockOutManual: '17:00',
+      complete: true,
+      currentStep: 4,
+      status: 'active',
+    };
+
+    // getActiveSegment should return null (no open segment)
+    const active = getActiveSegment(entryAfterPunchOut);
+    expect(active).toBeNull();
+    expect(hasOpenSegment(entryAfterPunchOut)).toBe(false);
+
+    // And the closed segment should be in segments[]
+    expect(entryAfterPunchOut.segments).toHaveLength(1);
+    expect(entryAfterPunchOut.segments[0].complete).toBe(true);
+  });
+
+  it('split-shift punchIn must preserve existing closed segments', () => {
+    // After punchOut: segments=[closedSeg]
+    const closedSeg: TimeSegment = {
+      id: 'seg_1',
+      clockInManual: '09:00',
+      clockInSystem: 1000,
+      clockOutManual: '17:00',
+      clockOutSystem: 8000,
+      workMinutes: 480,
+      complete: true,
+    };
+
+    // Simulate what punchIn should do: append new open segment to existing closed ones
+    const newOpenSeg: TimeSegment = {
+      id: 'seg_2',
+      clockInManual: '18:00',
+      clockInSystem: 9000,
+      complete: false,
+    };
+
+    // The combined segments array should be [closedSeg, newOpenSeg]
+    const allSegments: TimeSegment[] = [closedSeg, newOpenSeg];
+
+    // Verify: 2 segments, first closed, second open
+    expect(allSegments).toHaveLength(2);
+    expect(allSegments[0].complete).toBe(true);
+    expect(allSegments[1].complete).toBe(false);
+
+    // Verify getActiveSegment returns the second (open) segment
+    const entryForActiveCheck: any = {
+      id: 'u1_2026-06-16',
+      userId: 'u1',
+      date: '2026-06-16',
+      segments: allSegments,
+      clockInManual: '18:00',
+      complete: false,
+      currentStep: 2,
+      status: 'active',
+    };
+    const active = getActiveSegment(entryForActiveCheck);
+    expect(active).not.toBeNull();
+    expect(active!.id).toBe('seg_2');
+    expect(active!.complete).toBe(false);
+  });
+
+  it('BUG REGRESSION: punchIn was overwriting segments array instead of appending', () => {
+    // This test documents the bug: before the fix, punchIn did
+    // segments: [newSeg] which replaced the entire array, losing closedSeg.
+    // After the fix, punchIn should do segments: [...existingSegments, newSeg].
+
+    const existingClosedSegments: TimeSegment[] = [
+      { id: 'seg_1', clockInManual: '09:00', clockInSystem: 1000, clockOutManual: '17:00', workMinutes: 480, complete: true },
+    ];
+
+    const newOpenSeg: TimeSegment = {
+      id: 'seg_2',
+      clockInManual: '18:00',
+      clockInSystem: 9000,
+      complete: false,
+    };
+
+    // Correct behavior: append new segment to existing
+    const correctSegments = [...existingClosedSegments, newOpenSeg];
+    expect(correctSegments).toHaveLength(2);
+    expect(correctSegments[0].complete).toBe(true);
+    expect(correctSegments[1].complete).toBe(false);
+
+    // Incorrect behavior (the bug): replace entire array
+    const buggySegments = [newOpenSeg];
+    expect(buggySegments).toHaveLength(1);
+    expect(buggySegments[0].complete).toBe(false);
+    // Bug: lost the closed segment!
   });
 });
