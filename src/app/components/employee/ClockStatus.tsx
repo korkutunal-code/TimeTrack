@@ -72,7 +72,7 @@ export function ClockStatus({
             <span className="text-sm">Today so far</span>
           </div>
           <div className="text-3xl font-semibold tabular-nums text-foreground">
-            {formatHoursHMM(todayTotalMinutes)}
+            {formatHoursHMM(todayTotalMinutes / 60)}
           </div>
         </div>
 

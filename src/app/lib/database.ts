@@ -2,6 +2,7 @@ import { collection, doc, getDoc, getDocs, orderBy, query, Timestamp, updateDoc,
 import { db } from './firebase';
 import type { User } from './auth';
 import { stripUndefined } from './segmentOps';
+import { deriveSegmentWorkMinutes } from '../../utils/timeCalculations';
 
 /**
  * A single continuous work session ("shift"). A day may contain multiple
@@ -120,20 +121,22 @@ function deriveCurrentSegmentMinutes(e: Partial<TimeEntry>, archived: TimeSegmen
   // If totalWorkMinutes is present and this is a fresh single-segment doc, prefer it minus archived.
   if (!e.clockInManual) return undefined;
   if (e.clockOutManual) {
-    const [h1, m1] = e.clockInManual.split(':').map(Number);
-    const [h2, m2] = e.clockOutManual.split(':').map(Number);
-    let mins = (h2 * 60 + m2) - (h1 * 60 + m1);
-    if (!e.skipLunch && e.lunchOutManual && e.lunchInManual) {
-      const [lOh, lOm] = e.lunchOutManual.split(':').map(Number);
-      const [lIh, lIm] = e.lunchInManual.split(':').map(Number);
-      mins -= ((lIh * 60 + lIm) - (lOh * 60 + lOm));
-    }
-    return Math.max(0, mins);
+    // Delegate to the shared canonical helper so the lunch-aware arithmetic
+    // stays identical to TodayEntry's submit flows. Returns undefined for open
+    // shifts (no clockOut) so `current.workMinutes` is undefined and the
+    // mapEntry override adds 0 via `?? 0`.
+    return deriveSegmentWorkMinutes(
+      e.clockInManual,
+      e.clockOutManual,
+      e.skipLunch,
+      e.lunchOutManual,
+      e.lunchInManual,
+    );
   }
   return undefined;
 }
 
-function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
+export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
   const date = String(data.workDate || data.date || '');
   const currentStepRaw = data.currentStep;
   const complete = data.dayComplete === true;
@@ -280,7 +283,28 @@ function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
   // Override day-level hours to include all archived segments too.
   if (archived.length > 0) {
     const archivedMins = archived.reduce((s, x) => s + (x.workMinutes || 0), 0);
-    const currentMins = current?.workMinutes ?? 0;
+    // The synthesized `current` (built from the top-level legacy fields) is a
+    // *view* of the most-recent shift. In the ClockPunch flow that shift is
+    // ALSO persisted as the last element of `archived` (dual-write), so adding
+    // `current.workMinutes` again double-counts it — a 37-minute single shift
+    // would render as "1:14" (74 min) in TodayEntry/HistoryView. In the
+    // TodayEntry flow, the current shift lives ONLY in top-level fields (not
+    // in segments[]) and must be added. Detect the dual-write case by checking
+    // whether any archived seg covers the same shift as `current`.
+    let currentMins = 0;
+    if (current) {
+      if (!current.complete) {
+        // Open shift — not yet in archived, so its (live) minutes count once.
+        currentMins = current.workMinutes ?? 0;
+      } else {
+        const coveredByArchived = archived.some(
+          (s) =>
+            s.clockInManual === current.clockInManual &&
+            s.clockOutManual === current.clockOutManual,
+        );
+        currentMins = coveredByArchived ? 0 : (current.workMinutes ?? 0);
+      }
+    }
     entry.totalWorkMinutes = archivedMins + currentMins;
     entry.totalHours = entry.totalWorkMinutes / 60;
   }

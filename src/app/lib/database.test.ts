@@ -7,6 +7,11 @@
  * for employees in production. The fix: stripUndefined() + createInitialSegment()
  * must never emit `undefined` values.
  */
+// `./firebase` references `import.meta.env` and `window` at module top-level,
+// which throws under jest's CommonJS transform. The pure helpers under test
+// (segmentOps + mapEntry) don't need a real Firestore handle, so stub it.
+jest.mock('./firebase', () => ({ db: {} }));
+
 import {
   stripUndefined,
   createInitialSegment,
@@ -406,5 +411,173 @@ describe('split-shift: punchIn must preserve archived segments', () => {
     const buggySegments = [newOpenSeg];
     expect(buggySegments).toHaveLength(1);
     expect(buggySegments[0].complete).toBe(false);
+  });
+});
+
+/**
+ * Regression: mapEntry double-counted the synthesized `current` segment against
+ * the persisted archived segment in the ClockPunch dual-write flow, producing
+ * an exact 2x day total. A 37-minute single ClockPunch shift displayed as
+ * "1:14" (74 min) in TodayEntry/HistoryView. Reported 2026-06-22 (Timecamp.xlsx
+ * Issue 2: "Should have been 37 minutes, shows 1:14").
+ *
+ * Root cause: mapEntry's override block unconditionally added
+ * `current.workMinutes` to `archivedMins`, but the ClockPunch flow persists the
+ * most-recent closed shift in BOTH `segments[]` AND the top-level legacy fields.
+ * The synthesized `current` (built from those legacy fields) therefore
+ * duplicates an entry already present in `archived`. The fix detects the
+ * dual-write case by checking whether any archived seg covers the same shift
+ * (clockInManual + clockOutManual) as `current`.
+ */
+import { mapEntry } from './database';
+
+describe('mapEntry — Bug B: no double-count of synthesized current vs persisted archived seg', () => {
+  it('REGRESSION: a single ClockPunch closed shift (37 min) is NOT shown as 74 min', () => {
+    // Shape mirrors what `punchOut` writes after a single closed shift:
+    // segments[] contains the closed seg AND top-level fields mirror the same shift.
+    const data = {
+      userId: 'u1',
+      workDate: '2026-06-22',
+      clockInManual: '12:30',
+      clockOutManual: '13:07',
+      clockInSystemTime: { toDate: () => new Date(0) },
+      clockOutSystemTime: { toDate: () => new Date(0) },
+      dayComplete: true,
+      totalWorkMinutes: 37,
+      segments: [
+        {
+          id: 'seg_1719123456789_abc',
+          clockInManual: '12:30',
+          clockOutManual: '13:07',
+          workMinutes: 37,
+          complete: true,
+        },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-06-22', data as any);
+    expect(entry.totalWorkMinutes).toBe(37);
+    expect(entry.totalHours).toBeCloseTo(37 / 60, 5);
+  });
+
+  it('REGRESSION (Timecamp Issue 2 "39→41"): ClockPunch split shift 37 + 2 min totals 39 (not 41)', () => {
+    // The user's exact symptom: after a 37-min shift #1 and a 2-min shift #2,
+    // the day total showed 41 (= 39 + 2) because the synthesized `current`
+    // (from the dual-written top-level fields) re-counted shift #2's 2 minutes
+    // that were already in `archived`. `coveredByArchived` must detect this.
+    const data = {
+      userId: 'u1',
+      workDate: '2026-06-22',
+      clockInManual: '14:00',
+      clockOutManual: '14:02',
+      dayComplete: true,
+      totalWorkMinutes: 39,
+      segments: [
+        { id: 'seg_1', clockInManual: '12:30', clockOutManual: '13:07', workMinutes: 37, complete: true },
+        { id: 'seg_2', clockInManual: '14:00', clockOutManual: '14:02', workMinutes: 2, complete: true },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-06-22', data as any);
+    expect(entry.totalWorkMinutes).toBe(39);
+  });
+
+  it('ClockPunch split shift: two closed shifts (37 + 9 min) total 46 min (not 55, not 92)', () => {
+    // After punchOut #2 in a split shift, segments[] = [closedSeg1, closedSeg2]
+    // and top-level fields mirror closedSeg2 (the most recent). The synthesized
+    // current duplicates closedSeg2 only.
+    const data = {
+      userId: 'u1',
+      workDate: '2026-06-22',
+      clockInManual: '14:00',
+      clockOutManual: '14:09',
+      dayComplete: true,
+      totalWorkMinutes: 46,
+      segments: [
+        {
+          id: 'seg_1',
+          clockInManual: '12:30',
+          clockOutManual: '13:07',
+          workMinutes: 37,
+          complete: true,
+        },
+        {
+          id: 'seg_2',
+          clockInManual: '14:00',
+          clockOutManual: '14:09',
+          workMinutes: 9,
+          complete: true,
+        },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-06-22', data as any);
+    expect(entry.totalWorkMinutes).toBe(46);
+  });
+
+  it('TodayEntry single legacy shift (no segments[]) preserves totalWorkMinutes', () => {
+    // TodayEntry writes only top-level fields + totalWorkMinutes, no segments[].
+    // archived.length is 0 so the override does not apply; the stored value wins.
+    const data = {
+      userId: 'u1',
+      workDate: '2026-06-22',
+      clockInManual: '12:30',
+      clockOutManual: '13:07',
+      dayComplete: true,
+      totalWorkMinutes: 37,
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-06-22', data as any);
+    expect(entry.totalWorkMinutes).toBe(37);
+    expect(entry.segments).toEqual([]);
+  });
+
+  it('TodayEntry split shift: archived seg (shift #1) + current (shift #2) both count', () => {
+    // TodayEntry archives only prior shifts to segments[]; the current (most
+    // recent) shift lives in top-level fields and is NOT duplicated in segments[].
+    // The synthesized current MUST contribute its minutes here.
+    const data = {
+      userId: 'u1',
+      workDate: '2026-06-22',
+      clockInManual: '14:00',
+      clockOutManual: '14:09',
+      dayComplete: true,
+      totalWorkMinutes: 46,
+      segments: [
+        {
+          id: 'seg_1',
+          clockInManual: '12:30',
+          clockOutManual: '13:07',
+          workMinutes: 37,
+          complete: true,
+        },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-06-22', data as any);
+    // archived(37) + current synthesized from top-level (9) = 46
+    expect(entry.totalWorkMinutes).toBe(46);
+  });
+
+  it('ClockPunch open shift (clock-in only, no clock-out) does not synthesize current minutes', () => {
+    // An open shift has no clockOutManual, so deriveCurrentSegmentMinutes
+    // returns undefined → current.workMinutes is undefined → contributes 0.
+    const data = {
+      userId: 'u1',
+      workDate: '2026-06-22',
+      clockInManual: '09:00',
+      dayComplete: false,
+      totalWorkMinutes: 0,
+      segments: [
+        {
+          id: 'seg_open',
+          clockInManual: '09:00',
+          complete: false,
+        },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-06-22', data as any);
+    expect(entry.totalWorkMinutes).toBe(0);
   });
 });

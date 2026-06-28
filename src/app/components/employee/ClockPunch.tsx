@@ -229,7 +229,7 @@ export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
             <div className="grid grid-cols-2 gap-4 text-center">
               <div>
                 <div className="text-3xl font-semibold tabular-nums">
-                  {formatHoursHMM(week.totalMinutes)}
+                  {formatHoursHMM(week.totalMinutes / 60)}
                 </div>
                 <div className="text-xs uppercase tracking-widest text-muted-foreground">
                   Total Hours

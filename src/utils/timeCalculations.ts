@@ -55,6 +55,41 @@ export function calculateTotalWorkMinutes(clockIn: string, clockOut: string, lun
 }
 
 /**
+ * Compute the work minutes for a single shift segment from its raw clock/lunch
+ * strings, subtracting lunch only when both endpoints are present and lunch
+ * was not skipped. Result is clamped to >= 0.
+ *
+ * This is the CANONICAL lunch-aware shift-minutes implementation. It is shared
+ * by `mapEntry` (via `deriveCurrentSegmentMinutes` in database.ts) and by the
+ * TodayEntry submit flows (split-shift archive + clock-out) so that the day
+ * total the UI writes stays in lock-step with the day total `mapEntry`
+ * computes on the next read. Any change to lunch deduction logic MUST happen
+ * here so all callers stay consistent.
+ *
+ * @param clockIn  - HH:MM (empty/undefined/whitespace → treated as 0)
+ * @param clockOut - HH:MM (empty/undefined/whitespace → treated as 0)
+ * @param skipLunch - true if lunch was skipped (no deduction)
+ * @param lunchOut - HH:MM (empty/undefined → no deduction)
+ * @param lunchIn  - HH:MM (empty/undefined → no deduction)
+ * @returns Work minutes for the segment, clamped to >= 0.
+ */
+export function deriveSegmentWorkMinutes(
+    clockIn: string | undefined | null,
+    clockOut: string | undefined | null,
+    skipLunch: boolean | undefined,
+    lunchOut: string | undefined | null,
+    lunchIn: string | undefined | null,
+): number {
+    const inM = timeToMinutes(clockIn);
+    const outM = timeToMinutes(clockOut);
+    let mins = outM - inM;
+    if (!skipLunch && lunchOut && lunchIn) {
+        mins -= timeToMinutes(lunchIn) - timeToMinutes(lunchOut);
+    }
+    return Math.max(0, mins);
+}
+
+/**
  * Format minutes to "Xh Ym" display format
  * @param minutes - Total minutes
  * @returns Formatted as "Xh Ym"

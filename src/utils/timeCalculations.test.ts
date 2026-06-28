@@ -3,6 +3,7 @@ import {
     minutesToTime,
     calculateLunchMinutes,
     calculateTotalWorkMinutes,
+    deriveSegmentWorkMinutes,
     formatMinutesToHoursMinutes,
     minutesToDecimalHours,
     formatHoursHMM,
@@ -73,6 +74,46 @@ describe('timeCalculations', () => {
         });
     });
 
+    describe('deriveSegmentWorkMinutes', () => {
+        // Canonical helper shared by mapEntry (database.ts) and TodayEntry
+        // submit flows. Pins the lunch-aware shift-minutes contract so a
+        // future drift between the three call sites fails loudly here.
+        it('subtracts lunch when both endpoints present and not skipped', () => {
+            // 09:00 -> 17:00 = 480, lunch 12:00-12:30 = 30 → 450
+            expect(deriveSegmentWorkMinutes('09:00', '17:00', false, '12:00', '12:30')).toBe(450);
+        });
+
+        it('skips lunch deduction when skipLunch is true', () => {
+            expect(deriveSegmentWorkMinutes('09:00', '17:00', true, '12:00', '12:30')).toBe(480);
+        });
+
+        it('skips lunch deduction when either lunch endpoint is missing', () => {
+            expect(deriveSegmentWorkMinutes('09:00', '17:00', false, '', '12:30')).toBe(480);
+            expect(deriveSegmentWorkMinutes('09:00', '17:00', false, '12:00', undefined)).toBe(480);
+            expect(deriveSegmentWorkMinutes('09:00', '17:00', false, undefined, undefined)).toBe(480);
+        });
+
+        it('clamps negative results to 0', () => {
+            // clockOut before clockIn → negative → 0
+            expect(deriveSegmentWorkMinutes('17:00', '09:00', false, undefined, undefined)).toBe(0);
+            // lunch longer than shift → negative → 0
+            expect(deriveSegmentWorkMinutes('09:00', '10:00', false, '09:00', '11:00')).toBe(0);
+        });
+
+        it('treats missing clock strings as 0 minutes', () => {
+            expect(deriveSegmentWorkMinutes('', '', false, undefined, undefined)).toBe(0);
+            expect(deriveSegmentWorkMinutes(undefined, undefined, false, undefined, undefined)).toBe(0);
+        });
+
+        it('matches the exact 37-minute single-shift scenario (Timecamp Issue 2)', () => {
+            expect(deriveSegmentWorkMinutes('12:30', '13:07', false, undefined, undefined)).toBe(37);
+        });
+
+        it('matches the exact 2-minute split-shift addition scenario (Timecamp Issue 2)', () => {
+            expect(deriveSegmentWorkMinutes('14:00', '14:02', false, undefined, undefined)).toBe(2);
+        });
+    });
+
     describe('formatMinutesToHoursMinutes', () => {
         it('formats combined hours and minutes', () => {
             expect(formatMinutesToHoursMinutes(0)).toBe('0h 0m');
@@ -112,6 +153,20 @@ describe('timeCalculations', () => {
             ['NaN', Number.NaN],
         ])('returns 0:00 for %s', (_label, input) => {
             expect(formatHoursHMM(input as any)).toBe('0:00');
+        });
+
+        // Regression (Timecamp.xlsx Issue 1, 2026-06-17): "Today so far"
+        // showed raw minutes as if they were hours (e.g. 37 min → "37:00")
+        // because callers passed integer minutes to a function that expects
+        // DECIMAL HOURS. This test pins the units contract so a future caller
+        // that breaks it fails loudly.
+        it('EXPECTS decimal hours, NOT raw minutes (units contract)', () => {
+            // 37 minutes of work MUST be passed as 37/60 ≈ 0.6167 decimal hours.
+            expect(formatHoursHMM(37 / 60)).toBe('0:37');
+            // Passing 37 (raw minutes) is the bug — it would render "37:00".
+            expect(formatHoursHMM(37)).toBe('37:00');
+            // 2.5h = "2:30" (the intended contract).
+            expect(formatHoursHMM(2.5)).toBe('2:30');
         });
     });
 

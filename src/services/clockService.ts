@@ -312,7 +312,17 @@ export async function getWeekSummary(userId: string): Promise<WeekSummary> {
   let total = 0;
   let daysWorked = 0;
   for (const e of entries) {
-    const mins = e.segments?.reduce((s, seg) => s + (seg.workMinutes || 0), 0) || 0;
+    // `entry.totalWorkMinutes` is the canonical day total maintained by
+    // `mapEntry` (it includes archived + current-segment minutes, and falls
+    // back to the stored legacy value when there are no segments). Legacy
+    // TodayEntry docs have `totalWorkMinutes` set but `segments[]` empty, so
+    // summing only `seg.workMinutes` silently dropped their entire day from
+    // the week total. Prefer the day-total field; fall back to summing the
+    // persisted segments when it is absent.
+    const mins =
+      typeof e.totalWorkMinutes === 'number'
+        ? e.totalWorkMinutes
+        : (e.segments?.reduce((s, seg) => s + (seg.workMinutes || 0), 0) || 0);
     total += mins;
     if (mins > 0) daysWorked++;
   }

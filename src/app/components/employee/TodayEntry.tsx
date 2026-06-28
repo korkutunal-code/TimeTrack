@@ -24,7 +24,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 
 // Existing business logic (ported from the previous HTML/JS app)
  
-import { calculateLunchMinutes, calculateTotalWorkMinutes } from '../../../utils/timeCalculations';
+import { calculateLunchMinutes, calculateTotalWorkMinutes, deriveSegmentWorkMinutes } from '../../../utils/timeCalculations';
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import {
   checkTimeAnomalies,
@@ -239,12 +239,28 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
 
     // --- Split shift: archive previous completed segment, start a fresh one. ---
     if (entry?.complete && entry.clockInManual && entry.clockOutManual) {
-      const priorArchivedMins =
-        (entry.segments || [])
-          .slice(0, -1) // exclude the "current" synthesized segment (last)
-          .reduce((s, seg) => s + (seg.workMinutes || 0), 0);
-      const lastMins = (entry.segments?.[entry.segments.length - 1]?.workMinutes) || 0;
-      const accumulatedMinutes = priorArchivedMins + lastMins;
+      // Derive the just-completed shift's minutes directly from the top-level
+      // legacy fields. `entry.segments` (per mapEntry) contains ONLY previously
+      // archived shifts, NOT the current one — so reading `segments[last]`
+      // returns the wrong (or no) value. On the first split, segments[] is
+      // empty and the prior code wrote workMinutes: 0, losing shift #1's total.
+      // Uses the shared canonical helper so this stays in sync with mapEntry.
+      const justCompletedMins = deriveSegmentWorkMinutes(
+        entry.clockInManual,
+        entry.clockOutManual,
+        entry.skipLunch,
+        entry.lunchOutManual,
+        entry.lunchInManual,
+      );
+
+      // entry.segments holds only previously-archived shifts (no synthesized
+      // current lives there). Sum all of them, then add the just-completed
+      // shift to get the running day total.
+      const priorArchivedMins = (entry.segments || []).reduce(
+        (s, seg) => s + (seg.workMinutes || 0),
+        0,
+      );
+      const accumulatedMinutes = priorArchivedMins + justCompletedMins;
 
       await updateDoc(doc(db, 'timeEntries', entryId), {
         // Archive the just-completed segment into the stored segments[] list
@@ -259,7 +275,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
           clockOutManual: entry.clockOutManual,
           clockOutSystemTime: entry.clockOutSystem ? new Date(entry.clockOutSystem) : null,
           skipLunch: !!entry.skipLunch,
-          workMinutes: lastMins,
+          workMinutes: justCompletedMins,
           taskId: (entry as any).taskId || null,
           complete: true,
         }),
@@ -405,23 +421,26 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       return;
     }
 
-    // Calculate current-segment minutes
-    let segMins = 0;
-    const cIn = timeToMinutes(entry.clockInManual);
-    const cOut = timeToMinutes(currentTime);
-    segMins = cOut - cIn;
-
-    if (!entry.skipLunch && entry.lunchOutManual && entry.lunchInManual) {
-      const lOut = timeToMinutes(entry.lunchOutManual);
-      const lIn = timeToMinutes(entry.lunchInManual);
-      segMins -= (lIn - lOut);
-    }
+    // Calculate current-segment minutes. Uses the shared canonical helper so
+    // the lunch-aware arithmetic stays identical to mapEntry's
+    // `deriveCurrentSegmentMinutes` (which feeds `totalWorkMinutes`).
+    const segMins = deriveSegmentWorkMinutes(
+      entry.clockInManual,
+      currentTime,
+      entry.skipLunch,
+      entry.lunchOutManual,
+      entry.lunchInManual,
+    );
 
     // Include previously-archived segments so the day total reflects split shifts.
-    const archivedMins =
-      (entry.segments || [])
-        .slice(0, -1) // exclude the synthesized "current" segment (last)
-        .reduce((s, seg) => s + (seg.workMinutes || 0), 0);
+    // `entry.segments` (per mapEntry) contains ONLY persisted archived segments —
+    // there is no synthesized "current" segment appended. The previous
+    // `.slice(0, -1)` dropped the last real archived shift, under-counting the
+    // day total every time a split shift was clocked out.
+    const archivedMins = (entry.segments || []).reduce(
+      (s, seg) => s + (seg.workMinutes || 0),
+      0,
+    );
     const totalMins = archivedMins + Math.max(0, segMins);
 
     const now = Timestamp.now();
