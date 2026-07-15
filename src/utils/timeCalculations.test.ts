@@ -400,27 +400,27 @@ describe('PT helpers — timezone safety (W2 audit)', () => {
     });
 
     /**
-     * getPTWeekStart: PT week always starts on Sunday (DEFAULT_WORKWEEK_START_DAY = 0).
+     * getPTWeekStart: PT week always starts on Monday (Mon–Sun workweek).
      */
     describe('getPTWeekStart', () => {
-        it('returns the same PT Sunday when given a PT Sunday', () => {
-            expect(getPTWeekStart('2026-06-14')).toBe('2026-06-14'); // Jun 14 2026 = Sunday
+        it('returns the same PT Monday when given a PT Monday', () => {
+            expect(getPTWeekStart('2026-06-15')).toBe('2026-06-15'); // Jun 15 2026 = Monday
         });
 
-        it('returns the preceding PT Sunday for a PT Monday', () => {
-            expect(getPTWeekStart('2026-06-15')).toBe('2026-06-14'); // Jun 15 = Monday
+        it('returns the preceding PT Monday for a PT Tuesday', () => {
+            expect(getPTWeekStart('2026-06-16')).toBe('2026-06-15'); // Jun 16 = Tuesday
         });
 
-        it('returns the preceding PT Sunday for a PT Saturday', () => {
-            expect(getPTWeekStart('2026-06-20')).toBe('2026-06-14'); // Jun 20 = Saturday
+        it('returns the preceding PT Monday for a PT Sunday', () => {
+            expect(getPTWeekStart('2026-06-14')).toBe('2026-06-08'); // Jun 14 = Sunday
         });
 
-        it('crosses month boundary: May Monday -> preceding May Sunday', () => {
-            expect(getPTWeekStart('2026-05-04')).toBe('2026-05-03'); // May 4 = Monday
+        it('returns the preceding PT Monday for a PT Saturday', () => {
+            expect(getPTWeekStart('2026-06-20')).toBe('2026-06-15'); // Jun 20 = Saturday
         });
 
-        it('crosses month boundary: Sunday at month start returns same Sunday (not prior)', () => {
-            expect(getPTWeekStart('2026-03-01')).toBe('2026-03-01'); // Mar 1 2026 = Sunday (same as June 14 case)
+        it('crosses month boundary: Sunday at month start returns preceding Monday (prior month)', () => {
+            expect(getPTWeekStart('2026-03-01')).toBe('2026-02-23'); // Mar 1 2026 = Sunday
         });
 
         it('handles default argument without throwing', () => {

@@ -300,7 +300,7 @@ export async function getPunchStatus(userId: string): Promise<PunchStatus> {
   };
 }
 
-/** This week's summary (PT week, Sunday start). */
+/** This week's summary (PT week, Monday start). */
 export async function getWeekSummary(userId: string): Promise<WeekSummary> {
   const ptDate = getCurrentPTDate();
   const weekStart = getPTWeekStart(ptDate);

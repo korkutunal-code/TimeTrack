@@ -250,8 +250,8 @@ export function getPTDate(d: Date): string {
 }
 
 /**
- * Simple PT week start (Sunday = 0, matches existing DEFAULT_WORKWEEK_START_DAY).
- * Returns YYYY-MM-DD of the Sunday of the week containing the given PT date.
+ * Simple PT week start (Monday = 1, Mon–Sun workweek).
+ * Returns YYYY-MM-DD of the Monday of the week containing the given PT date.
  */
 export function getPTWeekStart(dateStr: string = getCurrentPTDate()): string {
   // Parse the PT date as local noon to avoid any DST boundary issues
@@ -273,7 +273,8 @@ export function getPTWeekStart(dateStr: string = getCurrentPTDate()): string {
     Saturday: 6,
   };
   const ptWeekday = weekdayMap[ptWeekdayStr] ?? 0;
-  const daysBack = ptWeekday; // Sunday start
+  // Monday start: Mon=0 back, Tue=1, ..., Sun=6
+  const daysBack = (ptWeekday + 6) % 7;
   const start = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
   start.setUTCDate(start.getUTCDate() - daysBack);
   // Reuse the PT date formatter (the adjusted instant will resolve to correct PT calendar day)
