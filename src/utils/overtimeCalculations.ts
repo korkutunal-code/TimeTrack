@@ -20,8 +20,15 @@ export const WORKWEEK_START_DAYS = {
     SATURDAY: 6
 } as const;
 
-// Default workweek starts on Sunday
-export const DEFAULT_WORKWEEK_START_DAY = WORKWEEK_START_DAYS.SUNDAY;
+// Default workweek starts on Monday.
+// ALIGNMENT NOTE: this MUST agree with the display week (getPTWeekStart in
+// timeCalculations.ts), which is also Monday-start. Changing one without the
+// other re-introduces the divergence flagged by the Kilo bot review — where
+// "This Week Total Hours" (display) and weekly-OT (>40h) summed over
+// different 7-day windows (Mon–Sun vs Sun–Sat), a payroll-correctness
+// hazard per AGENTS.md §2. There is a cross-module agreement test in
+// overtimeCalculations.test.ts that locks the two together.
+export const DEFAULT_WORKWEEK_START_DAY = WORKWEEK_START_DAYS.MONDAY;
 
 // Time thresholds in minutes
 const DAILY_REGULAR_MAX = 480;      // 8 hours

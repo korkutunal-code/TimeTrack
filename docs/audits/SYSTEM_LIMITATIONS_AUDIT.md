@@ -78,12 +78,17 @@ There is, however, a **genuine hard cap**: the legacy `TodayEntry` auto-close wa
 - **Impact:** Resolved — full history is now returned. The `limit(500)` at `src/app/lib/database.ts:566` (in `getRecentTimeEntries`-style helpers) is intentional for dashboard views.
 - **Recommendation:** No change; keep the pagination loop. Listed so reviewers know the historical trap was already fixed.
 
-### 9. Payroll OT workweek-start default is Monday (`weekly_start_day: 1`) but the canonical `DEFAULT_WORKWEEK_START_DAY` is Sunday
+### 9. ✅ RESOLVED — Payroll OT workweek-start default now Monday-aligned with the display week
 
-- **Limitation:** Two conflicting defaults exist for the workweek start day. `overtimeCalculations.DEFAULT_WORKWEEK_START_DAY = SUNDAY (0)`, but `PayrollReports` payroll settings default `weekly_start_day` to `1` (Monday). Recent header work moved the display week to Monday, but the OT engine's default constant is still Sunday.
-- **Location:** `src/utils/overtimeCalculations.ts:24` (`DEFAULT_WORKWEEK_START_DAY = SUNDAY`) vs `src/app/components/admin/PayrollReports.tsx:42,54` (`weekly_start_day: 1`).
-- **Impact:** Payroll passes the setting explicitly (`calculateBiweeklyOvertimeTotals(entries, payrollSettings.weekly_start_day)` at `PayrollReports.tsx:178`), so the constant default is overridden in practice. But any caller using the bare default (e.g. `getWorkWeekStartDate(dateStr)` with no second arg) gets a Sunday-start week, which is inconsistent with the Monday-start week the UI now shows. Risk of subtle weekly-OT mis-bucketing in any future caller that omits the arg.
-- **Recommendation:** Align `DEFAULT_WORKWEEK_START_DAY` to `MONDAY` to match the rest of the app, or deprecate the default and require callers to pass it explicitly. Add a test asserting the two defaults agree.
+- **Status:** **Complete (2026-07-18).** Fix applied after Kilo bot review flagged the divergence on the `getPTWeekStart` Monday-start PR.
+- **Limitation (historical):** Two conflicting defaults existed for the workweek start day. `overtimeCalculations.DEFAULT_WORKWEEK_START_DAY = SUNDAY (0)`, while `PayrollReports` payroll settings defaulted `weekly_start_day` to `1` (Monday) and the display week (`getPTWeekStart` → `getWeekSummary` "This Week Total Hours") moved to Monday. Result: the display total and the weekly-OT (>40h) calculation summed over different 7-day windows (Mon–Sun vs Sun–Sat) — a Sunday shift landed in one boundary for display and another for OT.
+- **Location:** `src/utils/overtimeCalculations.ts:24` (`DEFAULT_WORKWEEK_START_DAY`) vs `src/app/components/admin/PayrollReports.tsx:42,54` (`weekly_start_day: 1`) vs `src/utils/timeCalculations.ts` `getPTWeekStart`.
+- **Fix applied:**
+  - Changed `DEFAULT_WORKWEEK_START_DAY` from `WORKWEEK_START_DAYS.SUNDAY` to `WORKWEEK_START_DAYS.MONDAY` (`overtimeCalculations.ts:24`), aligning the OT engine default with the display week. This propagates to `getWorkWeekStartDate` (default arg), `calculateBiweeklyOvertimeTotals` (default arg), and the three explicit callers (TodayEntry, TeamDashboard, AdminPanel) that pass `DEFAULT_WORKWEEK_START_DAY`.
+  - Added a cross-module **agreement test** in `overtimeCalculations.test.ts` (`workweek boundary agreement — display vs OT`) asserting `getWorkWeekStartDate(d)` (default arg) === `getPTWeekStart(d)` across 8 sample dates spanning a week boundary and a month boundary, plus a constant-is-Monday assertion. Locks the two boundaries together so the regression can't silently recur.
+  - Updated affected default-dependent test assertions (constant value, default-arg week-start, biweekly week-key labels).
+- **Verified safe (no migration):** `calculateBiweeklyOvertimeTotals` recomputes the week boundary from `entry.workDate` (line 236), not the stored `workWeekStartDate` field. `getEntriesForWorkweek` is test-only. Existing docs are bucketed under the new Monday boundary correctly on read; the stored field is informational-only.
+- **Recommendation:** None — resolved. The agreement test is the ongoing guard.
 
 ### 10. Audit-history query capped at 50 results
 
@@ -121,7 +126,7 @@ There is, however, a **genuine hard cap**: the legacy `TodayEntry` auto-close wa
 | # | Limitation | Severity | Action |
 |---|---|---|---|
 | 1 | 12h auto-close writes capped/incorrect timestamp, no audit | **High** | Fix (notification-only or route through clockService) |
-| 9 | Conflicting workweek-start defaults (Sun vs Mon) | Medium | Align constants |
+| ~~9~~ | ~~Conflicting workweek-start defaults (Sun vs Mon)~~ | ~~Medium~~ | ✅ **Resolved (2026-07-18)** — `DEFAULT_WORKWEEK_START_DAY` now Monday; cross-module agreement test added |
 | 5 | Hardcoded 08:00–17:00 Mon–Fri schedule | Medium | Per-employee schedule |
 | 2 | 8h regular-time threshold (perceived cap) | Low (by design) | UI clarification only |
 | 4 | 8h progress-bar target | Low | Cosmetic |
