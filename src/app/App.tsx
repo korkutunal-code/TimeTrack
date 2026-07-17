@@ -11,11 +11,17 @@ import { PayrollReports } from './components/admin/PayrollReports';
 import { AuditViewer } from './components/admin/AuditViewer';
 import { PatternMetrics } from './components/admin/PatternMetrics';
 import { CorrectionRequests } from './components/admin/CorrectionRequests';
-import { Button } from './components/ui/button';
 import { Card } from './components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Badge } from './components/ui/badge';
 import { UserAvatar } from './components/ui/user-avatar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './components/ui/dropdown-menu';
 import { Toaster } from './components/ui/sonner';
 import { LogOut, Clock, Users, Settings, FileText, Search, TrendingUp, FileWarning } from 'lucide-react';
 import { QABar } from './components/QABar';
@@ -142,28 +148,39 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-2 md:gap-3">
-            <div className="hidden sm:flex items-center gap-3 bg-white/50 px-3 py-1.5 rounded-full border border-slate-200/60 shadow-sm">
-              <div className="text-right">
-                <p className="text-sm font-bold text-slate-800 tracking-tight">{currentUser.name}</p>
-                <p className="text-xs text-indigo-600 font-medium uppercase tracking-wider">
-                  {currentUser.role === 'employee' ? `Emp #${currentUser.uid.substring(0, 4)}` : currentUser.role}
-                </p>
-              </div>
-              <UserAvatar name={currentUser.name} size="md" />
-            </div>
-            {/* Mobile Avatar Only */}
-            <div className="sm:hidden">
-              <UserAvatar name={currentUser.name} size="sm" />
-            </div>
-            <Button
-              variant="outline"
-              onClick={handleLogout}
-              size="sm"
-              className="h-9 md:h-10 rounded-full border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors"
-            >
-              <LogOut className="size-4" />
-              <span className="hidden md:inline ml-2 font-medium">Sign Out</span>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label="Account menu"
+                className="rounded-full outline-none cursor-pointer transition-transform hover:scale-105 active:scale-95 focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+              >
+                <UserAvatar
+                  name={currentUser.name}
+                  size="md"
+                  className="size-8 sm:size-10"
+                />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" sideOffset={8} className="w-56 p-2">
+                <div className="px-2 py-1.5">
+                  <p className="text-sm font-bold text-slate-800 tracking-tight truncate">
+                    {currentUser.name}
+                  </p>
+                  <p className="text-xs text-indigo-600 font-medium uppercase tracking-wider">
+                    {currentUser.role === 'employee'
+                      ? `Emp #${currentUser.uid.substring(0, 4)}`
+                      : currentUser.role}
+                  </p>
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  variant="destructive"
+                  onSelect={() => handleLogout()}
+                  className="cursor-pointer w-full justify-start gap-2 font-medium"
+                >
+                  <LogOut className="size-4" />
+                  <span>Sign Out</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </div>
