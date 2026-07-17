@@ -15,6 +15,8 @@ import { Card } from './components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Badge } from './components/ui/badge';
 import { UserAvatar } from './components/ui/user-avatar';
+import { TimeZoneSelector } from './components/ui/time-zone-selector';
+import { DEFAULT_DISPLAY_TIMEZONE } from './lib/timezones';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,6 +37,9 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  // Display-only time zone for the punch screen's live date/time/zone label.
+  // Pure UI state — never affects storage or calculations (AGENTS.md §2).
+  const [displayTimezone, setDisplayTimezone] = useState(DEFAULT_DISPLAY_TIMEZONE);
 
   const testMode =
     import.meta.env.VITE_TEST_MODE === 'true' ||
@@ -148,6 +153,7 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-2 md:gap-3">
+            <TimeZoneSelector value={displayTimezone} onChange={setDisplayTimezone} />
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label="Account menu"
@@ -200,6 +206,7 @@ export default function App() {
             <ClockPunch
               user={currentUser}
               onViewHistory={() => setEmployeeView('history')}
+              displayTimezone={displayTimezone}
             />
           )}
         </div>
@@ -247,6 +254,7 @@ export default function App() {
             <ClockPunch
               user={currentUser}
               onViewHistory={() => setEmployeeView('history')}
+              displayTimezone={displayTimezone}
             />
           )}
         </TabsContent>

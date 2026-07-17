@@ -3,14 +3,19 @@ import { Card, CardContent } from '../ui/card';
 import { Badge } from '../ui/badge';
 import type { TimeSegment } from '../../lib/database';
 import { formatHoursHMM } from '../../../utils/timeCalculations';
+import { getDisplayClock } from '../../lib/timezones';
 
 interface ClockStatusProps {
   isClockedIn: boolean;
   isOnLunch: boolean;
   activeSegment: TimeSegment | null;
   todayTotalMinutes: number;
-  currentPTTime: string;
-  currentPTDate: string;
+  /**
+   * IANA zone id used purely for DISPLAY of the live date/time/zone label on
+   * this screen. Does not affect stored data or calculations (which remain in
+   * America/Los_Angeles).
+   */
+  displayTimezone: string;
 }
 
 export function ClockStatus({
@@ -18,9 +23,9 @@ export function ClockStatus({
   isOnLunch,
   activeSegment,
   todayTotalMinutes,
-  currentPTTime,
-  currentPTDate,
+  displayTimezone,
 }: ClockStatusProps) {
+  const displayClock = getDisplayClock(displayTimezone);
   const statusColor = isOnLunch
     ? 'bg-amber-100 text-amber-800 border-amber-300'
     : isClockedIn
@@ -45,10 +50,10 @@ export function ClockStatus({
         <div className="flex items-center justify-between">
           <div>
             <div className="text-xs uppercase tracking-widest text-muted-foreground font-medium">
-              {currentPTDate} • America/Los_Angeles
+              {displayClock.date} • {displayClock.zoneName}
             </div>
             <div className="text-5xl font-mono font-semibold tracking-tighter text-foreground tabular-nums mt-1">
-              {currentPTTime}
+              {displayClock.time}
             </div>
           </div>
 

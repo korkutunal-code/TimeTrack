@@ -20,9 +20,14 @@ import { formatHoursHMM } from '../../../utils/timeCalculations';
 interface ClockPunchProps {
   user: User;
   onViewHistory?: () => void;
+  /**
+   * Display-only time zone (IANA id). Affects only the on-screen date/time/zone
+   * label; never affects calculations or stored timestamps.
+   */
+  displayTimezone: string;
 }
 
-export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
+export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchProps) {
   const [status, setStatus] = useState<PunchStatus | null>(null);
   const [week, setWeek] = useState<WeekSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -157,7 +162,7 @@ export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
       <div className="text-center">
         <h2 className="text-2xl font-semibold tracking-tight">Punch Clock</h2>
         <p className="text-sm text-muted-foreground">
-          One-tap clock in/out • America/Los_Angeles
+          One-tap clock in/out
         </p>
       </div>
 
@@ -168,8 +173,7 @@ export function ClockPunch({ user, onViewHistory }: ClockPunchProps) {
           isOnLunch={onLunch}
           activeSegment={active}
           todayTotalMinutes={status.todayTotalMinutes}
-          currentPTTime={status.currentPTTime}
-          currentPTDate={status.currentPTDate}
+          displayTimezone={displayTimezone}
         />
       )}
 
