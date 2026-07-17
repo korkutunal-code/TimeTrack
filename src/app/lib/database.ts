@@ -370,9 +370,18 @@ export function calculateTotalHours(entry: Partial<TimeEntry>): number {
   if (!entry.clockInManual || !entry.clockOutManual) return 0;
   const clockIn = timeToMinutes(entry.clockInManual);
   const clockOut = timeToMinutes(entry.clockOutManual);
-  let totalMinutes = clockOut - clockIn;
+  // S6: cross-midnight wrap (see segmentOps.closeActiveSegment). A clock-out
+  // earlier than clock-in means the shift crossed midnight; add 24h. Lunch
+  // times are normalized against the same clock-in anchor so a midnight-
+  // straddling lunch is subtracted correctly.
+  const effClockOut = clockOut < clockIn ? clockOut + 24 * 60 : clockOut;
+  let totalMinutes = effClockOut - clockIn;
   if (entry.lunchOutManual && entry.lunchInManual && !entry.skipLunch) {
-    totalMinutes -= (timeToMinutes(entry.lunchInManual) - timeToMinutes(entry.lunchOutManual));
+    const lo = timeToMinutes(entry.lunchOutManual);
+    const li = timeToMinutes(entry.lunchInManual);
+    const effLo = lo < clockIn ? lo + 24 * 60 : lo;
+    const effLi = li < clockIn ? li + 24 * 60 : li;
+    totalMinutes -= Math.max(0, effLi - effLo);
   }
   return Math.max(0, totalMinutes / 60);
 }

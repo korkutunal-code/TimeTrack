@@ -19,6 +19,7 @@ import {
   applyLunchToSegment,
 } from './segmentOps';
 import type { TimeSegment, TimeEntry } from './database';
+import { calculateTotalHours } from './database';
 
 describe('stripUndefined', () => {
   it('removes keys with undefined values', () => {
@@ -115,6 +116,97 @@ describe('closeActiveSegment', () => {
     const closed1 = closeActiveSegment(seg, '17:00', 8000 * 60 * 60 * 1000 + 1000, false);
     const closed2 = closeActiveSegment(closed1, '18:00', 9000 * 60 * 60 * 1000 + 1000, false);
     expect(closed2.clockOutManual).toBe('17:00');
+  });
+
+  // S6: cross-midnight shift duration must wrap past 24:00 instead of
+  // collapsing to 0 (the old `outM - inM` gave -1260 -> 0 for 23:00->02:00).
+  it('S6: wraps a cross-midnight shift (23:00 -> 02:00 = 180 min)', () => {
+    const seg = createInitialSegment('23:00', 1000);
+    const closed = closeActiveSegment(seg, '02:00', 8000 * 60 * 60 * 1000 + 1000, false);
+    expect(closed.workMinutes).toBe(180);
+  });
+
+  it('S6: subtracts a lunch that straddles midnight (22:00 / 23:30-00:30 / 02:00 = 180 min)', () => {
+    let seg = createInitialSegment('22:00', 1000);
+    seg = applyLunchToSegment(seg, 'start', '23:30', 2000);
+    seg = applyLunchToSegment(seg, 'end', '00:30', 3000);
+    const closed = closeActiveSegment(seg, '02:00', 8000 * 60 * 60 * 1000 + 1000, false);
+    // 4h shift (22:00->02:00 = 240) - 60min lunch = 180
+    expect(closed.workMinutes).toBe(180);
+  });
+
+  it('S6: subtracts a lunch fully after midnight (22:00 / 00:30-01:00 / 02:00 = 210 min)', () => {
+    let seg = createInitialSegment('22:00', 1000);
+    seg = applyLunchToSegment(seg, 'start', '00:30', 2000);
+    seg = applyLunchToSegment(seg, 'end', '01:00', 3000);
+    const closed = closeActiveSegment(seg, '02:00', 8000 * 60 * 60 * 1000 + 1000, false);
+    // 4h shift (240) - 30min lunch = 210
+    expect(closed.workMinutes).toBe(210);
+  });
+
+  it('S6: same-day shift is unchanged (08:00 -> 17:00 = 540 min)', () => {
+    const seg = createInitialSegment('08:00', 1000);
+    const closed = closeActiveSegment(seg, '17:00', 8000 * 60 * 60 * 1000 + 1000, false);
+    expect(closed.workMinutes).toBe(540);
+  });
+});
+
+describe('calculateTotalHours — S6 cross-midnight', () => {
+  it('returns 0 when clock-out is missing', () => {
+    expect(calculateTotalHours({ clockInManual: '08:00' })).toBe(0);
+  });
+
+  it('same-day shift with no lunch (08:00 -> 17:00 = 9h)', () => {
+    expect(calculateTotalHours({ clockInManual: '08:00', clockOutManual: '17:00' })).toBe(9);
+  });
+
+  it('same-day shift with lunch (08:00 / 12:00-12:30 / 17:00 = 8.5h)', () => {
+    expect(
+      calculateTotalHours({
+        clockInManual: '08:00',
+        lunchOutManual: '12:00',
+        lunchInManual: '12:30',
+        clockOutManual: '17:00',
+      }),
+    ).toBe(8.5);
+  });
+
+  it('wraps a cross-midnight shift (23:00 -> 02:00 = 3h)', () => {
+    expect(calculateTotalHours({ clockInManual: '23:00', clockOutManual: '02:00' })).toBe(3);
+  });
+
+  it('subtracts a midnight-straddling lunch (22:00 / 23:30-00:30 / 02:00 = 3h)', () => {
+    expect(
+      calculateTotalHours({
+        clockInManual: '22:00',
+        lunchOutManual: '23:30',
+        lunchInManual: '00:30',
+        clockOutManual: '02:00',
+      }),
+    ).toBe(3);
+  });
+
+  it('subtracts a lunch fully after midnight (22:00 / 00:30-01:00 / 02:00 = 3.5h)', () => {
+    expect(
+      calculateTotalHours({
+        clockInManual: '22:00',
+        lunchOutManual: '00:30',
+        lunchInManual: '01:00',
+        clockOutManual: '02:00',
+      }),
+    ).toBe(3.5);
+  });
+
+  it('skipLunch=true does not subtract lunch even when lunch fields are set', () => {
+    expect(
+      calculateTotalHours({
+        clockInManual: '22:00',
+        lunchOutManual: '23:30',
+        lunchInManual: '00:30',
+        clockOutManual: '02:00',
+        skipLunch: true,
+      }),
+    ).toBe(4);
   });
 });
 

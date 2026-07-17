@@ -55,12 +55,22 @@ export function closeActiveSegment(
 
   const inM = timeToMinutes(seg.clockInManual || '00:00');
   const outM = timeToMinutes(clockOutManual);
-  let workM = Math.max(0, outM - inM);
+  // S6: cross-midnight wrap. If clock-out is before clock-in, the shift
+  // crosses midnight (e.g. 23:00 -> 02:00). Normalize to minutes-since-
+  // clock-in by adding 24h. Assumes a single shift is < 24h, which matches
+  // the domain (CA double-time threshold is 12h; AGENTS.md §2). All lunch
+  // times are normalized against the same clock-in anchor so a lunch that
+  // straddles midnight (23:30 -> 00:30) or sits fully after midnight is
+  // subtracted correctly.
+  const effOutM = outM < inM ? outM + 24 * 60 : outM;
+  let workM = Math.max(0, effOutM - inM);
 
   if (!skipLunch && seg.lunchOutManual && seg.lunchInManual) {
     const lo = timeToMinutes(seg.lunchOutManual);
     const li = timeToMinutes(seg.lunchInManual);
-    workM -= Math.max(0, li - lo);
+    const effLo = lo < inM ? lo + 24 * 60 : lo;
+    const effLi = li < inM ? li + 24 * 60 : li;
+    workM -= Math.max(0, effLi - effLo);
   }
 
   const out: TimeSegment = {
