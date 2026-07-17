@@ -213,6 +213,23 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
     return out;
   });
 
+  // S1: Fallback for dual-write divergence. Some docs end up with a complete
+  // shift persisted in segments[] but the corresponding top-level manual
+  // field missing (root clockOutManual not dual-written). Without this
+  // fallback, HistoryView/TeamDashboard render "⚠️ Missing Clock Out" /
+  // "Incomplete" for a valid closed shift. Resolve the effective manual
+  // fields from the last persisted segment when the root field is absent.
+  // Applied before `current` synthesis so the current-view also reflects
+  // the real clock-out, and the existing coveredByArchived dedup keeps
+  // totals correct (no double-count).
+  const lastPersistedSeg = archived.length ? archived[archived.length - 1] : null;
+  if (lastPersistedSeg) {
+    if (!entry.clockInManual && lastPersistedSeg.clockInManual) entry.clockInManual = lastPersistedSeg.clockInManual;
+    if (!entry.clockOutManual && lastPersistedSeg.clockOutManual) entry.clockOutManual = lastPersistedSeg.clockOutManual;
+    if (!entry.lunchOutManual && lastPersistedSeg.lunchOutManual) entry.lunchOutManual = lastPersistedSeg.lunchOutManual;
+    if (!entry.lunchInManual && lastPersistedSeg.lunchInManual) entry.lunchInManual = lastPersistedSeg.lunchInManual;
+  }
+
   const current: TimeSegment | null = entry.clockInManual
     ? (() => {
         // Build the current segment WITHOUT undefined fields. Firestore rejects
@@ -307,6 +324,24 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
     }
     entry.totalWorkMinutes = archivedMins + currentMins;
     entry.totalHours = entry.totalWorkMinutes / 60;
+  }
+
+  // S2: Display-fallback for closed shifts missing stored totals. A complete
+  // entry with clock-in/out but no persisted totalWorkMinutes (legacy doc or
+  // dual-write gap) would otherwise render "Incomplete" in HistoryView's
+  // Total Hours cell. Derive from the manual fields so a valid closed shift
+  // always shows a real total. NOTE: this mirrors calculateTotalHours, which
+  // does not yet handle cross-midnight wraps — that is tracked separately
+  // (S6) and is not made worse here.
+  if (
+    entry.complete &&
+    entry.clockInManual &&
+    entry.clockOutManual &&
+    entry.totalWorkMinutes === undefined
+  ) {
+    const derivedMins = calculateTotalHours(entry) * 60;
+    entry.totalWorkMinutes = derivedMins;
+    entry.totalHours = derivedMins / 60;
   }
 
   // Flags are not stored in Firestore by default; compute basic flags for UI

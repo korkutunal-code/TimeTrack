@@ -18,12 +18,17 @@ interface HistoryViewProps {
 
 type PeriodFilter = 'this-week' | 'last-week' | 'custom';
 
-/** Get Monday of the current week in the given timezone, as YYYY-MM-DD */
-function getWeekBounds(timezone: string, offset: 'this' | 'last'): { start: string; end: string } {
-  // Get "now" in the employee's timezone
+/** Get Monday of the current PT week, as YYYY-MM-DD.
+ * S4: The week range is computed in canonical America/Los_Angeles (not the
+ * employee's profile timezone) so the range edges match the stored `workDate`
+ * values (which are PT logical days per AGENTS.md §2). Previously using
+ * user.timezone could place the range edge on a different calendar day than
+ * the stored workDate, occasionally excluding a just-closed PT-day entry. */
+function getWeekBounds(offset: 'this' | 'last'): { start: string; end: string } {
+  // Get "now" in canonical PT
   const now = new Date();
-  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
-  const todayStr = formatter.format(now); // YYYY-MM-DD in employee TZ
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const todayStr = formatter.format(now); // YYYY-MM-DD in PT
   const [y, m, d] = todayStr.split('-').map(Number);
   // Bug fix: previously `new Date(y, m-1, d)` then `.getDay()` which depended on
   // the runtime's local TZ. For a UTC server + a non-UTC user, the JS Date is
@@ -75,14 +80,12 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
   const [customEnd, setCustomEnd] = useState('');
   const [appliedRange, setAppliedRange] = useState<{ start: string; end: string } | null>(null);
 
-  const tz = user.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-
   const getDateRange = useCallback((): { start: string; end: string } | null => {
-    if (periodFilter === 'this-week') return getWeekBounds(tz, 'this');
-    if (periodFilter === 'last-week') return getWeekBounds(tz, 'last');
+    if (periodFilter === 'this-week') return getWeekBounds('this');
+    if (periodFilter === 'last-week') return getWeekBounds('last');
     if (periodFilter === 'custom') return appliedRange;
     return null;
-  }, [periodFilter, tz, appliedRange]);
+  }, [periodFilter, appliedRange]);
 
   const loadHistory = useCallback(async () => {
     setLoading(true);
@@ -93,6 +96,11 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
       if (range) {
         console.log(`[History] Querying entries for ${user.uid} from ${range.start} to ${range.end}`);
         data = await dbService.getTimeEntriesForUserInRange(user.uid, range.start, range.end);
+        // S3: Hide soft-deleted (voided/archived) docs so they don't render
+        // as "Missing/Incomplete" rows alongside the real entry for the same
+        // PT date. Legacy docs without a status field default to 'active'
+        // in mapEntry, so historical data is preserved.
+        data = data.filter((e) => e.status !== 'voided' && e.status !== 'archived');
       } else {
         // No range (custom not yet applied) — show nothing
         data = [];
