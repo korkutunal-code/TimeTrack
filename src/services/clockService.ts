@@ -21,6 +21,7 @@ import {
   getCurrentPTDate,
   getCurrentPTTimeHHMM,
   getPTWeekStart,
+  getPTDate,
 } from '../utils/timeCalculations';
 import {
   validateCanPunchIn,
@@ -65,12 +66,68 @@ export async function getTodayEntry(userId: string): Promise<TimeEntry | null> {
   return dbService.getTimeEntry(userId, ptDate);
 }
 
+/**
+ * Subtract N days from a PT YYYY-MM-DD date string, returning the PT
+ * YYYY-MM-DD. Uses a PT-noon UTC anchor (matches the getPTWeekStart pattern)
+ * to avoid DST/midnight-boundary off-by-one errors.
+ */
+function subtractPTDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const anchor = new Date(Date.UTC(y, m - 1, d - days, 12, 0, 0));
+  return getPTDate(anchor);
+}
+
+/**
+ * S5: Locate the user's open shift across recent PT days.
+ *
+ * The "one open segment per employee" invariant can span PT days: an employee
+ * who clocks in at 23:00 PT and clocks out at 02:00 PT has an open segment on
+ * the PRIOR day's doc after midnight PT. Today's doc won't contain it, so
+ * punchOut/getPunchStatus/toggleLunch must look beyond today to find the open
+ * shift, close it, and keep the status card accurate across midnight.
+ *
+ * Fast path: today's doc (single getDoc). Fallback: last 3 PT days via a
+ * range query (covers weekends + safety margin). Returns the most-recent
+ * entry whose `getActiveSegment` is non-null, or null. Voided/archived docs
+ * are skipped (getActiveSegment short-circuits them).
+ *
+ * Pure read; write callers re-read the target doc inside their transaction /
+ * before updateDoc for consistency. Canonical workDate stays on the punch-in
+ * PT day (correct payroll attribution per AGENTS.md §2).
+ */
+export async function findOpenShiftEntry(userId: string): Promise<TimeEntry | null> {
+  const today = getCurrentPTDate();
+  // Fast path: today's doc.
+  const todayEntry = await dbService.getTimeEntry(userId, today);
+  if (todayEntry && getActiveSegment(todayEntry)) return todayEntry;
+  // Fallback: scan recent days for a cross-midnight open shift.
+  const start = subtractPTDays(today, 3);
+  const entries = await dbService.getTimeEntriesForUserInRange(userId, start, today);
+  for (const e of entries) {
+    if (todayEntry && e.id === todayEntry.id) continue; // already checked, no open segment
+    if (getActiveSegment(e)) return e;
+  }
+  return null;
+}
+
 /** Core punch-in. Atomic. Rejects if open segment already exists. */
 export async function punchIn(userId: string, taskId?: string): Promise<TimeEntry> {
   const ptDate = getCurrentPTDate();
   const ptTime = getCurrentPTTimeHHMM();
   const now = Timestamp.now();
   const entryId = `${userId}_${ptDate}`;
+
+  // S5: reject if there's already an open shift on ANY recent PT day, not
+  // just today. Without this, a cross-midnight open shift on yesterday's doc
+  // would be orphaned and a second open shift would start today, violating
+  // the one-open-segment invariant. The transaction's own validateCanPunchIn
+  // remains as a concurrency backstop for today's doc.
+  const existingOpen = await findOpenShiftEntry(userId);
+  if (existingOpen) {
+    throw new Error(
+      `You already have an open shift (started ${existingOpen.date}). Clock out before starting a new one.`
+    );
+  }
 
   const result = await runTransaction(db, async (tx) => {
     const ref = doc(db, 'timeEntries', entryId);
@@ -152,10 +209,23 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
 
 /** Clock out the open segment. */
 export async function punchOut(userId: string): Promise<TimeEntry> {
-  const ptDate = getCurrentPTDate();
   const ptTime = getCurrentPTTimeHHMM();
   const now = Timestamp.now();
-  const entryId = `${userId}_${ptDate}`;
+
+  // S5: locate the open shift across recent PT days. A cross-midnight shift
+  // (e.g. 23:00 -> 02:00 PT) has its open segment on the PRIOR day's doc;
+  // computing entryId from today's PT date would miss it and punch-out would
+  // fail with "No open shift". We write the clock-out fields back to that
+  // same doc, keeping its workDate as the punch-in PT day (canonical payroll
+  // attribution, AGENTS.md §2). The ptTime (today's PT wall clock) is stored
+  // as clockOutManual; closeActiveSegment's S6 wrap computes the correct
+  // cross-midnight duration.
+  const openEntry = await findOpenShiftEntry(userId);
+  if (!openEntry) {
+    throw new Error('No open shift to clock out of. Clock in first.');
+  }
+  const entryId = openEntry.id;
+  const workDate = openEntry.date;
 
   const result = await runTransaction(db, async (tx) => {
     const ref = doc(db, 'timeEntries', entryId);
@@ -166,7 +236,7 @@ export async function punchOut(userId: string): Promise<TimeEntry> {
       existing = {
         id: snap.id,
         userId,
-        date: ptDate,
+        date: snap.data().workDate || workDate,
         status: snap.data().status,
         segments: Array.isArray(snap.data().segments) ? snap.data().segments : undefined,
         clockInManual: snap.data().clockInManual || undefined,
@@ -206,19 +276,28 @@ export async function punchOut(userId: string): Promise<TimeEntry> {
     return { entryId, closedSeg, finalSegments, newTotal };
   });
 
-  const fresh = await dbService.getTimeEntry(userId, ptDate);
+  // Re-read the SAME doc (workDate = punch-in PT day, which may be yesterday)
+  // to return the hydrated view. dbService.getTimeEntry rebuilds entryId from
+  // userId + workDate, which matches `entryId` above.
+  const fresh = await dbService.getTimeEntry(userId, workDate);
   if (!fresh) throw new Error('Punch out succeeded but read failed');
   return fresh;
 }
 
 /** Toggle lunch on the current open segment (start or end). */
 export async function toggleLunch(userId: string, skip = false): Promise<TimeEntry> {
-  const ptDate = getCurrentPTDate();
   const ptTime = getCurrentPTTimeHHMM();
   const now = Timestamp.now();
-  const entryId = `${userId}_${ptDate}`;
 
-  const pre = await dbService.getTimeEntry(userId, ptDate);
+  // S5: locate the open shift across recent PT days (cross-midnight support).
+  // The open segment may live on a prior day's doc after midnight PT.
+  const pre = await findOpenShiftEntry(userId);
+  if (!pre) {
+    throw new Error('No active segment for lunch');
+  }
+  const entryId = pre.id;
+  const workDate = pre.date;
+
   const v = validateCanToggleLunch(pre);
   if (!v.valid) throw new Error(v.message);
 
@@ -256,7 +335,8 @@ export async function toggleLunch(userId: string, skip = false): Promise<TimeEnt
 
   await updateDoc(doc(db, 'timeEntries', entryId), patch);
 
-  const fresh = await dbService.getTimeEntry(userId, ptDate);
+  // Re-read the SAME doc (workDate may be a prior PT day after midnight).
+  const fresh = await dbService.getTimeEntry(userId, workDate);
   if (!fresh) throw new Error('Lunch toggle succeeded but read failed');
   return fresh;
 }
@@ -265,7 +345,10 @@ export async function toggleLunch(userId: string, skip = false): Promise<TimeEnt
 export async function getPunchStatus(userId: string): Promise<PunchStatus> {
   const ptDate = getCurrentPTDate();
   const ptTime = getCurrentPTTimeHHMM();
-  const entry = await dbService.getTimeEntry(userId, ptDate);
+  // S5: locate the open shift across recent PT days. After midnight PT, the
+  // open segment lives on a prior day's doc; without this the status card
+  // would flip to "CLOCK IN" while the employee is still on shift.
+  const entry = await findOpenShiftEntry(userId);
   const active = getActiveSegment(entry);
 
   const isOnLunch =
@@ -280,11 +363,15 @@ export async function getPunchStatus(userId: string): Promise<PunchStatus> {
     if (active && !active.complete) {
       const inM = timeStringToMinutes(active.clockInManual || ptTime);
       const nowM = timeStringToMinutes(ptTime);
+      // S6: cross-midnight wrap for live elapsed. If "now" is earlier than
+      // clock-in, the shift crossed midnight (e.g. in=23:00, now=02:00).
+      const effNowM = nowM < inM ? nowM + 24 * 60 : nowM;
       if (isOnLunch && active.lunchOutManual) {
         const lunchOutM = timeStringToMinutes(active.lunchOutManual);
-        todayTotal += Math.max(0, lunchOutM - inM);
+        const effLunchOutM = lunchOutM < inM ? lunchOutM + 24 * 60 : lunchOutM;
+        todayTotal += Math.max(0, effLunchOutM - inM);
       } else {
-        todayTotal += Math.max(0, nowM - inM);
+        todayTotal += Math.max(0, effNowM - inM);
       }
     }
   }
