@@ -30,7 +30,7 @@ export const DISPLAY_TIMEZONES: TimeZoneOption[] = [
   { id: 'Europe/London', label: '(UTC+00:00) Dublin, Lisbon, London' },
   { id: 'Europe/Berlin', label: '(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna' },
   { id: 'Europe/Kyiv', label: '(UTC+02:00) Helsinki, Kyiv, Riga, Sofia, Tallinn, Vilnius' },
-  { id: 'Europe/Moscow', label: '(UTC+03:00) Moscow, St. Petersburg' },
+  { id: 'Europe/Istanbul', label: '(UTC+03:00) İstanbul, Moscow, St. Petersburg' },
   { id: 'Asia/Tehran', label: '(UTC+03:30) Tehran' },
   { id: 'Asia/Dubai', label: '(UTC+04:00) Abu Dhabi, Muscat' },
   { id: 'Asia/Kabul', label: '(UTC+04:30) Kabul' },
