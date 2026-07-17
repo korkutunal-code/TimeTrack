@@ -17,6 +17,7 @@ import {
   createInitialSegment,
   closeActiveSegment,
   applyLunchToSegment,
+  buildConsistentClosePatch,
 } from './segmentOps';
 import type { TimeSegment, TimeEntry } from './database';
 import { calculateTotalHours } from './database';
@@ -671,5 +672,115 @@ describe('mapEntry — Bug B: no double-count of synthesized current vs persiste
     };
     const entry = mapEntry('u1_2026-06-22', data as any);
     expect(entry.totalWorkMinutes).toBe(0);
+  });
+});
+
+describe('buildConsistentClosePatch — S7 dual-write contract', () => {
+  it('replace mode: single closed segment + matching total (no archived)', () => {
+    const { segments, totalWorkMinutes, closedSegment } = buildConsistentClosePatch({
+      clockIn: '08:00',
+      clockOut: '17:00',
+      skipLunch: false,
+      lunchOut: '12:00',
+      lunchIn: '12:30',
+      clockOutSystem: 9000,
+      mode: 'replace',
+    });
+    expect(segments).toHaveLength(1);
+    expect(closedSegment.complete).toBe(true);
+    expect(closedSegment.clockOutManual).toBe('17:00');
+    expect(closedSegment.workMinutes).toBe(510); // 9h - 30min lunch
+    expect(totalWorkMinutes).toBe(510);
+  });
+
+  it('replace mode: drops prior archived segments (admin correction collapse)', () => {
+    const archived: TimeSegment = {
+      id: 'seg_old',
+      clockInManual: '08:00',
+      clockOutManual: '12:00',
+      workMinutes: 240,
+      complete: true,
+    };
+    const { segments, totalWorkMinutes } = buildConsistentClosePatch({
+      clockIn: '13:00',
+      clockOut: '17:00',
+      skipLunch: true,
+      clockOutSystem: 9000,
+      existingSegments: [archived],
+      mode: 'replace',
+    });
+    expect(segments).toHaveLength(1); // prior archived dropped
+    expect(segments[0].clockInManual).toBe('13:00');
+    expect(totalWorkMinutes).toBe(240); // only the new 4h shift
+  });
+
+  it('append mode: preserves prior archived segments + appends closed', () => {
+    const archived: TimeSegment = {
+      id: 'seg_old',
+      clockInManual: '08:00',
+      clockOutManual: '12:00',
+      workMinutes: 240,
+      complete: true,
+    };
+    const { segments, totalWorkMinutes, closedSegment } = buildConsistentClosePatch({
+      clockIn: '13:00',
+      clockOut: '17:00',
+      skipLunch: true,
+      clockOutSystem: 9000,
+      existingSegments: [archived],
+      mode: 'append',
+    });
+    expect(segments).toHaveLength(2);
+    expect(segments[0].id).toBe('seg_old');
+    expect(segments[1].id).toBe(closedSegment.id);
+    expect(totalWorkMinutes).toBe(480); // 240 archived + 240 new
+  });
+
+  it('append mode: ignores open (incomplete) existing segments', () => {
+    const open: TimeSegment = {
+      id: 'seg_open',
+      clockInManual: '08:00',
+      complete: false,
+    };
+    const { segments } = buildConsistentClosePatch({
+      clockIn: '13:00',
+      clockOut: '17:00',
+      skipLunch: true,
+      clockOutSystem: 9000,
+      existingSegments: [open],
+      mode: 'append',
+    });
+    // Open segment filtered out (only complete archived kept); only the new
+    // closed segment remains.
+    expect(segments).toHaveLength(1);
+    expect(segments[0].complete).toBe(true);
+  });
+
+  it('S6 cross-midnight: 23:00 -> 02:00 = 180 min via the helper', () => {
+    const { totalWorkMinutes, closedSegment } = buildConsistentClosePatch({
+      clockIn: '23:00',
+      clockOut: '02:00',
+      skipLunch: true,
+      clockOutSystem: 9000,
+      mode: 'replace',
+    });
+    expect(closedSegment.workMinutes).toBe(180);
+    expect(totalWorkMinutes).toBe(180);
+  });
+
+  it('produces a segment whose workMinutes matches totalWorkMinutes (replace, no archived)', () => {
+    // The core S7 invariant: segments[last].workMinutes === totalWorkMinutes
+    // so mapEntry's override (archivedMins + currentMins=0) agrees.
+    const { segments, totalWorkMinutes } = buildConsistentClosePatch({
+      clockIn: '09:00',
+      clockOut: '17:30',
+      skipLunch: false,
+      lunchOut: '12:00',
+      lunchIn: '12:30',
+      clockOutSystem: 9000,
+      mode: 'replace',
+    });
+    const last = segments[segments.length - 1];
+    expect(last.workMinutes).toBe(totalWorkMinutes);
   });
 });

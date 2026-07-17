@@ -158,3 +158,66 @@ export function getActiveSegment(entry: TimeEntry | null | undefined): TimeSegme
 export function hasOpenSegment(entry: TimeEntry | null | undefined): boolean {
   return getActiveSegment(entry) !== null;
 }
+
+/**
+ * S7: Build a synchronized `segments[]` array + day total for a shift close.
+ *
+ * Centralizes the dual-write contract: whenever a shift is closed (clock-out
+ * written), the corresponding segment in `segments[]` must be closed with
+ * matching values AND `totalWorkMinutes` must reflect the sum. Without this,
+ * a doc can end up with root `clockOutManual` set but `segments[]` stale —
+ * which made `mapEntry` recompute wrong totals and, before the S1 fallback,
+ * rendered "⚠️ Missing Clock Out" for valid closed shifts.
+ *
+ * Closes the shift via `closeActiveSegment` so the S6 cross-midnight wrap
+ * and lunch deduction are identical to the punch flow. All close paths
+ * (clockService.punchOut already does this inline; admin corrections in
+ * TeamDashboard/AdminPanel; legacy TodayEntry submitClockOut + watchdog)
+ * MUST route through this helper (or closeActiveSegment directly) so no
+ * write path leaves the doc divergent.
+ *
+ * @param mode
+ *   - 'replace': collapse to a single rebuilt closed segment (admin
+ *     correction flow — the admin form represents one shift, so prior
+ *     split-shift segments are dropped, matching the existing admin UX).
+ *   - 'append': preserve prior archived (complete) segments and append the
+ *     closed one (punch-out / legacy submit — preserves split-shift history).
+ */
+export function buildConsistentClosePatch(args: {
+  clockIn: string;
+  clockOut: string;
+  skipLunch: boolean;
+  lunchOut?: string;
+  lunchIn?: string;
+  clockOutSystem?: number;
+  clockInSystem?: number;
+  taskId?: string;
+  existingSegments?: TimeSegment[];
+  mode: 'replace' | 'append';
+}): { segments: TimeSegment[]; totalWorkMinutes: number; closedSegment: TimeSegment } {
+  // Synthesize an open segment from the raw fields, then close it via the
+  // canonical helper so S6 wrap + lunch deduction match the punch flow.
+  const openSeg: TimeSegment = {
+    id: `seg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+    clockInManual: args.clockIn,
+    clockInSystem: args.clockInSystem,
+    lunchOutManual: args.lunchOut,
+    lunchInManual: args.lunchIn,
+    skipLunch: args.skipLunch,
+    complete: false,
+  };
+  if (args.taskId) (openSeg as any).taskId = args.taskId;
+
+  const closedSeg = closeActiveSegment(openSeg, args.clockOut, args.clockOutSystem ?? 0, args.skipLunch);
+
+  const archived =
+    args.mode === 'replace'
+      ? [] // admin correction: collapse to single shift (matches admin form UX)
+      : (args.existingSegments || []).filter((s) => s.complete); // append: keep prior closed shifts
+
+  const segments = [...archived, stripUndefined(closedSeg)] as TimeSegment[];
+  const totalWorkMinutes =
+    archived.reduce((sum, s) => sum + (s.workMinutes || 0), 0) + (closedSeg.workMinutes || 0);
+
+  return { segments, totalWorkMinutes, closedSegment: closedSeg };
+}

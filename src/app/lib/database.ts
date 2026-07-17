@@ -359,6 +359,7 @@ export {
   applyLunchToSegment,
   getActiveSegment,
   hasOpenSegment,
+  buildConsistentClosePatch,
 } from './segmentOps';
 
 function timeToMinutes(time: string): number {

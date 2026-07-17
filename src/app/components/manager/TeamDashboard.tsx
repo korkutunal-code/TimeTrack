@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
-import { TimeEntry, dbService } from '../../lib/database';
+import { TimeEntry, dbService, buildConsistentClosePatch } from '../../lib/database';
 import { doc, updateDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { auditLogService } from '../../../services/auditLogService';
@@ -17,7 +17,7 @@ import { StatusDot } from '../ui/status-dot';
 import { EmptyState } from '../ui/empty-state';
 import { Textarea } from '../ui/textarea';
 import { Checkbox } from '../ui/checkbox';
-import { calculateLunchMinutes, calculateTotalWorkMinutes, validateTimeEntry } from '../../../utils/timeCalculations';
+import { calculateLunchMinutes, validateTimeEntry } from '../../../utils/timeCalculations';
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import {
   DropdownMenu,
@@ -225,11 +225,23 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
         editingEntry.skipLunch ? '' : (editingEntry.lunchOutManual || ''),
         editingEntry.skipLunch ? '' : (editingEntry.lunchInManual || '')
       );
-      const totalWorkMinutes = calculateTotalWorkMinutes(
-        editingEntry.clockInManual,
-        editingEntry.clockOutManual,
-        lunchMinutes
-      );
+      // S7: derive totalWorkMinutes + a synchronized segments[] from the same
+      // canonical closeActiveSegment math (S6 cross-midnight wrap + lunch
+      // deduction) so root fields, segments[last], and totalWorkMinutes can
+      // never diverge. 'replace' mode collapses to the single corrected shift
+      // (matches the admin form UX). Without this, mapEntry's override would
+      // recompute totalWorkMinutes from stale segments and clobber the edit.
+      const closePatch = buildConsistentClosePatch({
+        clockIn: editingEntry.clockInManual,
+        clockOut: editingEntry.clockOutManual,
+        skipLunch: !!editingEntry.skipLunch,
+        lunchOut: editingEntry.skipLunch ? undefined : (editingEntry.lunchOutManual || undefined),
+        lunchIn: editingEntry.skipLunch ? undefined : (editingEntry.lunchInManual || undefined),
+        clockOutSystem: now.toMillis(),
+        existingSegments: originalEditingEntry.segments,
+        mode: 'replace',
+      });
+      const totalWorkMinutes = closePatch.totalWorkMinutes;
       const ot = calculateDailyOvertimeBreakdown(totalWorkMinutes);
       // originalEditingEntry is definitely defined here so we can guarantee we have a date
       const workWeekStartDate = getWorkWeekStartDate(originalEditingEntry.date, DEFAULT_WORKWEEK_START_DAY);
@@ -245,6 +257,7 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
         lunchSkipped: !!editingEntry.skipLunch,
         lunchMinutes,
         totalWorkMinutes,
+        segments: closePatch.segments,
         regularMinutes: ot.regularMinutes,
         otMinutes: ot.otMinutes,
         doubleTimeMinutes: ot.doubleTimeMinutes,
@@ -275,6 +288,7 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
         lunchSkipped: !!editingEntry.skipLunch,
         lunchMinutes,
         totalWorkMinutes,
+        segments: closePatch.segments,
         regularMinutes: ot.regularMinutes,
         otMinutes: ot.otMinutes,
         doubleTimeMinutes: ot.doubleTimeMinutes,

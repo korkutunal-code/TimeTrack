@@ -5,7 +5,7 @@ import { AlertCircle, AlertTriangle, ArrowRight, CheckCircle2, Clock, Coffee, Hi
 
 import type { User } from '../../lib/auth';
 import type { TimeEntry } from '../../lib/database';
-import { dbService } from '../../lib/database';
+import { dbService, buildConsistentClosePatch } from '../../lib/database';
 import { db } from '../../lib/firebase';
 import { auditLogService } from '../../../services/auditLogService';
 import { Button } from '../ui/button';
@@ -24,7 +24,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 
 // Existing business logic (ported from the previous HTML/JS app)
  
-import { calculateLunchMinutes, calculateTotalWorkMinutes, deriveSegmentWorkMinutes } from '../../../utils/timeCalculations';
+import { calculateLunchMinutes, deriveSegmentWorkMinutes } from '../../../utils/timeCalculations';
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import {
   checkTimeAnomalies,
@@ -134,18 +134,47 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       const elapsedMs = Date.now() - entry.clockInSystem;
       if (elapsedMs > MAX_SHIFT_HOURS * 60 * 60 * 1000 && !entry.clockOutManual) {
         const capMs = entry.clockInSystem + MAX_SHIFT_HOURS * 60 * 60 * 1000;
-        const capDate = new Date(capMs);
-        const cappedTime = `${String(capDate.getHours()).padStart(2, '0')}:${String(capDate.getMinutes()).padStart(2, '0')}`;
+        // S7: format the cap instant in canonical America/Los_Angeles (not
+        // runtime-local getHours()) so the stored clockOutManual matches the
+        // PT wall-clock — AGENTS.md §2. Previously used new Date(capMs).getHours()
+        // which on a UTC server wrote a PT time off by up to 8 hours.
+        const cappedTime = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/Los_Angeles',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).format(new Date(capMs));
+        // S7: dual-write the closed segment + totalWorkMinutes alongside the
+        // root fields so the doc is never left divergent (root clockOut set,
+        // segments[] stale / absent). Uses the canonical closeActiveSegment
+        // math (S6 wrap + lunch deduction). 'append' preserves any prior
+        // archived split-shift segments.
+        const closePatch = buildConsistentClosePatch({
+          clockIn: entry.clockInManual || '00:00',
+          clockOut: cappedTime,
+          skipLunch: !!entry.skipLunch,
+          lunchOut: entry.skipLunch ? undefined : (entry.lunchOutManual || undefined),
+          lunchIn: entry.skipLunch ? undefined : (entry.lunchInManual || undefined),
+          clockOutSystem: capMs,
+          clockInSystem: entry.clockInSystem,
+          existingSegments: entry.segments,
+          mode: 'append',
+        });
+        const now = Timestamp.now();
         try {
           await updateDoc(doc(db, 'timeEntries', `${user.uid}_${today}`), {
             clockOutManual: cappedTime,
             clockOutSubmitted: true,
-            clockOutSystemTime: Timestamp.now(),
+            clockOutSystemTime: now,
+            clockOutSystem: capMs,
             complete: true,
             dayComplete: true,
-            completedAt: Timestamp.now(),
+            currentStep: 4,
+            completedAt: now,
+            segments: closePatch.segments,
+            totalWorkMinutes: closePatch.totalWorkMinutes,
             autoClosed: true,
-            updatedAt: Timestamp.now(),
+            updatedAt: now,
             updatedBy: user.uid,
           } as any);
           toast.warning(`Shift auto-closed after ${MAX_SHIFT_HOURS}h`);
@@ -421,27 +450,27 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       return;
     }
 
-    // Calculate current-segment minutes. Uses the shared canonical helper so
-    // the lunch-aware arithmetic stays identical to mapEntry's
-    // `deriveCurrentSegmentMinutes` (which feeds `totalWorkMinutes`).
-    const segMins = deriveSegmentWorkMinutes(
-      entry.clockInManual,
-      currentTime,
-      entry.skipLunch,
-      entry.lunchOutManual,
-      entry.lunchInManual,
-    );
-
-    // Include previously-archived segments so the day total reflects split shifts.
-    // `entry.segments` (per mapEntry) contains ONLY persisted archived segments —
-    // there is no synthesized "current" segment appended. The previous
-    // `.slice(0, -1)` dropped the last real archived shift, under-counting the
-    // day total every time a split shift was clocked out.
-    const archivedMins = (entry.segments || []).reduce(
-      (s, seg) => s + (seg.workMinutes || 0),
-      0,
-    );
-    const totalMins = archivedMins + Math.max(0, segMins);
+    // S7: derive the closed segment + day total via the canonical
+    // buildConsistentClosePatch (closeActiveSegment math: S6 cross-midnight
+    // wrap + lunch deduction) so root fields, segments[last], and
+    // totalWorkMinutes are written together and can never diverge. 'append'
+    // preserves prior archived split-shift segments. This replaces the
+    // manual deriveSegmentWorkMinutes + archivedMins sum so the stored
+    // segment's workMinutes and totalWorkMinutes always agree.
+    const closePatch = buildConsistentClosePatch({
+      clockIn: entry.clockInManual,
+      clockOut: currentTime,
+      skipLunch: !!entry.skipLunch,
+      lunchOut: entry.skipLunch ? undefined : (entry.lunchOutManual || undefined),
+      lunchIn: entry.skipLunch ? undefined : (entry.lunchInManual || undefined),
+      clockOutSystem: Date.now(),
+      clockInSystem: entry.clockInSystem,
+      taskId: (entry as any).taskId || undefined,
+      existingSegments: entry.segments,
+      mode: 'append',
+    });
+    const totalMins = closePatch.totalWorkMinutes;
+    const segMins = closePatch.closedSegment.workMinutes ?? 0;
 
     const now = Timestamp.now();
     const entryId = `${user.uid}_${today}`;
@@ -449,9 +478,12 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       clockOutManual: currentTime,
       clockOutSubmitted: true,
       clockOutSystemTime: now,
+      clockOutSystem: now.toMillis(),
       complete: true,
       dayComplete: true, // Legacy flag
+      currentStep: 4,
       completedAt: now,
+      segments: closePatch.segments,
       totalWorkMinutes: totalMins, // Raw minutes for admin rules later
       currentSegmentMinutes: Math.max(0, segMins),
       updatedAt: now,

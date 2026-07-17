@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
-import { dbService, TimeEntry } from '../../lib/database';
+import { dbService, TimeEntry, buildConsistentClosePatch } from '../../lib/database';
 import { doc, getDoc, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Button } from '../ui/button';
@@ -27,7 +27,7 @@ import { UserPlus, Upload, Download, Edit, Trash2, UserCog, MoreVertical, CheckC
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
-import { calculateLunchMinutes, calculateTotalWorkMinutes, validateTimeEntry } from '../../../utils/timeCalculations';
+import { calculateLunchMinutes, validateTimeEntry } from '../../../utils/timeCalculations';
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import { auditLogService } from '../../../services/auditLogService';
 
@@ -248,11 +248,21 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         correctionEntry.skipLunch ? '' : (correctionEntry.lunchOutManual || ''),
         correctionEntry.skipLunch ? '' : (correctionEntry.lunchInManual || '')
       );
-      const totalWorkMinutes = calculateTotalWorkMinutes(
-        correctionEntry.clockInManual,
-        correctionEntry.clockOutManual,
-        lunchMinutes
-      );
+      // S7: derive totalWorkMinutes + synchronized segments[] from the same
+      // canonical closeActiveSegment math (S6 wrap + lunch deduction) so root,
+      // segments[last], and totalWorkMinutes never diverge. 'replace' mode
+      // collapses to the single corrected shift (matches the admin form UX).
+      const closePatch = buildConsistentClosePatch({
+        clockIn: correctionEntry.clockInManual,
+        clockOut: correctionEntry.clockOutManual,
+        skipLunch: !!correctionEntry.skipLunch,
+        lunchOut: correctionEntry.skipLunch ? undefined : (correctionEntry.lunchOutManual || undefined),
+        lunchIn: correctionEntry.skipLunch ? undefined : (correctionEntry.lunchInManual || undefined),
+        clockOutSystem: now.toMillis(),
+        existingSegments: originalCorrectionEntry?.segments,
+        mode: 'replace',
+      });
+      const totalWorkMinutes = closePatch.totalWorkMinutes;
       const ot = calculateDailyOvertimeBreakdown(totalWorkMinutes);
       const workWeekStartDate = getWorkWeekStartDate(correctionEntry.date, DEFAULT_WORKWEEK_START_DAY);
 
@@ -267,6 +277,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         ...correctionEntry,
         lunchMinutes,
         totalWorkMinutes,
+        segments: closePatch.segments,
         regularMinutes: ot.regularMinutes,
         otMinutes: ot.otMinutes,
         doubleTimeMinutes: ot.doubleTimeMinutes,
@@ -295,6 +306,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         lunchSkipped: !!correctionEntry.skipLunch,
         lunchMinutes,
         totalWorkMinutes,
+        segments: closePatch.segments,
         regularMinutes: ot.regularMinutes,
         otMinutes: ot.otMinutes,
         doubleTimeMinutes: ot.doubleTimeMinutes,
