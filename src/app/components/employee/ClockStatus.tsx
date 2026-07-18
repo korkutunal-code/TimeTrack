@@ -3,7 +3,7 @@ import { Card, CardContent } from '../ui/card';
 import { Badge } from '../ui/badge';
 import type { TimeSegment } from '../../lib/database';
 import { formatHoursHMM } from '../../../utils/timeCalculations';
-import { getDisplayClock } from '../../lib/timezones';
+import { getDisplayClock, formatInstantHHMM } from '../../lib/timezones';
 
 interface ClockStatusProps {
   isClockedIn: boolean;
@@ -38,11 +38,21 @@ export function ClockStatus({
     ? 'CLOCKED IN'
     : 'CLOCKED OUT';
 
-  const since = isOnLunch
+  // The "Since" start instant. Prefer the system epoch (millis) so the same
+  // instant can be formatted in two zones; fall back to the PT manual string
+  // when system millis are absent (legacy/historical segments).
+  const sinceEpoch = isOnLunch
+    ? activeSegment?.lunchOutSystem
+    : isClockedIn
+    ? activeSegment?.clockInSystem
+    : undefined;
+  const sincePTManual = isOnLunch
     ? activeSegment?.lunchOutManual
     : isClockedIn
     ? activeSegment?.clockInManual
     : null;
+  // displayClock.zoneName is already resolved ('auto' -> OS TZ name), so it
+  // doubles as the row-1 zone label per the two-row spec.
 
   return (
     <Card className="w-full border-2 shadow-sm">
@@ -62,14 +72,48 @@ export function ClockStatus({
           </Badge>
         </div>
 
-        {since && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Clock className="h-4 w-4" />
-            <span>
-              Since <span className="font-mono font-medium text-foreground">{since}</span> PT
-            </span>
+        {sinceEpoch ? (
+          // Two-row "Since" display: the same start instant shown in both the
+          // selected display zone (row 1) and canonical PT (row 2). Only the
+          // HH:MM values are bold; "Since" and zone names stay normal weight.
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Clock className="h-4 w-4" />
+              <span>
+                Since{' '}
+                <span className="font-mono font-bold text-foreground tabular-nums">
+                  {formatInstantHHMM(sinceEpoch, displayTimezone)}
+                </span>{' '}
+                {displayClock.zoneName}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Clock className="h-4 w-4" />
+              <span>
+                Since{' '}
+                <span className="font-mono font-bold text-foreground tabular-nums">
+                  {formatInstantHHMM(sinceEpoch, 'America/Los_Angeles')}
+                </span>{' '}
+                America/Los_Angeles
+              </span>
+            </div>
           </div>
-        )}
+        ) : sincePTManual ? (
+          // Degraded fallback: no system millis — show only the PT manual
+          // string (can't reliably convert to another zone without the instant).
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Clock className="h-4 w-4" />
+              <span>
+                Since{' '}
+                <span className="font-mono font-bold text-foreground tabular-nums">
+                  {sincePTManual}
+                </span>{' '}
+                America/Los_Angeles
+              </span>
+            </div>
+          </div>
+        ) : null}
 
         <div className="pt-2 border-t flex items-baseline justify-between">
           <div className="flex items-center gap-2 text-muted-foreground">

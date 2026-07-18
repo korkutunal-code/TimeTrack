@@ -8,6 +8,7 @@ import {
   getOSTimezone,
   resolveDisplayTimezone,
   getDisplayClock,
+  formatInstantHHMM,
 } from './timezones';
 
 describe('timezones — auto / display resolvers', () => {
@@ -50,5 +51,23 @@ describe('timezones — auto / display resolvers', () => {
     expect(clock.zoneName).toBe('America/Los_Angeles');
     expect(clock.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(clock.time).toMatch(/^\d{2}:\d{2}$/);
+  });
+
+  it('formatInstantHHMM formats a fixed instant in the given zone (manual id)', () => {
+    // 2026-07-18T18:40:00Z = 11:40 PT, 21:40 Istanbul.
+    const epoch = Date.UTC(2026, 6, 18, 18, 40, 0);
+    expect(formatInstantHHMM(epoch, 'America/Los_Angeles')).toBe('11:40');
+    expect(formatInstantHHMM(epoch, 'Europe/Istanbul')).toBe('21:40');
+  });
+
+  it('formatInstantHHMM with auto resolves the OS TZ (matches getOSTimezone)', () => {
+    const epoch = Date.now();
+    expect(formatInstantHHMM(epoch, AUTO_TIMEZONE)).toBe(
+      formatInstantHHMM(epoch, getOSTimezone()),
+    );
+  });
+
+  it('formatInstantHHMM output matches HH:MM shape', () => {
+    expect(formatInstantHHMM(Date.now(), 'America/Los_Angeles')).toMatch(/^\d{2}:\d{2}$/);
   });
 });
