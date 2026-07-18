@@ -81,7 +81,7 @@ export function ClockStatus({
               <Clock className="h-4 w-4" />
               <span>
                 Since{' '}
-                <span className="font-mono font-bold text-foreground tabular-nums">
+                <span className="font-bold text-foreground tabular-nums">
                   {formatInstantHHMM(sinceEpoch, displayTimezone)}
                 </span>{' '}
                 {displayClock.zoneName}
@@ -91,7 +91,7 @@ export function ClockStatus({
               <Clock className="h-4 w-4" />
               <span>
                 Since{' '}
-                <span className="font-mono font-bold text-foreground tabular-nums">
+                <span className="font-bold text-foreground tabular-nums">
                   {formatInstantHHMM(sinceEpoch, 'America/Los_Angeles')}
                 </span>{' '}
                 America/Los_Angeles
@@ -106,7 +106,7 @@ export function ClockStatus({
               <Clock className="h-4 w-4" />
               <span>
                 Since{' '}
-                <span className="font-mono font-bold text-foreground tabular-nums">
+                <span className="font-bold text-foreground tabular-nums">
                   {sincePTManual}
                 </span>{' '}
                 America/Los_Angeles
