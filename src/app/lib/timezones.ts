@@ -97,20 +97,27 @@ export function resolveDisplayTimezone(value: string): string {
 }
 
 /**
- * Format an epoch-millis instant as HH:MM (24h) in the given zone, for
- * DISPLAY ONLY. Accepts the 'auto' sentinel (resolved to the OS TZ) or a
+ * Format an epoch-millis instant as YYYY-MM-DD HH:MM (24h) in the given zone,
+ * for DISPLAY ONLY. Accepts the 'auto' sentinel (resolved to the OS TZ) or a
  * concrete IANA id. Used for the "Since" timestamp so the same start instant
  * can be shown in both the selected display zone and canonical PT without
  * affecting stored data or calculations (AGENTS.md §2).
  */
 export function formatInstantHHMM(epochMs: number, timeZone: string): string {
   const resolved = resolveDisplayTimezone(timeZone);
-  return new Intl.DateTimeFormat('en-US', {
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone: resolved,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(epochMs));
+  const time = new Intl.DateTimeFormat('en-US', {
     timeZone: resolved,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
   }).format(new Date(epochMs));
+  return `${date} ${time}`;
 }
 
 /**
