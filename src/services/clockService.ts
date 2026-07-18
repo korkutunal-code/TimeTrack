@@ -129,7 +129,11 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
     );
   }
 
-  const result = await runTransaction(db, async (tx) => {
+  // Layer 2: retry the transaction on transient network failures so a flaky
+  // connection doesn't silently drop the clock-in (root cause of stuck open
+  // shifts). Validation errors are not retried (withRetry checks the message).
+  const result = await withRetry(
+    () => runTransaction(db, async (tx) => {
     const ref = doc(db, 'timeEntries', entryId);
     const snap = await tx.get(ref);
 
@@ -199,7 +203,9 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
 
     tx.set(ref, payload, { merge: true });
     return { entryId, newSeg, ptDate, ptTime, wasCreated: !snap.exists() };
-  });
+  }),
+    { label: 'punchIn', retries: 3 },
+  );
 
   // Return hydrated view (mapEntry will reconstruct)
   const fresh = await dbService.getTimeEntry(userId, ptDate);
@@ -227,9 +233,13 @@ export async function punchOut(userId: string): Promise<TimeEntry> {
   const entryId = openEntry.id;
   const workDate = openEntry.date;
 
-  const result = await runTransaction(db, async (tx) => {
-    const ref = doc(db, 'timeEntries', entryId);
-    const snap = await tx.get(ref);
+  // Layer 2: retry the transaction on transient network failures so a flaky
+  // connection doesn't silently drop the clock-out (root cause of stuck open
+  // shifts like 06-15/06-24/06-25/07-10). Validation errors are not retried.
+  const result = await withRetry(
+    () => runTransaction(db, async (tx) => {
+      const ref = doc(db, 'timeEntries', entryId);
+      const snap = await tx.get(ref);
 
     let existing: TimeEntry | null = null;
     if (snap.exists()) {
@@ -274,7 +284,9 @@ export async function punchOut(userId: string): Promise<TimeEntry> {
     } as any);
 
     return { entryId, closedSeg, finalSegments, newTotal };
-  });
+  }),
+    { label: 'punchOut', retries: 3 },
+  );
 
   // Re-read the SAME doc (workDate = punch-in PT day, which may be yesterday)
   // to return the hydrated view. dbService.getTimeEntry rebuilds entryId from
@@ -333,7 +345,12 @@ export async function toggleLunch(userId: string, skip = false): Promise<TimeEnt
   );
   patch.segments = newSegments;
 
-  await updateDoc(doc(db, 'timeEntries', entryId), patch);
+  // Layer 2: retry the update on transient network failures so a flaky
+  // connection doesn't silently drop a lunch toggle.
+  await withRetry(
+    () => updateDoc(doc(db, 'timeEntries', entryId), patch),
+    { label: 'toggleLunch', retries: 3 },
+  );
 
   // Re-read the SAME doc (workDate may be a prior PT day after midnight).
   const fresh = await dbService.getTimeEntry(userId, workDate);
@@ -428,4 +445,57 @@ function timeStringToMinutes(t?: string): number {
   if (!t) return 0;
   const [h, m] = t.split(':').map(Number);
   return h * 60 + m;
+}
+
+/**
+ * Layer 2 fix: retry a punch write with exponential backoff so transient
+ * network failures (the root cause of the employee's stuck open shifts) don't
+ * silently drop the action. Offline persistence (firebase.ts) now buffers
+ * writes in IndexedDB, but the awaiting Promise still rejects on network
+ * errors before the buffer is confirmed — so the UI sees a failure and shows
+ * the persistent error banner. This wrapper retries the op a few times before
+ * surfacing the rejection, giving the buffer/reconnect path time to land the
+ * write. Retries are only attempted for network-class errors, not for
+ * validation rejections (e.g. "No open shift") which are deterministic.
+ */
+const NETWORK_ERROR_PATTERNS = [
+  /network/i,
+  /offline/i,
+  /unavailable/i,
+  /deadline-exceeded/i,
+  /internal/i,
+  /fetch/i,
+  /failed to fetch/i,
+  /connection/i,
+];
+
+function isTransientNetworkError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return NETWORK_ERROR_PATTERNS.some((p) => p.test(msg));
+}
+
+export async function withRetry<T>(
+  op: () => Promise<T>,
+  opts: { retries?: number; baseDelayMs?: number; label?: string } = {},
+): Promise<T> {
+  const retries = opts.retries ?? 3;
+  const baseDelayMs = opts.baseDelayMs ?? 800;
+  const label = opts.label ?? 'operation';
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await op();
+    } catch (err) {
+      lastErr = err;
+      const transient = isTransientNetworkError(err);
+      if (!transient || attempt === retries) {
+        throw err;
+      }
+      // Exponential backoff with jitter: 800ms, ~1.6s, ~3.2s.
+      const delay = baseDelayMs * Math.pow(2, attempt) + Math.random() * 300;
+      console.warn(`[clockService] ${label} attempt ${attempt + 1} failed (transient), retrying in ${Math.round(delay)}ms`, err);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
 }

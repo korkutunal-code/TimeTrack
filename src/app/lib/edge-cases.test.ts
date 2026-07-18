@@ -605,36 +605,33 @@ describe('Edge Case 10 — getPunchStatus live estimate with lunchOut', () => {
 // ---------------------------------------------------------------------------
 // Edge Case 11: Firestore offline persistence
 // ---------------------------------------------------------------------------
-// Repro: Check if enableIndexedDbPersistence is enabled. If offline writes
-// are silently lost, this is a bug.
+// RESOLVED (Layer 2, 2026-07-18): firebase.ts now calls initializeFirestore
+// with persistentLocalCache so punch writes that fail on a flaky connection
+// are buffered in IndexedDB and replayed automatically on reconnect. This
+// was the root cause of the employee's stuck "open shift" days on
+// 06-15/06-24/06-25/07-10 — a lost clock-out packet silently dropped the
+// action and the user saw no durable error.
 describe('Edge Case 11 — Firestore offline persistence', () => {
-  // The firebase.ts initialization does NOT call enableIndexedDbPersistence.
-  // This means:
-  // - Offline writes are NOT persisted to IndexedDB
-  // - If the browser goes offline mid-write, the data is LOST
-  // - The UI has no offline queue / retry mechanism
-  //
-  // This is a KNOWN architectural limitation. The fix would be to add:
-  //   import { enableIndexedDbPersistence } from 'firebase/firestore';
-  //   enableIndexedDbPersistence(db).catch(() => {});
-  //
-  // This is documented as a MEDIUM risk for employees with flaky connections.
-
-  it('firebase.ts does NOT call enableIndexedDbPersistence (confirmed by code inspection)', () => {
-    // Read firebase.ts to confirm persistence is not enabled
+  it('firebase.ts enables persistentLocalCache (offline write buffering)', () => {
+    // Read firebase.ts to confirm persistence is now enabled.
     const firebaseTs = fs.readFileSync(
       path.join(__dirname, 'firebase.ts'),
       'utf8'
     );
-    // If this test fails, someone added enableIndexedDbPersistence — which would be good!
-    expect(firebaseTs).not.toContain('enableIndexedDbPersistence');
+    expect(firebaseTs).toContain('persistentLocalCache');
+    expect(firebaseTs).toContain('initializeFirestore');
   });
 
-  it('Offline writes without persistence = silent data loss (documented risk)', () => {
-    // Documented risk: no offline persistence means flaky connections can lose writes.
-    // This is a MEDIUM severity finding for the audit report.
-    // NOT FIXED — requires architectural change to add Firebase persistence.
-    expect(true).toBe(true);
+  it('emulator mode bypasses persistence (so rule tests see real emulator data)', () => {
+    const firebaseTs = fs.readFileSync(
+      path.join(__dirname, 'firebase.ts'),
+      'utf8'
+    );
+    // The emulator branch must use plain getFirestore + connectFirestoreEmulator,
+    // not initializeFirestore with persistence, otherwise stale local cache
+    // would shadow emulator state.
+    expect(firebaseTs).toContain('useEmulators');
+    expect(firebaseTs).toMatch(/if \(useEmulators\)/);
   });
 });
 

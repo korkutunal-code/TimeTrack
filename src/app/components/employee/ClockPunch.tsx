@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
-import { Clock, Coffee, LogOut, RefreshCw, CalendarDays, AlertTriangle } from 'lucide-react';
+import { Clock, Coffee, LogOut, RefreshCw, CalendarDays, AlertTriangle, WifiOff } from 'lucide-react';
 
 import type { User } from '../../lib/auth';
 import { Button } from '../ui/button';
@@ -32,6 +32,12 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   const [week, setWeek] = useState<WeekSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // Layer 2: persistent failure banner. A fleeting toast was easy to miss on
+  // a flaky mobile connection, leaving the employee believing their clock-out
+  // landed when it hadn't (root cause of the stuck open shifts on
+  // 06-15/06-24/06-25/07-10). This banner stays visible until the action is
+  // retried successfully or dismissed, and exposes a Retry button.
+  const [writeFailure, setWriteFailure] = useState<{ action: 'in' | 'out' | 'lunch'; message: string } | null>(null);
   // Synchronous guard against double-click / double-punch race conditions.
   // setState is async in React; a ref check runs synchronously on every call,
   // preventing two punch-in (or punch-out / lunch) calls from being dispatched
@@ -62,6 +68,29 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     return () => clearInterval(id);
   }, [load]);
 
+  // Layer 2: notification-only open-shift watchdog. Detects a shift open >16h
+  // and prompts the employee to confirm they're still on shift / clock out —
+  // WITHOUT writing anything (unlike the legacy TodayEntry 12h auto-closer,
+  // which audit item #1 flags as writing capped/incorrect timestamps + no
+  // audit). 16h threshold exceeds a normal long day but catches genuinely
+  // forgotten clock-outs (the 06-15 shift ran ~5 weeks open). Fires once per
+  // open shift per session to avoid nagging.
+  const watchdogFiredRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!status?.isClockedIn || !status.activeSegment?.clockInSystem) return;
+    const clockInMs = status.activeSegment.clockInSystem;
+    const segKey = status.activeSegment.id || String(clockInMs);
+    if (watchdogFiredRef.current === segKey) return;
+    const elapsedH = (Date.now() - clockInMs) / (60 * 60 * 1000);
+    if (elapsedH > 16) {
+      watchdogFiredRef.current = segKey;
+      toast.warning(
+        `You've been clocked in for ${Math.floor(elapsedH)} hours. If you forgot to clock out, tap CLOCK OUT now.`,
+        { duration: 10000 },
+      );
+    }
+  }, [status?.isClockedIn, status?.activeSegment?.clockInSystem, status?.activeSegment?.id]);
+
   const requireOnline = () => {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       toast.error('You are offline. Connect to the internet before recording a punch.');
@@ -77,10 +106,13 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     setActionLoading('in');
     try {
       await punchIn(user.uid);
+      setWriteFailure(null);
       toast.success('Clocked in — shift started');
       await load();
     } catch (e: any) {
-      toast.error(e.message || 'Could not clock in');
+      const msg = e.message || 'Could not clock in';
+      toast.error(msg);
+      setWriteFailure({ action: 'in', message: msg });
     } finally {
       punchInFlight.current = false;
       setActionLoading(null);
@@ -94,10 +126,13 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     setActionLoading('out');
     try {
       await punchOut(user.uid);
+      setWriteFailure(null);
       toast.success('Clocked out — shift complete');
       await load();
     } catch (e: any) {
-      toast.error(e.message || 'Could not clock out');
+      const msg = e.message || 'Could not clock out';
+      toast.error(msg);
+      setWriteFailure({ action: 'out', message: msg });
     } finally {
       punchInFlight.current = false;
       setActionLoading(null);
@@ -113,10 +148,13 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
       const s = status;
       const isEnding = s?.isOnLunch;
       await toggleLunch(user.uid);
+      setWriteFailure(null);
       toast.success(isEnding ? 'Lunch ended — welcome back' : 'Lunch started');
       await load();
     } catch (e: any) {
-      toast.error(e.message || 'Lunch action failed');
+      const msg = e.message || 'Lunch action failed';
+      toast.error(msg);
+      setWriteFailure({ action: 'lunch', message: msg });
     } finally {
       punchInFlight.current = false;
       setActionLoading(null);
@@ -165,6 +203,59 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
           One-tap clock in/out
         </p>
       </div>
+
+      {/* Layer 2: persistent write-failure banner. Stays visible until the
+          action succeeds on retry or is dismissed — a fleeting toast was the
+          root cause of employees believing a lost clock-out had landed. */}
+      {writeFailure && (
+        <div
+          role="alert"
+          className="flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-rose-800 shadow-sm"
+        >
+          <WifiOff className="size-5 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">
+              {writeFailure.action === 'out'
+                ? 'Clock-out failed — you are still clocked in.'
+                : writeFailure.action === 'in'
+                  ? 'Clock-in failed — your shift was not started.'
+                  : 'Lunch action failed — your shift was not updated.'}
+            </p>
+            <p className="text-xs text-rose-700 mt-0.5 break-words">
+              {writeFailure.message}
+            </p>
+            <p className="text-xs text-rose-700 mt-0.5">
+              Check your connection and retry. Your action was not saved.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5 shrink-0">
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => {
+                if (writeFailure.action === 'out') doPunchOut();
+                else if (writeFailure.action === 'in') doPunchIn();
+                else doToggleLunch();
+              }}
+              disabled={!!actionLoading}
+              className="h-8"
+            >
+              {actionLoading === writeFailure.action ? (
+                <RefreshCw className="size-3.5 mr-1 animate-spin" />
+              ) : null}
+              Retry
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setWriteFailure(null)}
+              className="h-8 text-rose-700 hover:text-rose-900 hover:bg-rose-100"
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Big visual status + live PT clock */}
       {status && (
