@@ -16,6 +16,16 @@ export interface TimeZoneOption {
   label: string;
 }
 
+/**
+ * Sentinel value for the "Auto" option. When selected, the display timezone
+ * tracks the OS/device timezone via `Intl.DateTimeFormat().resolvedOptions()
+ * .timeZone` and is re-resolved on each render/load, so traveling users who
+ * update their device clock see the local time without re-selecting. The
+ * sentinel itself is what gets persisted (not the resolved id), so a stored
+ * "auto" always follows the current OS TZ rather than freezing it.
+ */
+export const AUTO_TIMEZONE = 'auto';
+
 // A standard worldwide selection of major time zones. Offset shown is the
 // standard (base) offset; the live clock via Intl handles DST automatically.
 // No "Auto" / "Detect" option is included by design (manual selection only).
@@ -50,33 +60,64 @@ export const DISPLAY_TIMEZONES: TimeZoneOption[] = [
   { id: 'Pacific/Auckland', offset: 'UTC+12:00', label: 'Auckland, Wellington' },
 ];
 
-export const DEFAULT_DISPLAY_TIMEZONE = 'America/Los_Angeles';
+export const DEFAULT_DISPLAY_TIMEZONE = AUTO_TIMEZONE;
 
 export interface DisplayClock {
   date: string; // YYYY-MM-DD in the selected display zone
   time: string; // HH:MM (24h) in the selected display zone
-  zoneName: string; // IANA zone id
+  zoneName: string; // IANA zone id (resolved — never the 'auto' sentinel)
+}
+
+/**
+ * Read the OS/device timezone via Intl. Returns a valid IANA id, or
+ * 'America/Los_Angeles' as a safe fallback if Intl is unavailable or returns
+ * nothing (extremely rare in browser runtimes). This is DISPLAY-ONLY and does
+ * not affect the canonical PT payroll timezone (AGENTS.md §2).
+ */
+export function getOSTimezone(): string {
+  try {
+    const tz =
+      Intl?.DateTimeFormat?.().resolvedOptions?.().timeZone ||
+      Intl?.DateTimeFormat([], {})?.resolvedOptions?.().timeZone;
+    if (tz && typeof tz === 'string') return tz;
+  } catch {
+    // fall through to default
+  }
+  return 'America/Los_Angeles';
+}
+
+/**
+ * Resolve a display-timezone value to a concrete IANA id. The 'auto' sentinel
+ * resolves to the current OS timezone (re-read each call, so it follows device
+ * TZ changes on reload). Any other value is returned as-is (assumed to already
+ * be a valid IANA id from DISPLAY_TIMEZONES).
+ */
+export function resolveDisplayTimezone(value: string): string {
+  return value === AUTO_TIMEZONE ? getOSTimezone() : value;
 }
 
 /**
  * Compute the current date/time strings for DISPLAY ONLY in the given zone.
- * Reads the live instant (new Date()) and formats via Intl.DateTimeFormat.
- * Has no effect on stored data or calculations. Mirrors the PT helpers' format
- * (en-CA date, en-US 24h time) so the visual style stays consistent.
+ * Accepts either the 'auto' sentinel (resolved to the OS TZ) or a concrete
+ * IANA id. Reads the live instant (new Date()) and formats via
+ * Intl.DateTimeFormat. Has no effect on stored data or calculations. Mirrors
+ * the PT helpers' format (en-CA date, en-US 24h time) so the visual style
+ * stays consistent.
  */
 export function getDisplayClock(timeZone: string): DisplayClock {
+  const resolved = resolveDisplayTimezone(timeZone);
   const now = new Date();
   const date = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
+    timeZone: resolved,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
   }).format(now);
   const time = new Intl.DateTimeFormat('en-US', {
-    timeZone,
+    timeZone: resolved,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
   }).format(now);
-  return { date, time, zoneName: timeZone };
+  return { date, time, zoneName: resolved };
 }

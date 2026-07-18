@@ -26,7 +26,15 @@ jest.mock('../app/lib/database', () => {
 });
 
 import { findOpenShiftEntry } from './clockService';
+import { getCurrentPTDate, getPTDate } from '../utils/timeCalculations';
 import type { TimeEntry } from '../app/lib/database';
+
+/** Subtract N days from a PT YYYY-MM-DD string, returning PT YYYY-MM-DD
+ * (mirrors clockService.subtractPTDays via a PT-noon UTC anchor). */
+function subtractPTDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return getPTDate(new Date(Date.UTC(y, m - 1, d - days, 12, 0, 0)));
+}
 
 function makeEntry(userId: string, date: string, open: boolean): TimeEntry {
   return {
@@ -71,14 +79,18 @@ describe('findOpenShiftEntry — S5 cross-midnight', () => {
   });
 
   it('falls back to a prior-day doc when today has no open segment (cross-midnight)', async () => {
-    const today = '2026-07-17';
-    const yesterday = '2026-07-16';
+    // Derive dates from the real current PT date so the test is date-stable
+    // (findOpenShiftEntry calls the real getCurrentPTDate()).
+    const today = getCurrentPTDate();
+    const yesterday = subtractPTDays(today, 1);
+    const threeDaysAgo = subtractPTDays(today, 3);
+    const twoDaysAgo = subtractPTDays(today, 2);
     // Today’s doc: complete, no open segment.
     getTimeEntry.mockResolvedValue(makeEntry(UID, today, false));
     // Range query returns yesterday’s open shift first (workDate desc).
     getTimeEntriesForUserInRange.mockResolvedValue([
       makeEntry(UID, yesterday, true), // open cross-midnight shift
-      makeEntry(UID, '2026-07-15', false),
+      makeEntry(UID, twoDaysAgo, false),
     ]);
 
     const result = await findOpenShiftEntry(UID);
@@ -89,14 +101,15 @@ describe('findOpenShiftEntry — S5 cross-midnight', () => {
     const [uid, start, end] = getTimeEntriesForUserInRange.mock.calls[0];
     expect(uid).toBe(UID);
     expect(end).toBe(today);
-    expect(start).toBe('2026-07-14'); // today - 3 days
+    expect(start).toBe(threeDaysAgo); // today - 3 days
   });
 
   it('returns null when no open shift exists on any recent day', async () => {
-    getTimeEntry.mockResolvedValue(makeEntry(UID, '2026-07-17', false));
+    const today = getCurrentPTDate();
+    getTimeEntry.mockResolvedValue(makeEntry(UID, today, false));
     getTimeEntriesForUserInRange.mockResolvedValue([
-      makeEntry(UID, '2026-07-16', false),
-      makeEntry(UID, '2026-07-15', false),
+      makeEntry(UID, subtractPTDays(today, 1), false),
+      makeEntry(UID, subtractPTDays(today, 2), false),
     ]);
 
     const result = await findOpenShiftEntry(UID);
@@ -106,10 +119,11 @@ describe('findOpenShiftEntry — S5 cross-midnight', () => {
   it('skips voided/archived docs when scanning for an open shift', async () => {
     // Today: none. Range returns a voided doc with a nominally-open segment,
     // which getActiveSegment must ignore, plus a real open shift.
+    const today = getCurrentPTDate();
     getTimeEntry.mockResolvedValue(null);
-    const voided = makeEntry(UID, '2026-07-16', true);
+    const voided = makeEntry(UID, subtractPTDays(today, 1), true);
     voided.status = 'voided';
-    const active = makeEntry(UID, '2026-07-15', true);
+    const active = makeEntry(UID, subtractPTDays(today, 2), true);
     getTimeEntriesForUserInRange.mockResolvedValue([voided, active]);
 
     const result = await findOpenShiftEntry(UID);

@@ -1,11 +1,11 @@
-import { Globe } from 'lucide-react';
+import { Globe, LocateFixed } from 'lucide-react';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
 } from './select';
-import { DISPLAY_TIMEZONES } from '../../lib/timezones';
+import { AUTO_TIMEZONE, DISPLAY_TIMEZONES, getOSTimezone } from '../../lib/timezones';
 
 interface TimeZoneSelectorProps {
   value: string;
@@ -13,17 +13,23 @@ interface TimeZoneSelectorProps {
 }
 
 /**
- * Display-only time zone selector for the header. Manual selection only —
- * no auto/browser-detect option. Changing the value only affects how the
- * date/time/zone label is displayed on screen; it does not touch backend
- * data or calculations.
+ * Display-only time zone selector for the header.
  *
- * The collapsed trigger shows ONLY the UTC offset (e.g. "UTC-08:00") to keep
- * it narrow next to the avatar. The expanded popover is widened so the full
- * city/region list stays readable.
+ * - An "Auto" option sits at the top of the list and is the default. It tracks
+ *   the OS/device timezone (re-resolved on each load), so traveling users who
+ *   update their device clock see local time without re-selecting. Selecting
+ *   any other option is treated as a manual override.
+ * - Changing the value only affects how the date/time/zone label is displayed
+ *   on screen; it does not touch backend data or calculations (AGENTS.md §2).
+ *
+ * The collapsed trigger shows ONLY the UTC offset (e.g. "UTC-08:00") — or
+ * "Auto" when auto is selected — to keep it narrow next to the avatar. The
+ * expanded popover is widened so the full city/region list stays readable.
  */
 export function TimeZoneSelector({ value, onChange }: TimeZoneSelectorProps) {
+  const isAuto = value === AUTO_TIMEZONE;
   const selected = DISPLAY_TIMEZONES.find((tz) => tz.id === value);
+  const detectedTZ = getOSTimezone();
 
   return (
     <Select value={value} onValueChange={onChange}>
@@ -35,11 +41,20 @@ export function TimeZoneSelector({ value, onChange }: TimeZoneSelectorProps) {
         <span className="flex items-center gap-1.5 min-w-0">
           <Globe className="size-3.5 md:size-4 shrink-0 text-indigo-500" />
           <span className="tabular-nums truncate">
-            {selected?.offset ?? 'UTC'}
+            {isAuto ? 'Auto' : (selected?.offset ?? 'UTC')}
           </span>
         </span>
       </SelectTrigger>
       <SelectContent className="w-[340px] max-w-[90vw]" position="popper" sideOffset={8}>
+        <SelectItem value={AUTO_TIMEZONE}>
+          <span className="flex items-center gap-1.5 font-medium">
+            <LocateFixed className="size-3.5 text-indigo-500" />
+            Auto
+          </span>{' '}
+          <span className="text-muted-foreground">
+            (OS timezone: {detectedTZ})
+          </span>
+        </SelectItem>
         {DISPLAY_TIMEZONES.map((tz) => (
           <SelectItem key={tz.id} value={tz.id}>
             <span className="tabular-nums font-medium">{tz.offset}</span>{' '}

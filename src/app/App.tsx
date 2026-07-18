@@ -17,6 +17,9 @@ import { Badge } from './components/ui/badge';
 import { UserAvatar } from './components/ui/user-avatar';
 import { TimeZoneSelector } from './components/ui/time-zone-selector';
 import { DEFAULT_DISPLAY_TIMEZONE } from './lib/timezones';
+
+/** localStorage key for the persisted display-timezone choice ('auto' or IANA id). */
+const DISPLAY_TIMEZONE_STORAGE_KEY = 'timetrack.displayTimezone';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,7 +42,22 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   // Display-only time zone for the punch screen's live date/time/zone label.
   // Pure UI state — never affects storage or calculations (AGENTS.md §2).
-  const [displayTimezone, setDisplayTimezone] = useState(DEFAULT_DISPLAY_TIMEZONE);
+  // The value is either the 'auto' sentinel (tracks the OS timezone, the
+  // default) or a concrete IANA id (manual override). Persisted to
+  // localStorage so the choice survives reloads; 'auto' re-resolves the OS
+  // TZ on each load so traveling users follow their device clock.
+  const [displayTimezone, setDisplayTimezoneState] = useState<string>(
+    () => localStorage.getItem(DISPLAY_TIMEZONE_STORAGE_KEY) || DEFAULT_DISPLAY_TIMEZONE,
+  );
+  const setDisplayTimezone = (tz: string) => {
+    setDisplayTimezoneState(tz);
+    try {
+      localStorage.setItem(DISPLAY_TIMEZONE_STORAGE_KEY, tz);
+    } catch {
+      // localStorage may be unavailable (private mode / quota); the in-memory
+      // choice still works for the session.
+    }
+  };
 
   const testMode =
     import.meta.env.VITE_TEST_MODE === 'true' ||
