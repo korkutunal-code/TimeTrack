@@ -317,7 +317,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <CalendarDays className="h-4 w-4" />
-              This Week (PT)
+              This Week: Week of {week.weekStart} in America/Los_Angeles
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
@@ -336,9 +336,6 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
                   Days Worked
                 </div>
               </div>
-            </div>
-            <div className="text-[10px] text-center text-muted-foreground mt-3">
-              Week of {week.weekStart}
             </div>
           </CardContent>
         </Card>
