@@ -358,7 +358,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
         </Button>
         {onViewHistory && (
           <Button variant="outline" size="sm" onClick={onViewHistory} className="flex-1">
-            View Full History
+            View Work History
           </Button>
         )}
       </div>

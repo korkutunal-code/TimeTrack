@@ -306,7 +306,7 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
               Back
             </Button>
           </div>
-          <h1 className="text-2xl md:text-3xl font-bold text-foreground">My History</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-foreground">My Work History</h1>
           <p className="text-sm text-muted-foreground">View your past time entries and total hours worked.</p>
         </div>
 
