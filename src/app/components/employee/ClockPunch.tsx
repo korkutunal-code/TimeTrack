@@ -195,7 +195,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   const lunchLabel = onLunch ? 'END LUNCH' : 'START LUNCH';
 
   return (
-    <div className="space-y-6 max-w-xl mx-auto px-4 pt-3 pb-6">
+    <div className="space-y-6 max-w-xl mx-auto px-4 pt-3 pb-3">
       {/* Live status header */}
       <div className="text-center">
         <h2 className="text-2xl font-semibold tracking-tight">Punch Clock</h2>
