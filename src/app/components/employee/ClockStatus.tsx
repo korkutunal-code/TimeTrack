@@ -9,7 +9,10 @@ interface ClockStatusProps {
   isClockedIn: boolean;
   isOnLunch: boolean;
   activeSegment: TimeSegment | null;
-  todayTotalMinutes: number;
+  /** Actual WORK minutes today (excludes breaks). */
+  workMinutes: number;
+  /** Total BREAK minutes today (lunch durations, including in-progress). */
+  breakMinutes: number;
   /**
    * IANA zone id used purely for DISPLAY of the live date/time/zone label on
    * this screen. Does not affect stored data or calculations (which remain in
@@ -22,7 +25,8 @@ export function ClockStatus({
   isClockedIn,
   isOnLunch,
   activeSegment,
-  todayTotalMinutes,
+  workMinutes,
+  breakMinutes,
   displayTimezone,
 }: ClockStatusProps) {
   const displayClock = getDisplayClock(displayTimezone);
@@ -120,8 +124,22 @@ export function ClockStatus({
             <TrendingUp className="h-4 w-4" />
             <span className="text-sm">Today so far</span>
           </div>
-          <div className="text-3xl font-semibold tabular-nums text-foreground">
-            {formatHoursHMM(todayTotalMinutes / 60)}
+          {/* Work/Break breakdown. "Work:" and "Break:" labels match the
+              "Today so far" text-sm style; the time values keep the same
+              font-semibold tabular-nums look as the previous single total. */}
+          <div className="flex flex-col items-end gap-0.5">
+            <div className="flex items-baseline gap-2">
+              <span className="text-sm text-muted-foreground">Work:</span>
+              <span className="text-3xl font-semibold tabular-nums text-foreground">
+                {formatHoursHMM(workMinutes / 60)}
+              </span>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-sm text-muted-foreground">Break:</span>
+              <span className="text-3xl font-semibold tabular-nums text-foreground">
+                {formatHoursHMM(breakMinutes / 60)}
+              </span>
+            </div>
           </div>
         </div>
 

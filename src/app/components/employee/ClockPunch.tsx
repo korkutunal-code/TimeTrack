@@ -263,7 +263,8 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
           isClockedIn={isIn}
           isOnLunch={onLunch}
           activeSegment={active}
-          todayTotalMinutes={status.todayTotalMinutes}
+          workMinutes={status.workMinutes}
+          breakMinutes={status.breakMinutes}
           displayTimezone={displayTimezone}
         />
       )}

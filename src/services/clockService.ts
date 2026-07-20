@@ -48,6 +48,13 @@ export interface PunchStatus {
   isClockedIn: boolean;
   isOnLunch: boolean;
   todayTotalMinutes: number;
+  /**
+   * Actual WORK minutes today (excludes breaks). For an open shift this is
+   * the live estimate excluding any completed or in-progress lunch break.
+   */
+  workMinutes: number;
+  /** Total BREAK minutes today (lunch durations, including an in-progress one). */
+  breakMinutes: number;
   currentPTTime: string;
   currentPTDate: string;
 }
@@ -374,24 +381,57 @@ export async function getPunchStatus(userId: string): Promise<PunchStatus> {
     !(active.lunchInManual || active.lunchInSystem) &&
     !active.skipLunch;
 
-  let todayTotal = 0;
+  // Compute work + break minutes separately so the UI can show a Work/Break
+  // breakdown instead of a single misleading "total including lunch" figure.
+  // For CLOSED segments, workMinutes already excludes lunch (closeActiveSegment
+  // subtracts it); break = lunchIn - lunchOut. For the ACTIVE open segment,
+  // we compute the live estimate excluding any completed or in-progress break.
+  let workMinutes = 0;
+  let breakMinutes = 0;
   if (entry?.segments?.length) {
-    todayTotal = entry.segments.reduce((sum, s) => sum + (s.workMinutes || 0), 0);
+    for (const s of entry.segments) {
+      if (s.complete) {
+        workMinutes += s.workMinutes || 0;
+        if (s.lunchOutManual && s.lunchInManual && !s.skipLunch) {
+          const lo = timeStringToMinutes(s.lunchOutManual);
+          const li = timeStringToMinutes(s.lunchInManual);
+          const effLo = lo < timeStringToMinutes(s.clockInManual || '00:00') ? lo + 24 * 60 : lo;
+          const effLi = li < timeStringToMinutes(s.clockInManual || '00:00') ? li + 24 * 60 : li;
+          breakMinutes += Math.max(0, effLi - effLo);
+        }
+      }
+    }
     if (active && !active.complete) {
       const inM = timeStringToMinutes(active.clockInManual || ptTime);
       const nowM = timeStringToMinutes(ptTime);
-      // S6: cross-midnight wrap for live elapsed. If "now" is earlier than
-      // clock-in, the shift crossed midnight (e.g. in=23:00, now=02:00).
+      // S6: cross-midnight wrap for live elapsed.
       const effNowM = nowM < inM ? nowM + 24 * 60 : nowM;
+      const hasLunchOut = !!active.lunchOutManual;
+      const hasLunchIn = !!active.lunchInManual;
       if (isOnLunch && active.lunchOutManual) {
+        // Currently ON lunch: work up to lunch start; break = now - lunchOut.
         const lunchOutM = timeStringToMinutes(active.lunchOutManual);
         const effLunchOutM = lunchOutM < inM ? lunchOutM + 24 * 60 : lunchOutM;
-        todayTotal += Math.max(0, effLunchOutM - inM);
+        workMinutes += Math.max(0, effLunchOutM - inM);
+        breakMinutes += Math.max(0, effNowM - effLunchOutM);
+      } else if (hasLunchOut && hasLunchIn) {
+        // Lunch done, back working: work = (lunchOut-in) + (now-lunchIn).
+        const lunchOutM = timeStringToMinutes(active.lunchOutManual!);
+        const lunchInM = timeStringToMinutes(active.lunchInManual!);
+        const effLunchOutM = lunchOutM < inM ? lunchOutM + 24 * 60 : lunchOutM;
+        const effLunchInM = lunchInM < inM ? lunchInM + 24 * 60 : lunchInM;
+        workMinutes += Math.max(0, effLunchOutM - inM) + Math.max(0, effNowM - effLunchInM);
+        breakMinutes += Math.max(0, effLunchInM - effLunchOutM);
       } else {
-        todayTotal += Math.max(0, effNowM - inM);
+        // No lunch yet (or skipLunch): full elapsed is work.
+        workMinutes += Math.max(0, effNowM - inM);
       }
     }
   }
+  // todayTotalMinutes kept for backward compat = work minutes (no longer
+  // includes break for the open-not-on-lunch case — that was the misleading
+  // behavior the Work/Break breakdown replaces).
+  const todayTotal = workMinutes;
 
   return {
     entry,
@@ -399,6 +439,8 @@ export async function getPunchStatus(userId: string): Promise<PunchStatus> {
     isClockedIn: !!active,
     isOnLunch,
     todayTotalMinutes: Math.floor(todayTotal),
+    workMinutes: Math.floor(workMinutes),
+    breakMinutes: Math.floor(breakMinutes),
     currentPTTime: ptTime,
     currentPTDate: ptDate,
   };
