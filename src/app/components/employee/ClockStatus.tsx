@@ -140,6 +140,12 @@ export function ClockStatus({
                 {formatHoursHMM(breakMinutes / 60)}
               </span>
             </div>
+            <div className="flex items-baseline gap-2 border-t border-border/40 mt-1 pt-1">
+              <span className="text-sm text-muted-foreground">Total:</span>
+              <span className="text-3xl font-semibold tabular-nums text-foreground">
+                {formatHoursHMM((workMinutes + breakMinutes) / 60)}
+              </span>
+            </div>
           </div>
         </div>
 
