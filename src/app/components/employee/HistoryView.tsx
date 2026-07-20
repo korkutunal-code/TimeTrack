@@ -7,7 +7,7 @@ import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
-import { ArrowLeft, AlertTriangle, Clock, Calendar, Target, ChevronLeft, ChevronRight, Filter, X } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Clock, Calendar, Target, Briefcase, ChevronLeft, ChevronRight, Filter, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatHoursHMM } from '../../../utils/timeCalculations';
 
@@ -193,6 +193,13 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
   // Calculate stats from currently-loaded entries
   const totalHours = entries.reduce((acc, e) => acc + (e.totalHours || 0), 0);
   const daysWorked = entries.filter(e => e.complete).length;
+  // SHIFTS WORKED: count of completed shifts across all segments in the
+  // period. A single day with a split shift (2 segments) counts as 2 shifts,
+  // matching the segment model in AGENTS.md §2.
+  const shiftsWorked = entries.reduce(
+    (acc, e) => acc + (e.segments?.filter(s => s.complete).length || (e.complete ? 1 : 0)),
+    0,
+  );
   const avgDaily = daysWorked > 0 ? totalHours / daysWorked : 0;
 
   // Pagination
@@ -390,31 +397,6 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
         </div>
       )}
 
-      {/* Prominent Total Hours Summary Header */}
-      {entries.length > 0 && (
-        <Card className="border-2 border-indigo-200 bg-gradient-to-r from-indigo-50 via-violet-50 to-indigo-50 shadow-lg rounded-2xl">
-          <CardContent className="py-5">
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <div>
-                <p className="text-xs font-semibold text-indigo-600 uppercase tracking-widest mb-1">
-                  Total Hours
-                </p>
-                <p className="text-4xl md:text-5xl font-black text-indigo-700 tabular-nums leading-none">
-                  {formatHoursHMM(totalHours)}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">across</p>
-                <p className="text-lg font-bold text-slate-700">
-                  {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
-                </p>
-                {rangeLabel && <p className="text-xs text-slate-500 mt-0.5">{rangeLabel}</p>}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Error Banner */}
       {errorMessage && (
         <Card className="border-2 border-red-200 bg-red-50/70 rounded-2xl">
@@ -436,7 +418,7 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
       )}
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl">
           <CardContent className="pt-4 md:pt-6">
             <div className="flex items-center gap-3 mb-2">
@@ -458,6 +440,18 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
               <span className="text-xs md:text-sm font-semibold text-slate-500 uppercase tracking-wider">Days Worked</span>
             </div>
             <p className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">{daysWorked}</p>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl">
+          <CardContent className="pt-4 md:pt-6">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="bg-gradient-to-tr from-sky-500 to-blue-400 p-2 md:p-2.5 rounded-xl shadow-sm">
+                <Briefcase className="size-4 md:size-5 text-white" />
+              </div>
+              <span className="text-xs md:text-sm font-semibold text-slate-500 uppercase tracking-wider">Shifts Worked</span>
+            </div>
+            <p className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">{shiftsWorked}</p>
           </CardContent>
         </Card>
 
