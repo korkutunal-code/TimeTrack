@@ -119,30 +119,31 @@ export function ClockStatus({
           </div>
         ) : null}
 
-        <div className="pt-2 border-t flex items-baseline justify-between">
-          <div className="flex items-center gap-2 text-muted-foreground">
+        <div className="pt-2 border-t">
+          {/* Centered header */}
+          <div className="flex items-center justify-center gap-2 text-muted-foreground">
             <TrendingUp className="h-4 w-4" />
             <span className="text-sm">Today so far</span>
           </div>
-          {/* Work/Break breakdown. "Work:" and "Break:" labels match the
-              "Today so far" text-sm style; the time values keep the same
-              font-semibold tabular-nums look as the previous single total. */}
-          <div className="flex flex-col items-end gap-0.5">
-            <div className="flex items-baseline gap-2">
-              <span className="text-sm text-muted-foreground">Work:</span>
-              <span className="text-3xl font-semibold tabular-nums text-foreground">
+          {/* 3-column horizontal metrics: Work | Break | Total. Each column
+              stacks its label (normal weight, no colon) above its value
+              (bold), both center-aligned within the column. */}
+          <div className="grid grid-cols-3 gap-2 mt-2">
+            <div className="flex flex-col items-center gap-0.5">
+              <span className="text-sm text-muted-foreground">Work</span>
+              <span className="text-3xl font-bold tabular-nums text-foreground">
                 {formatHoursHMM(workMinutes / 60)}
               </span>
             </div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-sm text-muted-foreground">Break:</span>
-              <span className="text-3xl font-semibold tabular-nums text-foreground">
+            <div className="flex flex-col items-center gap-0.5">
+              <span className="text-sm text-muted-foreground">Break</span>
+              <span className="text-3xl font-bold tabular-nums text-foreground">
                 {formatHoursHMM(breakMinutes / 60)}
               </span>
             </div>
-            <div className="flex items-baseline gap-2 border-t border-border/40 mt-1 pt-1">
-              <span className="text-sm text-muted-foreground">Total:</span>
-              <span className="text-3xl font-semibold tabular-nums text-foreground">
+            <div className="flex flex-col items-center gap-0.5">
+              <span className="text-sm text-muted-foreground">Total</span>
+              <span className="text-3xl font-bold tabular-nums text-foreground">
                 {formatHoursHMM((workMinutes + breakMinutes) / 60)}
               </span>
             </div>
