@@ -192,7 +192,11 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   }
 
   const canDoLunch = isIn && !active?.complete;
-  const lunchLabel = onLunch ? 'END LUNCH' : 'START LUNCH';
+  // A lunch break is "used" for this active segment when it was completed
+  // (lunchIn set) or skipped. In both cases the segment can't take another
+  // lunch, so the button is replaced with a disabled info state.
+  const lunchUsed = !!active?.lunchInManual || !!active?.lunchInSystem || !!active?.skipLunch;
+  const lunchLabel = onLunch ? 'END LUNCH' : lunchUsed ? 'Lunch break used for this shift' : 'START LUNCH';
 
   return (
     <div className="space-y-6 max-w-xl mx-auto px-4 pt-3 pb-3">
@@ -286,13 +290,19 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
           {primaryLabel}
         </Button>
 
-        {/* Secondary lunch toggle when clocked in */}
+        {/* Secondary lunch toggle when clocked in. Stays rendered (but
+            disabled) when the shift's lunch has already been used, showing
+            "Lunch break used for this shift" with no interactive styling. */}
         {isIn && !onLunch && (
           <Button
             onClick={doToggleLunch}
-            disabled={!canDoLunch || !!actionLoading}
+            disabled={lunchUsed || !canDoLunch || !!actionLoading}
             variant="outline"
-            className="w-full h-12 mt-3 text-base font-medium active:scale-[0.985] touch-manipulation"
+            className={
+              lunchUsed
+                ? 'w-full h-12 mt-3 text-base font-medium cursor-not-allowed opacity-60 bg-muted/40 text-muted-foreground'
+                : 'w-full h-12 mt-3 text-base font-medium active:scale-[0.985] touch-manipulation'
+            }
           >
             {actionLoading === 'lunch' ? (
               <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
