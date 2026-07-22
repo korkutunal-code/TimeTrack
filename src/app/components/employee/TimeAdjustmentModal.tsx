@@ -110,8 +110,10 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
   const [requests, setRequests] = useState<CorrectionRequest[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Inline direct-edit state (≤24h path).
-  const [editing, setEditing] = useState<{ entryId: string; segmentId: string; field: EditableField } | null>(null);
+  // Inline direct-edit state (≤24h path). `mode: 'close'` is for retroactive
+  // shift closing (empty Clock Out on an open shift); `'edit'` is for editing
+  // an existing timestamp.
+  const [editing, setEditing] = useState<{ entryId: string; segmentId: string; field: EditableField; mode: 'edit' | 'close' } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [editReason, setEditReason] = useState('');
 
@@ -158,6 +160,28 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
 
   const handleCellClick = (row: ShiftRow, field: FieldConfig) => {
     const current = (row.segment as any)[field.key] as string | undefined;
+
+    // Retroactive shift close: empty Clock Out on an open shift. Use the
+    // clock-IN system timestamp for the 24h threshold (no clock-out exists).
+    const isRetroactiveClose = !current && field.key === 'clockOutManual' && !row.segment.complete;
+    if (isRetroactiveClose) {
+      const clockInTs = row.segment.clockInSystem;
+      if (within24h(clockInTs)) {
+        // Direct close path (≤24h): close the shift immediately on save.
+        setRequesting(null);
+        setEditing({ entryId: row.entry.id, segmentId: row.segment.id, field: field.key, mode: 'close' });
+        setEditValue('');
+        setEditReason('');
+      } else {
+        // Correction-request path (>24h): admin must approve the close.
+        setEditing(null);
+        setRequesting({ row, field });
+        setReqTime('');
+        setReqReason('');
+      }
+      return;
+    }
+
     if (!current) {
       toast.info(`No ${field.label.toLowerCase()} time recorded for this shift.`);
       return;
@@ -166,7 +190,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
     if (within24h(ts)) {
       // Direct-edit path.
       setRequesting(null);
-      setEditing({ entryId: row.entry.id, segmentId: row.segment.id, field: field.key });
+      setEditing({ entryId: row.entry.id, segmentId: row.segment.id, field: field.key, mode: 'edit' });
       setEditValue(current);
       setEditReason('');
     } else {
@@ -190,16 +214,31 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
     }
     setSubmitting(true);
     try {
-      await dbService.directEditSegmentField({
-        userId: user.uid,
-        actorName: user.name,
-        entryId: editing.entryId,
-        segmentId: editing.segmentId,
-        field: editing.field,
-        value: editValue.trim(),
-        reason: editReason.trim(),
-      });
-      toast.success('Time updated.');
+      if (editing.mode === 'close') {
+        // Retroactive direct shift close (≤24h). directCloseShift validates
+        // clockOut > clockIn internally (S6 cross-midnight-aware).
+        await dbService.directCloseShift({
+          userId: user.uid,
+          actorName: user.name,
+          entryId: editing.entryId,
+          segmentId: editing.segmentId,
+          clockOut: editValue.trim(),
+          reason: editReason.trim(),
+        });
+        toast.success('Shift closed successfully.');
+      } else {
+        // Edit an existing timestamp.
+        await dbService.directEditSegmentField({
+          userId: user.uid,
+          actorName: user.name,
+          entryId: editing.entryId,
+          segmentId: editing.segmentId,
+          field: editing.field,
+          value: editValue.trim(),
+          reason: editReason.trim(),
+        });
+        toast.success('Time updated.');
+      }
       setEditing(null);
       await load();
       onSaved();
@@ -250,7 +289,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
         created_at: Date.now(),
       });
 
-      toast.success('Correction request submitted — an admin will review it.');
+      toast.success('Clock out correction request submitted for admin approval.');
       setRequesting(null);
       await load();
       onSaved();

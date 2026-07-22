@@ -799,6 +799,128 @@ class DatabaseService {
     return mapEntry(entryId, freshSnap.data());
   }
 
+  /**
+   * Retroactive direct shift close (≤24h path). Closes an OPEN segment by
+   * setting its clock-out, computing workMinutes (S6 cross-midnight-aware via
+   * closeActiveSegment), setting the day-completion flags, and recomputing
+   * the day total. Writes the mandatory audit log FIRST (employee self-audit),
+   * then mutates timeEntries.
+   *
+   * The 24h threshold is checked by the caller (TimeAdjustmentModal) using the
+   * segment's clockInSystem — this method performs the close once invoked.
+   */
+  async directCloseShift(args: {
+    userId: string;
+    actorName?: string;
+    entryId: string;
+    segmentId: string;
+    clockOut: string; // HH:MM
+    reason: string;
+  }): Promise<TimeEntry> {
+    const { userId, actorName, entryId, segmentId, clockOut, reason } = args;
+    const trimmedReason = (reason || '').trim();
+    if (!trimmedReason) throw new Error('A reason is required to close a shift.');
+
+    const beforeSnap = await getDoc(doc(db, 'timeEntries', entryId));
+    if (!beforeSnap.exists()) throw new Error('Entry not found.');
+    const before = mapEntry(entryId, beforeSnap.data());
+
+    if (before.userId !== userId) {
+      throw new Error('You can only edit your own time entries.');
+    }
+
+    // Find the target segment.
+    const persistedSegs = before.segments ? before.segments.map((s) => ({ ...s })) : [];
+    const currentSeg = (before as any).currentSegment as TimeSegment | null;
+
+    let targetIdx = persistedSegs.findIndex((s) => s.id === segmentId);
+    let targetSeg: TimeSegment | null = null;
+    if (targetIdx >= 0) {
+      targetSeg = persistedSegs[targetIdx];
+    } else if (currentSeg && currentSeg.id === segmentId) {
+      targetSeg = currentSeg;
+    }
+    if (!targetSeg) throw new Error('Shift not found. It may have been modified.');
+
+    if (targetSeg.complete) throw new Error('This shift is already closed.');
+    if (!targetSeg.clockInManual) throw new Error('Cannot close a shift without a clock-in time.');
+
+    // Validate clock-out is chronologically later than clock-in (S6
+    // cross-midnight-aware: if outM < inM, the shift crossed midnight and we
+    // add 24h; after that, outM must still be > inM).
+    const inM = timeToMinutes(targetSeg.clockInManual);
+    const outM = timeToMinutes(clockOut);
+    const effOutM = outM < inM ? outM + 24 * 60 : outM;
+    if (effOutM <= inM) {
+      throw new Error('Clock-out time must be later than the clock-in time.');
+    }
+
+    const beforeFieldVal = targetSeg.clockOutManual ?? null;
+    const now = Timestamp.now();
+
+    // Close the segment via the canonical helper (S6 wrap + lunch deduction).
+    const closedSeg = closeActiveSegment(
+      targetSeg,
+      clockOut,
+      now.toMillis(),
+      targetSeg.skipLunch ?? false,
+    );
+
+    // Rebuild segments — update the target in-place if persisted, or update
+    // the matching open segment if the target was the synthesized current.
+    let newSegments: TimeSegment[];
+    if (targetIdx >= 0) {
+      newSegments = persistedSegs.map((s, i) => (i === targetIdx ? closedSeg : s));
+    } else {
+      const openIdx = persistedSegs.findIndex((s) => !s.complete);
+      if (openIdx >= 0) {
+        newSegments = persistedSegs.map((s, i) => (i === openIdx ? closedSeg : s));
+      } else {
+        newSegments = [...persistedSegs, closedSeg];
+      }
+    }
+
+    // Recompute day total from all complete segments.
+    const totalWorkMinutes = newSegments.reduce(
+      (sum, s) => sum + (s.complete ? s.workMinutes || 0 : 0),
+      0,
+    );
+
+    // 1) Audit FIRST (mandatory, non-bypassable). Employee self-audit.
+    await auditLogService.logTimeCorrection({
+      actorUid: userId,
+      actorName,
+      actorRole: 'employee',
+      action: 'time_correction',
+      targetId: entryId,
+      before: { clockOutManual: beforeFieldVal, totalWorkMinutes: before.totalWorkMinutes, status: before.status },
+      after: { clockOutManual: clockOut, totalWorkMinutes, status: 'corrected' },
+      reason: trimmedReason,
+    });
+
+    // 2) Mutate the timeEntries doc — close the shift + set completion flags.
+    await updateDoc(doc(db, 'timeEntries', entryId), {
+      clockOutManual: clockOut,
+      clockOutSystem: now.toMillis(),
+      clockOutSystemTime: now,
+      segments: newSegments.map((s) => stripUndefined(s as any)),
+      totalWorkMinutes,
+      totalHours: totalWorkMinutes / 60,
+      complete: true,
+      dayComplete: true,
+      currentStep: 4,
+      completedAt: now.toMillis(),
+      status: 'corrected',
+      updatedAt: now,
+      updatedBy: userId,
+    } as any);
+
+    // Re-read + return hydrated view.
+    const freshSnap = await getDoc(doc(db, 'timeEntries', entryId));
+    if (!freshSnap.exists()) throw new Error('Entry not found after update.');
+    return mapEntry(entryId, freshSnap.data());
+  }
+
   /** Active (un-resolved) correction requests for a user — for badge display. */
   async getActiveCorrectionRequestsForUser(userId: string): Promise<CorrectionRequest[]> {
     const all = await this.getCorrectionRequestsForUser(userId);
@@ -1011,6 +1133,7 @@ class DatabaseService {
         lunchOut: after.skipLunch ? undefined : (after.lunchOutManual || undefined),
         lunchIn: after.skipLunch ? undefined : (after.lunchInManual || undefined),
         clockOutSystem: before.clockOutSystem ?? Date.now(),
+        clockInSystem: before.clockInSystem,
         existingSegments: segments,
         // 'append' preserves prior archived split-shift segments. 'replace'
         // would collapse them, destroying other shifts' segments + totals.
