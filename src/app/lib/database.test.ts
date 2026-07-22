@@ -150,6 +150,20 @@ describe('closeActiveSegment', () => {
     const closed = closeActiveSegment(seg, '17:00', 8000 * 60 * 60 * 1000 + 1000, false);
     expect(closed.workMinutes).toBe(540);
   });
+
+  // Invariant relied on by directCloseShift's guard (database.ts): a segment
+  // closed via closeActiveSegment always has a truthy clockOutManual, so
+  // guarding the close path on clockOutManual (not the `complete` flag) blocks
+  // genuine double-closes while still allowing stale-flagged-but-clock-out-less
+  // segments to be closed.
+  it('closed segment always carries a truthy clockOutManual alongside complete', () => {
+    const seg = createInitialSegment('09:00', 1000);
+    expect(seg.clockOutManual).toBeFalsy();
+    const closed = closeActiveSegment(seg, '17:00', 8000 * 60 * 60 * 1000 + 1000, false);
+    expect(closed.complete).toBe(true);
+    expect(closed.clockOutManual).toBeTruthy();
+    expect(closed.clockOutManual).toBe('17:00');
+  });
 });
 
 describe('calculateTotalHours — S6 cross-midnight', () => {

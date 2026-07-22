@@ -842,7 +842,14 @@ class DatabaseService {
     }
     if (!targetSeg) throw new Error('Shift not found. It may have been modified.');
 
-    if (targetSeg.complete) throw new Error('This shift is already closed.');
+    // Guard on the actual clock-out value, not the `complete` flag. A doc may
+    // carry a stale/contradictory `complete` flag while still lacking a
+    // clock-out (the case TimeAdjustmentModal's retroactive-close entry
+    // explicitly handles). `closeActiveSegment` always sets `clockOutManual`
+    // when it closes a segment, so a truthy value here reliably means the
+    // shift was genuinely closed — and a stale-flagged-but-clock-out-less
+    // segment can be closed without a confusing late rejection.
+    if (targetSeg.clockOutManual) throw new Error('This shift is already closed.');
     if (!targetSeg.clockInManual) throw new Error('Cannot close a shift without a clock-in time.');
 
     // Validate clock-out is chronologically later than clock-in (S6
