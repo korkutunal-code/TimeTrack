@@ -169,7 +169,7 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
 
   // Actionable, un-actioned requests (Open) surface in the amber card.
   const openCount = requests.filter(r => r.status === 'Open').length;
-  const inProgressCount = requests.filter(r => r.status === 'In Progress').length;
+  const rejectedCount = requests.filter(r => r.status === 'Rejected').length;
 
   return (
     <div className="space-y-6">
@@ -197,10 +197,10 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
               <p className="text-2xl font-bold text-amber-800">{openCount}</p>
             </CardContent>
           </Card>
-          <Card className="border-blue-200 bg-blue-50/40">
+          <Card className="border-red-200 bg-red-50/40">
             <CardContent className="pt-4">
-              <p className="text-xs text-blue-700 font-medium uppercase tracking-wider">In Progress</p>
-              <p className="text-2xl font-bold text-blue-800">{inProgressCount}</p>
+              <p className="text-xs text-red-600 font-medium uppercase tracking-wider">Rejected</p>
+              <p className="text-2xl font-bold text-red-600">{rejectedCount}</p>
             </CardContent>
           </Card>
           <Card className="border-green-200 bg-green-50/40">
