@@ -289,7 +289,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
         created_at: Date.now(),
       });
 
-      toast.success('Clock out correction request submitted for admin approval.');
+      toast.success(`${field.label} correction request submitted for admin approval.`);
       setRequesting(null);
       await load();
       onSaved();
