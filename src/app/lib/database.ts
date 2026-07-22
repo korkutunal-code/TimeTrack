@@ -921,6 +921,127 @@ class DatabaseService {
     return mapEntry(entryId, freshSnap.data());
   }
 
+  /**
+   * Retroactive direct lunch-end (≤24h path). Ends an in-progress lunch on an
+   * OPEN segment by setting lunchIn + lunchInSystem, WITHOUT closing the shift
+   * (the employee continues working). Validates lunchIn > lunchOut (S6
+   * cross-midnight-aware). Writes the mandatory audit log FIRST (employee
+   * self-audit), then mutates timeEntries.
+   *
+   * The 24h threshold is checked by the caller (TimeAdjustmentModal) using the
+   * segment's lunchOutSystem — this method performs the end-lunch once invoked.
+   */
+  async directEndLunch(args: {
+    userId: string;
+    actorName?: string;
+    entryId: string;
+    segmentId: string;
+    lunchIn: string; // HH:MM
+    reason: string;
+  }): Promise<TimeEntry> {
+    const { userId, actorName, entryId, segmentId, lunchIn, reason } = args;
+    const trimmedReason = (reason || '').trim();
+    if (!trimmedReason) throw new Error('A reason is required to end lunch.');
+
+    const beforeSnap = await getDoc(doc(db, 'timeEntries', entryId));
+    if (!beforeSnap.exists()) throw new Error('Entry not found.');
+    const before = mapEntry(entryId, beforeSnap.data());
+
+    if (before.userId !== userId) {
+      throw new Error('You can only edit your own time entries.');
+    }
+
+    // Find the target segment.
+    const persistedSegs = before.segments ? before.segments.map((s) => ({ ...s })) : [];
+    const currentSeg = (before as any).currentSegment as TimeSegment | null;
+
+    let targetIdx = persistedSegs.findIndex((s) => s.id === segmentId);
+    let targetSeg: TimeSegment | null = null;
+    if (targetIdx >= 0) {
+      targetSeg = persistedSegs[targetIdx];
+    } else if (currentSeg && currentSeg.id === segmentId) {
+      targetSeg = currentSeg;
+    }
+    if (!targetSeg) throw new Error('Shift not found. It may have been modified.');
+
+    if (targetSeg.complete) throw new Error('Cannot end lunch on a closed shift.');
+    if (!targetSeg.lunchOutManual) throw new Error('No lunch break was started on this shift.');
+    if (targetSeg.lunchInManual) throw new Error('Lunch has already ended on this shift.');
+
+    // Validate lunchIn > lunchOut (S6 cross-midnight-aware).
+    const lunchOutM = timeToMinutes(targetSeg.lunchOutManual);
+    const lunchInM = timeToMinutes(lunchIn);
+    const effLunchInM = lunchInM < lunchOutM ? lunchInM + 24 * 60 : lunchInM;
+    if (effLunchInM <= lunchOutM) {
+      throw new Error('Lunch-in time must be later than the lunch-out time.');
+    }
+
+    const beforeFieldVal = targetSeg.lunchInManual ?? null;
+    const now = Timestamp.now();
+
+    // Update the segment with lunchIn + system timestamp. Segment stays OPEN.
+    const updatedSeg: TimeSegment = {
+      ...targetSeg,
+      lunchInManual: lunchIn,
+      lunchInSystem: now.toMillis(),
+      complete: false,
+    };
+
+    // Rebuild segments — update the target in-place.
+    let newSegments: TimeSegment[];
+    if (targetIdx >= 0) {
+      newSegments = persistedSegs.map((s, i) => (i === targetIdx ? updatedSeg : s));
+    } else {
+      const openIdx = persistedSegs.findIndex((s) => !s.complete);
+      if (openIdx >= 0) {
+        newSegments = persistedSegs.map((s, i) => (i === openIdx ? updatedSeg : s));
+      } else {
+        newSegments = [...persistedSegs, updatedSeg];
+      }
+    }
+
+    // Determine if the top-level field should be synced (current segment or
+    // last-mirroring segment, same logic as directEditSegmentField).
+    const isCurrent = currentSeg && segmentId === currentSeg.id;
+    const isLastMirroring =
+      targetIdx >= 0 &&
+      targetIdx === persistedSegs.length - 1 &&
+      before.clockInManual === targetSeg.clockInManual;
+    const updateTopLevel = isCurrent || isLastMirroring;
+
+    // 1) Audit FIRST (mandatory, non-bypassable). Employee self-audit.
+    await auditLogService.logTimeCorrection({
+      actorUid: userId,
+      actorName,
+      actorRole: 'employee',
+      action: 'time_correction',
+      targetId: entryId,
+      before: { lunchInManual: beforeFieldVal, status: before.status },
+      after: { lunchInManual: lunchIn, status: 'corrected' },
+      reason: trimmedReason,
+    });
+
+    // 2) Mutate the timeEntries doc. The shift stays open (no completion
+    //    flags); only the lunch-in field + segment are updated.
+    const patch: any = {
+      segments: newSegments.map((s) => stripUndefined(s as any)),
+      status: 'corrected',
+      updatedAt: now,
+      updatedBy: userId,
+    };
+    if (updateTopLevel) {
+      patch.lunchInManual = lunchIn;
+      patch.lunchInSystemTime = now;
+      patch.lunchInSystem = now.toMillis();
+    }
+    await updateDoc(doc(db, 'timeEntries', entryId), patch);
+
+    // Re-read + return hydrated view.
+    const freshSnap = await getDoc(doc(db, 'timeEntries', entryId));
+    if (!freshSnap.exists()) throw new Error('Entry not found after update.');
+    return mapEntry(entryId, freshSnap.data());
+  }
+
   /** Active (un-resolved) correction requests for a user — for badge display. */
   async getActiveCorrectionRequestsForUser(userId: string): Promise<CorrectionRequest[]> {
     const all = await this.getCorrectionRequestsForUser(userId);

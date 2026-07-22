@@ -111,9 +111,10 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
   const [loading, setLoading] = useState(false);
 
   // Inline direct-edit state (≤24h path). `mode: 'close'` is for retroactive
-  // shift closing (empty Clock Out on an open shift); `'edit'` is for editing
-  // an existing timestamp.
-  const [editing, setEditing] = useState<{ entryId: string; segmentId: string; field: EditableField; mode: 'edit' | 'close' } | null>(null);
+  // shift closing (empty Clock Out on an open shift); `'endLunch'` is for
+  // retroactive lunch-end (empty Lunch In on an open-lunch segment);
+  // `'edit'` is for editing an existing timestamp.
+  const [editing, setEditing] = useState<{ entryId: string; segmentId: string; field: EditableField; mode: 'edit' | 'close' | 'endLunch' } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [editReason, setEditReason] = useState('');
 
@@ -182,6 +183,32 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
       return;
     }
 
+    // Retroactive lunch-end: empty Lunch In on an open-lunch segment (lunchOut
+    // set, lunchIn not set, shift still open). Use the lunch-OUT system
+    // timestamp for the 24h threshold (no lunchInSystem exists yet).
+    const isRetroactiveEndLunch =
+      !current &&
+      field.key === 'lunchInManual' &&
+      !row.segment.complete &&
+      !!row.segment.lunchOutManual;
+    if (isRetroactiveEndLunch) {
+      const lunchOutTs = row.segment.lunchOutSystem;
+      if (within24h(lunchOutTs)) {
+        // Direct end-lunch path (≤24h): end lunch immediately on save.
+        setRequesting(null);
+        setEditing({ entryId: row.entry.id, segmentId: row.segment.id, field: field.key, mode: 'endLunch' });
+        setEditValue('');
+        setEditReason('');
+      } else {
+        // Correction-request path (>24h): admin must approve the lunch end.
+        setEditing(null);
+        setRequesting({ row, field });
+        setReqTime('');
+        setReqReason('');
+      }
+      return;
+    }
+
     if (!current) {
       toast.info(`No ${field.label.toLowerCase()} time recorded for this shift.`);
       return;
@@ -226,6 +253,19 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
           reason: editReason.trim(),
         });
         toast.success('Shift closed successfully.');
+      } else if (editing.mode === 'endLunch') {
+        // Retroactive direct lunch-end (≤24h). directEndLunch validates
+        // lunchIn > lunchOut internally (S6 cross-midnight-aware). The shift
+        // stays open — work time resumes counting.
+        await dbService.directEndLunch({
+          userId: user.uid,
+          actorName: user.name,
+          entryId: editing.entryId,
+          segmentId: editing.segmentId,
+          lunchIn: editValue.trim(),
+          reason: editReason.trim(),
+        });
+        toast.success('Lunch ended successfully.');
       } else {
         // Edit an existing timestamp.
         await dbService.directEditSegmentField({
