@@ -102,7 +102,7 @@ interface TimeAdjustmentModalProps {
  *  - ≤24h old (by the segment's system timestamp): INLINE DIRECT EDIT —
  *    updates the specific segment in timeEntries + auditLog instantly.
  *  - >24h old (or no system ts): CORRECTION REQUEST — creates a
- *    `correctionRequests` doc (status "Pending") for admin approval; the cell
+ *    `correctionRequests` doc (status "Open") for admin approval; the cell
  *    shows a yellow "Pending" badge while the request is active.
  */
 export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjustmentModalProps) {
@@ -246,7 +246,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
         original_clock_in: seg.clockInManual,
         original_clock_out: seg.clockOutManual,
         original_lunch,
-        status: 'Pending',
+        status: 'Open',
         created_at: Date.now(),
       });
 

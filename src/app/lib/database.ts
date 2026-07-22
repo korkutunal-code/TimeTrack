@@ -92,7 +92,7 @@ export interface CorrectionRequest {
   requested_clock_out?: string;
   requested_lunch?: string;
 
-  status: 'Pending' | 'Open' | 'In Progress' | 'Resolved' | 'Rejected';
+  status: 'Open' | 'In Progress' | 'Resolved' | 'Rejected';
   resolution_note?: string;
   rejection_reason?: string;
   created_at: number;           // millis
@@ -802,7 +802,7 @@ class DatabaseService {
   /** Active (un-resolved) correction requests for a user — for badge display. */
   async getActiveCorrectionRequestsForUser(userId: string): Promise<CorrectionRequest[]> {
     const all = await this.getCorrectionRequestsForUser(userId);
-    const active: CorrectionRequest['status'][] = ['Pending', 'Open', 'In Progress'];
+    const active: CorrectionRequest['status'][] = ['Open', 'In Progress'];
     return all.filter((r) => active.includes(r.status));
   }
 

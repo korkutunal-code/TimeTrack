@@ -18,7 +18,6 @@ interface CorrectionRequestsProps {
 }
 
 const STATUS_COLORS: Record<CorrectionRequest['status'], string> = {
-  Pending: 'bg-amber-100 text-amber-800 border-amber-200',
   Open: 'bg-amber-100 text-amber-800 border-amber-200',
   'In Progress': 'bg-blue-100 text-blue-800 border-blue-200',
   Resolved: 'bg-green-100 text-green-800 border-green-200',
@@ -26,7 +25,6 @@ const STATUS_COLORS: Record<CorrectionRequest['status'], string> = {
 };
 
 const STATUS_ICONS: Record<CorrectionRequest['status'], React.ReactNode> = {
-  Pending: <Clock className="size-3" />,
   Open: <Clock className="size-3" />,
   'In Progress': <Clock className="size-3" />,
   Resolved: <CheckCircle2 className="size-3" />,
@@ -105,9 +103,9 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
 
   const handleOpenResolve = (req: CorrectionRequest) => {
     setSelectedRequest(req);
-    // Pending and Open are both "to-be-actioned" → default to In Progress.
-    // In Progress → default to Resolved. Resolved/Rejected (edge) → Resolved.
-    setNewStatus(req.status === 'Pending' || req.status === 'Open' ? 'In Progress' : req.status === 'In Progress' ? 'Resolved' : 'Resolved');
+    // Open → default to In Progress; In Progress → default to Resolved;
+    // Resolved/Rejected (edge) → Resolved.
+    setNewStatus(req.status === 'Open' ? 'In Progress' : req.status === 'In Progress' ? 'Resolved' : 'Resolved');
     setResolutionNote(req.resolution_note || req.rejection_reason || '');
     setResolveOpen(true);
   };
@@ -145,9 +143,8 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
     }
   };
 
-  // "Open" card counts both Pending (new 14-day modal requests) and Open
-  // (legacy requests) so all actionable, un-actioned requests surface together.
-  const openCount = requests.filter(r => r.status === 'Open' || r.status === 'Pending').length;
+  // Actionable, un-actioned requests (Open) surface in the amber card.
+  const openCount = requests.filter(r => r.status === 'Open').length;
   const inProgressCount = requests.filter(r => r.status === 'In Progress').length;
 
   return (
@@ -172,7 +169,7 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
           </Card>
           <Card className="border-amber-200 bg-amber-50/40">
             <CardContent className="pt-4">
-              <p className="text-xs text-amber-700 font-medium uppercase tracking-wider">Pending / Open</p>
+              <p className="text-xs text-amber-700 font-medium uppercase tracking-wider">Open</p>
               <p className="text-2xl font-bold text-amber-800">{openCount}</p>
             </CardContent>
           </Card>
@@ -262,10 +259,9 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
                       </TableCell>
                       {currentUser.role === 'admin' && (
                         <TableCell className="text-right">
-                          {/* Show Update for any actionable status; hide only for
-                              terminal Resolved/Rejected. Includes 'Pending'
-                              (new 14-day modal requests) alongside Open/InProgress. */}
-                          {(req.status === 'Pending' || req.status === 'Open' || req.status === 'In Progress') && (
+                          {/* Show Update for actionable statuses; hide only for
+                              terminal Resolved/Rejected. */}
+                          {(req.status === 'Open' || req.status === 'In Progress') && (
                             <Button
                               size="sm"
                               variant="outline"
