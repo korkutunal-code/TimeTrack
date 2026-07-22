@@ -882,6 +882,158 @@ class DatabaseService {
     });
   }
 
+  /**
+   * Resolve a correction request AND apply the time change atomically.
+   *
+   * When status === 'Resolved': maps issue_type to the target timeEntries
+   * field, updates the matching segment via buildConsistentClosePatch (S7
+   * dual-write + S6 cross-midnight), recomputes totalWorkMinutes, writes the
+   * mandatory auditLogs entry (action 'admin_correction_approved') FIRST, then
+   * mutates timeEntries, then finally marks the correctionRequests doc as
+   * Resolved. If any step fails, nothing is left in a half-applied state and
+   * the request stays un-Resolved (error surfaces to the admin).
+   *
+   * For 'In Progress' / 'Rejected' (non-Resolved) statuses, only the
+   * correctionRequests doc is updated (no time-entry mutation).
+   */
+  async resolveCorrectionRequest(args: {
+    requestId: string;
+    adminUid: string;
+    adminName?: string;
+    newStatus: CorrectionRequest['status'];
+    resolutionNote: string;
+  }): Promise<void> {
+    const { requestId, adminUid, adminName, newStatus, resolutionNote } = args;
+    const trimmedNote = (resolutionNote || '').trim();
+    if (!trimmedNote) throw new Error('A resolution note is required.');
+
+    // 1) Read the correction request to get the target field + suggested time.
+    const reqSnap = await getDoc(doc(db, 'correctionRequests', requestId));
+    if (!reqSnap.exists()) throw new Error('Correction request not found.');
+    const reqData = reqSnap.data() as any;
+    const request = {
+      id: requestId,
+      employee_id: reqData.employee_id,
+      requested_date: reqData.requested_date,
+      issue_type: reqData.issue_type,
+      suggested_time: reqData.suggested_time || undefined,
+      requested_clock_in: reqData.requested_clock_in || undefined,
+      requested_clock_out: reqData.requested_clock_out || undefined,
+      requested_lunch: reqData.requested_lunch || undefined,
+      notes: reqData.notes || '',
+      status: reqData.status || 'Open',
+    };
+
+    // 2) If not Resolved, just update the request doc (no time-entry mutation).
+    if (newStatus !== 'Resolved') {
+      const patch: any = {
+        status: newStatus,
+        updated_at: Timestamp.now(),
+        updated_by: adminUid,
+      };
+      if (newStatus === 'Rejected') {
+        patch.rejection_reason = trimmedNote;
+      } else {
+        patch.resolution_note = trimmedNote;
+      }
+      await updateDoc(doc(db, 'correctionRequests', requestId), patch);
+      return;
+    }
+
+    // 3) Resolved: apply the time change. Map issue_type → field + value.
+    const entryId = `${request.employee_id}_${request.requested_date}`;
+    const issueTypeToField: Record<string, 'clockInManual' | 'lunchOutManual' | 'lunchInManual' | 'clockOutManual'> = {
+      'Clock In': 'clockInManual',
+      'Lunch Out': 'lunchOutManual',
+      'Lunch In': 'lunchInManual',
+      'Clock Out': 'clockOutManual',
+    };
+    const field = issueTypeToField[request.issue_type];
+    if (!field) {
+      throw new Error(`Cannot apply change for issue type "${request.issue_type}". Update the time entry manually.`);
+    }
+    // Resolve the suggested value: prefer suggested_time, fall back to the
+    // requested_* field matching the issue_type.
+    let value: string | undefined = request.suggested_time;
+    if (!value) {
+      if (field === 'clockInManual') value = request.requested_clock_in;
+      else if (field === 'clockOutManual') value = request.requested_clock_out;
+      else if (field === 'lunchOutManual' || field === 'lunchInManual') {
+        // requested_lunch may be "HH:MM - HH:MM" or a single time.
+        if (request.requested_lunch) {
+          const parts = request.requested_lunch.split('-').map((s: string) => s.trim());
+          value = field === 'lunchOutManual' ? parts[0] : parts[1] || parts[0];
+        }
+      }
+    }
+    if (!value) {
+      throw new Error('No suggested/requested time found in the correction request.');
+    }
+
+    // 4) Read the target timeEntries doc.
+    const beforeSnap = await getDoc(doc(db, 'timeEntries', entryId));
+    if (!beforeSnap.exists()) {
+      throw new Error(`Time entry not found for ${request.employee_id} on ${request.requested_date}. Create it first or update manually.`);
+    }
+    const before = mapEntry(entryId, beforeSnap.data());
+    const beforeFieldVal = (before as any)[field] ?? null;
+
+    // 5) Build the after view + dual-write segments via S7 helper.
+    const after: any = { ...before, [field]: value };
+    let segments = before.segments ? before.segments.map((s) => ({ ...s })) : [];
+    const hasClockOut = !!after.clockOutManual;
+    if (hasClockOut && after.clockInManual) {
+      const closePatch = buildConsistentClosePatch({
+        clockIn: after.clockInManual,
+        clockOut: after.clockOutManual,
+        skipLunch: !!after.skipLunch,
+        lunchOut: after.skipLunch ? undefined : (after.lunchOutManual || undefined),
+        lunchIn: after.skipLunch ? undefined : (after.lunchInManual || undefined),
+        clockOutSystem: before.clockOutSystem ?? Date.now(),
+        existingSegments: segments,
+        mode: 'replace',
+      });
+      segments = closePatch.segments;
+      after.totalWorkMinutes = closePatch.totalWorkMinutes;
+      after.totalHours = closePatch.totalWorkMinutes / 60;
+    } else {
+      const activeIdx = segments.findIndex((s) => !s.complete);
+      if (activeIdx >= 0) (segments[activeIdx] as any)[field] = value;
+    }
+
+    // 6) Audit FIRST (mandatory, non-bypassable). Admin action.
+    await auditLogService.logTimeCorrection({
+      actorUid: adminUid,
+      actorName: adminName,
+      actorRole: 'admin',
+      targetId: entryId,
+      before: { field, [field]: beforeFieldVal, totalWorkMinutes: before.totalWorkMinutes },
+      after: { field, [field]: value, totalWorkMinutes: after.totalWorkMinutes },
+      reason: `${trimmedNote} (approved correction request ${requestId} for ${request.issue_type})`,
+      correctionRequestId: requestId,
+    });
+
+    // 7) Mutate the timeEntries doc.
+    await updateDoc(doc(db, 'timeEntries', entryId), {
+      [field]: value,
+      segments: segments.map((s) => stripUndefined(s as any)),
+      ...(hasClockOut
+        ? { totalWorkMinutes: after.totalWorkMinutes, totalHours: after.totalHours }
+        : {}),
+      status: 'corrected',
+      updatedAt: Timestamp.now(),
+      updatedBy: adminUid,
+    } as any);
+
+    // 8) Only after timeEntries is updated, mark the correction request Resolved.
+    await updateDoc(doc(db, 'correctionRequests', requestId), {
+      status: 'Resolved',
+      resolution_note: trimmedNote,
+      updated_at: Timestamp.now(),
+      updated_by: adminUid,
+    });
+  }
+
   async updateCorrectionRequest(id: string, updates: Partial<CorrectionRequest>): Promise<void> {
     const patch: any = { updated_at: Timestamp.now() };
     if (updates.status !== undefined) patch.status = updates.status;

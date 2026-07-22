@@ -130,26 +130,38 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
     }
     setSaving(true);
     try {
-      const updates: Partial<CorrectionRequest> = {
-        status: newStatus,
-        updated_by: currentUser.uid,
-      };
-      if (newStatus === 'Rejected') {
-        updates.rejection_reason = resolutionNote.trim();
-        updates.resolution_note = undefined;
+      if (newStatus === 'Resolved') {
+        // Resolve + apply the time change atomically. If the timeEntries write
+        // or audit fails, the request stays un-Resolved and the error surfaces.
+        await dbService.resolveCorrectionRequest({
+          requestId: selectedRequest.id,
+          adminUid: currentUser.uid,
+          adminName: currentUser.name,
+          newStatus: 'Resolved',
+          resolutionNote: resolutionNote.trim(),
+        });
+        toast.success(`Request resolved — the employee's time entry has been updated.`);
       } else {
-        updates.resolution_note = resolutionNote.trim();
-        updates.rejection_reason = undefined;
+        // In Progress / Rejected: update only the request doc.
+        const updates: Partial<CorrectionRequest> = {
+          status: newStatus,
+          updated_by: currentUser.uid,
+        };
+        if (newStatus === 'Rejected') {
+          updates.rejection_reason = resolutionNote.trim();
+        } else {
+          updates.resolution_note = resolutionNote.trim();
+        }
+        await dbService.updateCorrectionRequest(selectedRequest.id, updates);
+        toast.success(`Request updated to "${newStatus}".`);
       }
-      await dbService.updateCorrectionRequest(selectedRequest.id, updates);
-      toast.success(`Request updated to "${newStatus}".`);
       setResolveOpen(false);
       setSelectedRequest(null);
       setResolutionNote('');
       await loadRequests();
-    } catch (err) {
+    } catch (err: any) {
       console.error('[CorrectionRequests] Failed to update:', err);
-      toast.error('Failed to update request. Please try again.');
+      toast.error(err.message || 'Failed to update request. The time entry was NOT changed.');
     } finally {
       setSaving(false);
     }
