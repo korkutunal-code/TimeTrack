@@ -103,7 +103,7 @@ interface TimeAdjustmentModalProps {
  *    updates the specific segment in timeEntries + auditLog instantly.
  *  - >24h old (or no system ts): CORRECTION REQUEST — creates a
  *    `correctionRequests` doc (status "Open") for admin approval; the cell
- *    shows a yellow "Pending" badge while the request is active.
+ *    shows a yellow "Open" badge while the request is active.
  */
 export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjustmentModalProps) {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
@@ -389,7 +389,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
                               </span>
                               {activeReq && (
                                 <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-[10px] px-1.5 py-0 h-4">
-                                  Pending
+                                  Open
                                 </Badge>
                               )}
                             </button>

@@ -64,6 +64,7 @@ export class AuditLogService {
     actorUid: string;
     actorName?: string;
     actorRole?: 'admin' | 'manager' | 'system' | 'employee';
+    action?: AuditLogEntry['action'];
     targetId: string;
     before: Record<string, any>;
     after: Record<string, any>;
@@ -81,7 +82,7 @@ export class AuditLogService {
       actorUid: params.actorUid,
       actorName: params.actorName,
       actorRole: params.actorRole ?? 'admin',
-      action: 'time_correction',
+      action: params.action ?? 'time_correction',
       targetCollection: 'timeEntries',
       targetId: params.targetId,
       before: params.before,

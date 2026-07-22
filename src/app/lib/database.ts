@@ -890,15 +890,29 @@ class DatabaseService {
   }
 
   /**
-   * Resolve a correction request AND apply the time change atomically.
+   * Resolve a correction request AND apply the time change.
    *
    * When status === 'Resolved': maps issue_type to the target timeEntries
    * field, updates the matching segment via buildConsistentClosePatch (S7
    * dual-write + S6 cross-midnight), recomputes totalWorkMinutes, writes the
    * mandatory auditLogs entry (action 'admin_correction_approved') FIRST, then
    * mutates timeEntries, then finally marks the correctionRequests doc as
-   * Resolved. If any step fails, nothing is left in a half-applied state and
-   * the request stays un-Resolved (error surfaces to the admin).
+   * Resolved.
+   *
+   * Ordering & failure semantics (NOT a Firestore transaction — auditLogs is
+   * append-only/immutable so it cannot be rolled back):
+   *  - Audit is written FIRST as a durable precondition. This is intentional:
+   *    the mandatory-audit guardrail (AGENTS.md / .kilo/rules) prioritizes
+   *    "never change a time record without an audit entry existing" over
+   *    "never have an audit entry without a time change." An orphaned audit
+   *    (audit exists, time write failed) is the SAFE failure mode — it records
+   *    that an admin attempted this correction, and the request stays
+   *    un-Resolved so the admin sees the error and can retry.
+   *  - If the timeEntries write (step 7) succeeds but the correctionRequests
+   *    status write (step 8) fails, the time change persists and the request
+   *    stays un-Resolved. The admin can retry or manually mark it Resolved.
+   *    This is preferable to a transaction that would roll back the time
+   *    change on a transient request-status write failure.
    *
    * For 'In Progress' / 'Rejected' (non-Resolved) statuses, only the
    * correctionRequests doc is updated (no time-entry mutation).
@@ -1013,6 +1027,7 @@ class DatabaseService {
       actorUid: adminUid,
       actorName: adminName,
       actorRole: 'admin',
+      action: 'admin_correction_approved',
       targetId: entryId,
       before: { field, [field]: beforeFieldVal, totalWorkMinutes: before.totalWorkMinutes },
       after: { field, [field]: value, totalWorkMinutes: after.totalWorkMinutes },
