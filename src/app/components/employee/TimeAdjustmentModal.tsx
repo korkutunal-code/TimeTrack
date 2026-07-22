@@ -263,7 +263,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[95vw] max-w-5xl sm:max-w-5xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Pencil className="size-4" />
@@ -302,10 +302,10 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
                 {rows.map((row) => (
                   <tr key={row.key} className="border-b last:border-0">
                     <td className="py-2 pr-2 align-top font-medium whitespace-nowrap">
-                      <div className="flex flex-col gap-0.5">
+                      <div className="flex flex-row items-center gap-1.5">
                         <span>{row.entry.date}</span>
                         {row.totalShifts > 1 && (
-                          <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200 text-[10px] px-1.5 py-0 h-4 w-fit">
+                          <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200 text-[10px] px-1.5 py-0 h-4 shrink-0">
                             Shift {row.shiftNumber}
                           </Badge>
                         )}
