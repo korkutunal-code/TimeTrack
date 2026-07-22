@@ -162,11 +162,20 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
   const handleCellClick = (row: ShiftRow, field: FieldConfig) => {
     const current = (row.segment as any)[field.key] as string | undefined;
 
-    // Retroactive shift close: empty Clock Out on an open shift. Use the
-    // clock-IN system timestamp for the 24h threshold (no clock-out exists).
-    const isRetroactiveClose = !current && field.key === 'clockOutManual' && !row.segment.complete;
+    // Retroactive shift close: ANY click on an empty Clock Out cell. Does NOT
+    // depend on `segment.complete` — a doc may be missing segments[] or have
+    // stale/contradictory completion flags while still lacking a clock-out.
+    // The empty cell value is the source of truth: the user needs to enter a
+    // clock-out time regardless of internal Firestore flags.
+    const isRetroactiveClose = !current && field.key === 'clockOutManual';
     if (isRetroactiveClose) {
-      const clockInTs = row.segment.clockInSystem;
+      // Null-safe clock-in timestamp resolution: prefer the segment's
+      // clockInSystem, fall back to the entry-level field, then undefined
+      // (which within24h treats as >24h → correction-request path).
+      const clockInTs =
+        row.segment?.clockInSystem ??
+        row.entry?.clockInSystem ??
+        undefined;
       if (within24h(clockInTs)) {
         // Direct close path (≤24h): close the shift immediately on save.
         setRequesting(null);
@@ -174,7 +183,8 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
         setEditValue('');
         setEditReason('');
       } else {
-        // Correction-request path (>24h): admin must approve the close.
+        // Correction-request path (>24h or no clock-in timestamp): admin must
+        // approve the close.
         setEditing(null);
         setRequesting({ row, field });
         setReqTime('');
