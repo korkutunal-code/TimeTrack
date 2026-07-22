@@ -1016,8 +1016,8 @@ class DatabaseService {
       actorRole: 'employee',
       action: 'time_correction',
       targetId: entryId,
-      before: { lunchInManual: beforeFieldVal, status: before.status },
-      after: { lunchInManual: lunchIn, status: 'corrected' },
+      before: { lunchInManual: beforeFieldVal, totalWorkMinutes: before.totalWorkMinutes, status: before.status },
+      after: { lunchInManual: lunchIn, totalWorkMinutes: before.totalWorkMinutes, status: 'corrected' },
       reason: trimmedReason,
     });
 
