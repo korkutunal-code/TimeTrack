@@ -25,6 +25,28 @@ export interface AuditLogEntry {
 }
 
 /**
+ * Recursively strip `undefined` values from an object (and nested
+ * objects/arrays). Firestore's addDoc() throws on any field whose value is
+ * `undefined` ("Unsupported field value: undefined"), so every audit payload
+ * MUST be sanitized before write. `null` is preserved (Firestore accepts it)
+ * and empty strings/numbers/booleans are left untouched.
+ */
+function stripUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map(stripUndefinedDeep) as unknown as T;
+  }
+  if (value && typeof value === 'object' && !(value instanceof Timestamp) && !(value instanceof Date)) {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(value as Record<string, any>)) {
+      const cleaned = stripUndefinedDeep(v);
+      if (cleaned !== undefined) out[k] = cleaned;
+    }
+    return out as T;
+  }
+  return value;
+}
+
+/**
  * Admin-owned service for writing immutable audit trail entries.
  * PHASE 1: Used exclusively for time corrections.
  * Follows schema in FIRESTORE_DATA_MODEL.md and SECURITY_RULES_PLAN.md.
@@ -69,7 +91,10 @@ export class AuditLogService {
     };
 
     try {
-      const docRef = await addDoc(collection(db, this.collectionName), entry);
+      // Sanitize before write: Firestore rejects `undefined` field values.
+      // Strips optional fields (correctionRequestId, actorName) and any
+      // undefined nested in before/after snapshots.
+      const docRef = await addDoc(collection(db, this.collectionName), stripUndefinedDeep(entry));
       return docRef.id;
     } catch (err) {
       console.error('[AuditLogService] Failed to write audit log:', err);
@@ -105,7 +130,7 @@ export class AuditLogService {
     };
 
     try {
-      const docRef = await addDoc(collection(db, this.collectionName), entry);
+      const docRef = await addDoc(collection(db, this.collectionName), stripUndefinedDeep(entry));
       return docRef.id;
     } catch (err) {
       console.error('[AuditLogService] Failed to write void audit log:', err);
