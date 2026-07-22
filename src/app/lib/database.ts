@@ -1012,7 +1012,9 @@ class DatabaseService {
         lunchIn: after.skipLunch ? undefined : (after.lunchInManual || undefined),
         clockOutSystem: before.clockOutSystem ?? Date.now(),
         existingSegments: segments,
-        mode: 'replace',
+        // 'append' preserves prior archived split-shift segments. 'replace'
+        // would collapse them, destroying other shifts' segments + totals.
+        mode: 'append',
       });
       segments = closePatch.segments;
       after.totalWorkMinutes = closePatch.totalWorkMinutes;
@@ -1035,12 +1037,22 @@ class DatabaseService {
       correctionRequestId: requestId,
     });
 
-    // 7) Mutate the timeEntries doc.
+    // 7) Mutate the timeEntries doc. When the edit closes a shift (clock-out
+    // present), set the day-completion flags so mapEntry (which derives
+    // completeness from dayComplete) renders the entry as Complete — without
+    // these, an admin-approved clock-out would still show as "Incomplete/Open".
     await updateDoc(doc(db, 'timeEntries', entryId), {
       [field]: value,
       segments: segments.map((s) => stripUndefined(s as any)),
       ...(hasClockOut
-        ? { totalWorkMinutes: after.totalWorkMinutes, totalHours: after.totalHours }
+        ? {
+            totalWorkMinutes: after.totalWorkMinutes,
+            totalHours: after.totalHours,
+            complete: true,
+            dayComplete: true,
+            currentStep: 4,
+            completedAt: Date.now(),
+          }
         : {}),
       status: 'corrected',
       updatedAt: Timestamp.now(),
