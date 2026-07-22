@@ -250,6 +250,16 @@ export function getPTDate(d: Date): string {
 }
 
 /**
+ * Subtract N days from a PT YYYY-MM-DD date string, returning the PT YYYY-MM-DD.
+ * Uses a PT-noon UTC anchor (matches getPTWeekStart) to avoid DST/midnight
+ * off-by-one errors. Shared with clockService.subtractPTDays.
+ */
+export function subtractPTDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return getPTDate(new Date(Date.UTC(y, m - 1, d - days, 12, 0, 0)));
+}
+
+/**
  * Simple PT week start (Monday = 1, Mon–Sun workweek).
  * Returns YYYY-MM-DD of the Monday of the week containing the given PT date.
  */

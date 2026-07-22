@@ -105,13 +105,29 @@ service cloud.firestore {
       // Admins and managers can read audit logs
       allow read: if hasRole('admin') || hasRole('manager');
       
-      // Only admins can create audit log entries (service-layer enforced)
-      // Entry must have required fields and non-empty reason
-      allow create: if hasRole('admin') && 
-                       request.resource.data.reason is string &&
-                       request.resource.data.reason.size() > 0 &&
-                       request.resource.data.targetCollection is string &&
-                       request.resource.data.occurredAt != null;
+      // Create: admins (any correction) OR employees performing a SELF direct
+      // edit (≤24h Quick Edit path). The employee branch is tightly scoped so a
+      // user can only audit their OWN self-correction:
+      //   - actorRole == 'employee'
+      //   - actorUid == the authenticated user
+      //   - action == 'time_correction' on 'timeEntries' only
+      //   - targetId is their own entry doc (uid_YYYY-MM-DD)
+      // This keeps the mandatory-audit rule (AGENTS.md / .kilo/rules/
+      // audit-mandatory-reason.md) intact for employee-initiated direct edits
+      // without letting users forge audit rows for other people's records.
+      allow create: if (hasRole('admin') || (
+                    isAuthenticated() &&
+                    request.resource.data.actorRole == 'employee' &&
+                    request.resource.data.actorUid == request.auth.uid &&
+                    request.resource.data.action == 'time_correction' &&
+                    request.resource.data.targetCollection == 'timeEntries' &&
+                    request.resource.data.targetId is string &&
+                    request.resource.data.targetId.matches(request.auth.uid + '_.*')
+                  )) &&
+                  request.resource.data.reason is string &&
+                  request.resource.data.reason.size() > 0 &&
+                  request.resource.data.targetCollection is string &&
+                  request.resource.data.occurredAt != null;
       
       // IMMUTABLE: no updates or deletes for any role
       allow update, delete: if false;

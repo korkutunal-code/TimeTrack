@@ -18,6 +18,7 @@ interface CorrectionRequestsProps {
 }
 
 const STATUS_COLORS: Record<CorrectionRequest['status'], string> = {
+  Pending: 'bg-amber-100 text-amber-800 border-amber-200',
   Open: 'bg-amber-100 text-amber-800 border-amber-200',
   'In Progress': 'bg-blue-100 text-blue-800 border-blue-200',
   Resolved: 'bg-green-100 text-green-800 border-green-200',
@@ -25,6 +26,7 @@ const STATUS_COLORS: Record<CorrectionRequest['status'], string> = {
 };
 
 const STATUS_ICONS: Record<CorrectionRequest['status'], React.ReactNode> = {
+  Pending: <Clock className="size-3" />,
   Open: <Clock className="size-3" />,
   'In Progress': <Clock className="size-3" />,
   Resolved: <CheckCircle2 className="size-3" />,

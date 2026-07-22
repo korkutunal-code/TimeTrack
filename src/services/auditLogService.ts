@@ -6,7 +6,7 @@ export interface AuditLogEntry {
   occurredAt: Timestamp;
   actorUid: string;
   actorName?: string;
-  actorRole: 'admin' | 'manager' | 'system';
+  actorRole: 'admin' | 'manager' | 'system' | 'employee';
   action: 'time_correction' | 'void_entry' | 'bulk_correction' | 'status_change';
   targetCollection: 'timeEntries';
   targetId: string; // timeEntries doc id (e.g., uid_YYYY-MM-DD)
@@ -41,6 +41,7 @@ export class AuditLogService {
   async logTimeCorrection(params: {
     actorUid: string;
     actorName?: string;
+    actorRole?: 'admin' | 'manager' | 'system' | 'employee';
     targetId: string;
     before: Record<string, any>;
     after: Record<string, any>;
@@ -57,7 +58,7 @@ export class AuditLogService {
       occurredAt: Timestamp.now(),
       actorUid: params.actorUid,
       actorName: params.actorName,
-      actorRole: 'admin',
+      actorRole: params.actorRole ?? 'admin',
       action: 'time_correction',
       targetCollection: 'timeEntries',
       targetId: params.targetId,
@@ -79,7 +80,7 @@ export class AuditLogService {
   async logVoidEntry(params: {
     actorUid: string;
     actorName?: string;
-    actorRole: 'admin' | 'manager' | 'system';
+  actorRole: 'admin' | 'manager' | 'system' | 'employee';
     targetId: string;
     before: Record<string, any>;
     reason: string;

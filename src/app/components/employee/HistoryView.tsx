@@ -7,9 +7,10 @@ import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
-import { ArrowLeft, AlertTriangle, Clock, Calendar, Target, Briefcase, ChevronLeft, ChevronRight, Filter, X } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Clock, Calendar, Target, Briefcase, ChevronLeft, ChevronRight, Filter, X, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatHoursHMM } from '../../../utils/timeCalculations';
+import { TimeAdjustmentModal } from './TimeAdjustmentModal';
 
 interface HistoryViewProps {
   user: User;
@@ -69,6 +70,7 @@ function formatDateRange(start: string, end: string): string {
 
 export function HistoryView({ user, onBack }: HistoryViewProps) {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
+  const [adjustmentOpen, setAdjustmentOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('this-week');
@@ -310,7 +312,18 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
           <p className="text-sm text-muted-foreground">View your past time entries and total hours worked.</p>
         </div>
 
-        {/* Period Filter Buttons */}
+        <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          {/* Quick Edit & Correction Request entry point */}
+          <Button
+            variant="outline"
+            onClick={() => setAdjustmentOpen(true)}
+            className="h-10 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800"
+          >
+            <Pencil className="size-4 mr-1.5" />
+            Edit / Request Time Adjustments
+          </Button>
+
+          {/* Period Filter Buttons */}
         <div className="flex items-center gap-1.5 bg-indigo-50/50 backdrop-blur-sm border border-indigo-100/50 p-1.5 rounded-xl overflow-x-auto shadow-sm">
           {(['this-week', 'last-week', 'custom'] as PeriodFilter[]).map((filter) => {
             const labels: Record<PeriodFilter, string> = {
@@ -336,6 +349,7 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
               </Button>
             );
           })}
+        </div>
         </div>
       </div>
 
@@ -678,6 +692,13 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
           </Button>
         </div>
       )}
+
+      <TimeAdjustmentModal
+        user={user}
+        open={adjustmentOpen}
+        onClose={() => setAdjustmentOpen(false)}
+        onSaved={loadHistory}
+      />
     </div>
   );
 }
