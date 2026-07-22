@@ -367,7 +367,8 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">
                   {newStatus === 'Rejected' ? 'Rejection Reason' : 'Resolution Note'}{' '}
-                  <span className="text-red-500">*</span>
+                  <span className="text-red-500">*</span>{' '}
+                  <span className="text-xs text-red-500 font-normal">Required before saving.</span>
                 </Label>
                 <Textarea
                   placeholder={
@@ -380,9 +381,6 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
                   rows={3}
                   className="resize-none"
                 />
-                {!resolutionNote.trim() && (
-                  <p className="text-xs text-slate-400">Required before saving.</p>
-                )}
               </div>
             </div>
           )}
