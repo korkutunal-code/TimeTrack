@@ -171,7 +171,9 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-2 md:gap-3">
-            <TimeZoneSelector value={displayTimezone} onChange={setDisplayTimezone} />
+            {currentUser.role !== 'admin' && (
+              <TimeZoneSelector value={displayTimezone} onChange={setDisplayTimezone} />
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label="Account menu"
