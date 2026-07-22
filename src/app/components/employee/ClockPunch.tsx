@@ -277,7 +277,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
       <div className="pt-2">
         <Button
           onClick={primaryAction}
-          disabled={!!actionLoading || loading}
+          disabled={!!actionLoading}
           variant={primaryVariant}
           className="w-full h-16 text-xl font-semibold active:scale-[0.985] transition-all touch-manipulation"
           size="lg"
