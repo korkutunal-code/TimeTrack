@@ -66,6 +66,18 @@ function formatTimestamp(millis: number): string {
   }
 }
 
+/**
+ * Extract a single end of a lunch range stored as "HH:MM - HH:MM" (or
+ * "Skipped"). part 0 = lunch out, part 1 = lunch in. Returns '--:--' when
+ * the field is absent or doesn't contain the requested end.
+ */
+function parseLunchField(lunch: string | undefined, part: 0 | 1): string {
+  if (!lunch) return '--:--';
+  if (lunch === 'Skipped') return 'Skipped';
+  const parts = lunch.split('-').map((s) => s.trim());
+  return parts[part] || '--:--';
+}
+
 export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
   const isAdminOrManager = currentUser.role === 'admin' || currentUser.role === 'manager';
 
@@ -299,30 +311,41 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
 
           {selectedRequest && (
             <div className="space-y-4 py-2">
-              {/* Original request detail */}
-              <div className="bg-slate-50 rounded-lg p-3 text-sm space-y-1 border border-slate-200">
-                <p className="font-medium text-slate-700 text-xs uppercase tracking-wider mb-1">Request Details</p>
-                <p><span className="text-slate-500">Issue:</span> <span className="font-medium">{selectedRequest.issue_type}</span></p>
-                <p><span className="text-slate-500">Notes:</span> {selectedRequest.notes}</p>
-                {selectedRequest.suggested_time && (
-                  <p><span className="text-slate-500">Suggested time:</span> {selectedRequest.suggested_time}</p>
-                )}
-                {(selectedRequest.original_clock_in || selectedRequest.requested_clock_in) && (
-                  <div className="grid grid-cols-2 gap-2 mt-1">
-                    <div>
-                      <p className="text-xs text-slate-400 font-medium">Original</p>
-                      {selectedRequest.original_clock_in && <p className="text-xs">In: {selectedRequest.original_clock_in}</p>}
-                      {selectedRequest.original_clock_out && <p className="text-xs">Out: {selectedRequest.original_clock_out}</p>}
-                      {selectedRequest.original_lunch && <p className="text-xs">Lunch: {selectedRequest.original_lunch}</p>}
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-400 font-medium">Requested</p>
-                      {selectedRequest.requested_clock_in && <p className="text-xs">In: {selectedRequest.requested_clock_in}</p>}
-                      {selectedRequest.requested_clock_out && <p className="text-xs">Out: {selectedRequest.requested_clock_out}</p>}
-                      {selectedRequest.requested_lunch && <p className="text-xs">Lunch: {selectedRequest.requested_lunch}</p>}
-                    </div>
+              {/* Original vs Requested comparison */}
+              <div className="bg-slate-50 rounded-lg p-3 text-sm space-y-3 border border-slate-200">
+                <div>
+                  <p className="font-medium text-slate-700 text-xs uppercase tracking-wider mb-1">Request Details</p>
+                  <p className="text-xs text-slate-600"><span className="text-slate-500">Issue:</span> <span className="font-medium">{selectedRequest.issue_type}</span></p>
+                  <p className="text-xs text-slate-600"><span className="text-slate-500">Notes:</span> {selectedRequest.notes}</p>
+                </div>
+
+                {/* Explicit 4-line Original vs Requested comparison. The
+                    Requested side highlights the single field being changed
+                    (issue_type) with its suggested_time; others show --:--. */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-0.5">
+                    <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-1">Original</p>
+                    <p className="text-xs text-slate-700">Clock In: {selectedRequest.original_clock_in || '--:--'}</p>
+                    <p className="text-xs text-slate-700">Lunch Out: {parseLunchField(selectedRequest.original_lunch, 0)}</p>
+                    <p className="text-xs text-slate-700">Lunch In: {parseLunchField(selectedRequest.original_lunch, 1)}</p>
+                    <p className="text-xs text-slate-700">Clock Out: {selectedRequest.original_clock_out || '--:--'}</p>
                   </div>
-                )}
+                  <div className="space-y-0.5">
+                    <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-1">Requested</p>
+                    <p className={'text-xs ' + (selectedRequest.issue_type === 'Clock In' ? 'font-bold text-indigo-700' : 'text-slate-400')}>
+                      Clock In: {selectedRequest.issue_type === 'Clock In' ? (selectedRequest.suggested_time || selectedRequest.requested_clock_in || '--:--') : '--:--'}
+                    </p>
+                    <p className={'text-xs ' + (selectedRequest.issue_type === 'Lunch Out' ? 'font-bold text-indigo-700' : 'text-slate-400')}>
+                      Lunch Out: {selectedRequest.issue_type === 'Lunch Out' ? (selectedRequest.suggested_time || parseLunchField(selectedRequest.requested_lunch, 0) || '--:--') : '--:--'}
+                    </p>
+                    <p className={'text-xs ' + (selectedRequest.issue_type === 'Lunch In' ? 'font-bold text-indigo-700' : 'text-slate-400')}>
+                      Lunch In: {selectedRequest.issue_type === 'Lunch In' ? (selectedRequest.suggested_time || parseLunchField(selectedRequest.requested_lunch, 1) || '--:--') : '--:--'}
+                    </p>
+                    <p className={'text-xs ' + (selectedRequest.issue_type === 'Clock Out' ? 'font-bold text-indigo-700' : 'text-slate-400')}>
+                      Clock Out: {selectedRequest.issue_type === 'Clock Out' ? (selectedRequest.suggested_time || selectedRequest.requested_clock_out || '--:--') : '--:--'}
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {/* Status selector */}
