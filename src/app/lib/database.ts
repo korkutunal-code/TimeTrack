@@ -809,10 +809,17 @@ class DatabaseService {
   // ---- Correction Requests ----
 
   async createCorrectionRequest(data: Omit<CorrectionRequest, 'id'>): Promise<string> {
-    const docRef = await addDoc(collection(db, 'correctionRequests'), {
-      ...data,
-      created_at: Timestamp.now(),
-    });
+    // Sanitize: Firestore addDoc() rejects `undefined` field values. Optional
+    // fields (requested_lunch, suggested_time, original_*, resolution_note,
+    // updated_by, etc.) arrive as `undefined` when the caller omits them — e.g.
+    // a non-lunch Clock Out request leaves `requested_lunch: undefined`, which
+    // throws "Unsupported field value: undefined". Strip all undefined keys
+    // before write so any correction request saves cleanly.
+    const payload: Record<string, any> = { ...data, created_at: Timestamp.now() };
+    for (const key of Object.keys(payload)) {
+      if (payload[key] === undefined) delete payload[key];
+    }
+    const docRef = await addDoc(collection(db, 'correctionRequests'), payload);
     return docRef.id;
   }
 
