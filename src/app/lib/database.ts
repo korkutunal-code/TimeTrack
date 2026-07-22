@@ -1,7 +1,7 @@
 import { collection, doc, getDoc, getDocs, orderBy, query, Timestamp, updateDoc, where, limit, startAfter, deleteDoc, addDoc, setDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import type { User } from './auth';
-import { stripUndefined, buildConsistentClosePatch } from './segmentOps';
+import { stripUndefined, buildConsistentClosePatch, closeActiveSegment } from './segmentOps';
 import { deriveSegmentWorkMinutes } from '../../utils/timeCalculations';
 import { auditLogService } from '../../services/auditLogService';
 
@@ -661,6 +661,137 @@ class DatabaseService {
       updatedAt: Timestamp.now(),
       updatedBy: userId,
     } as any);
+
+    // Re-read + return hydrated view.
+    const freshSnap = await getDoc(doc(db, 'timeEntries', entryId));
+    if (!freshSnap.exists()) throw new Error('Entry not found after update.');
+    return mapEntry(entryId, freshSnap.data());
+  }
+
+  /**
+   * Segment-targeted direct edit (≤24h path, multi-shift safe). Updates a
+   * single segment's manual time field in `segments[]` WITHOUT collapsing
+   * other shifts (unlike directEditTimeField's replace mode). Recomputes the
+   * edited segment's workMinutes (S6 cross-midnight-aware via
+   * closeActiveSegment) and the day's totalWorkMinutes. If the edited segment
+   * mirrors the top-level fields (is the current/last segment), the top-level
+   * field is also updated so root and segments stay in sync.
+   */
+  async directEditSegmentField(args: {
+    userId: string;
+    actorName?: string;
+    entryId: string;
+    segmentId: string;
+    field: 'clockInManual' | 'lunchOutManual' | 'lunchInManual' | 'clockOutManual';
+    value: string;
+    reason: string;
+  }): Promise<TimeEntry> {
+    const { userId, actorName, entryId, segmentId, field, value, reason } = args;
+    const trimmedReason = (reason || '').trim();
+    if (!trimmedReason) throw new Error('A reason is required to adjust a time.');
+
+    const beforeSnap = await getDoc(doc(db, 'timeEntries', entryId));
+    if (!beforeSnap.exists()) throw new Error('Entry not found.');
+    const before = mapEntry(entryId, beforeSnap.data());
+
+    if (before.userId !== userId) {
+      throw new Error('You can only edit your own time entries.');
+    }
+
+    // Find the target segment: in persisted segments[] or the synthesized current.
+    const persistedSegs = before.segments ? before.segments.map((s) => ({ ...s })) : [];
+    const currentSeg = (before as any).currentSegment as TimeSegment | null;
+
+    let targetIdx = persistedSegs.findIndex((s) => s.id === segmentId);
+    let targetSeg: TimeSegment | null = null;
+    if (targetIdx >= 0) {
+      targetSeg = persistedSegs[targetIdx];
+    } else if (currentSeg && currentSeg.id === segmentId) {
+      targetSeg = currentSeg;
+    }
+    if (!targetSeg) {
+      throw new Error('Shift not found. It may have been modified.');
+    }
+
+    const beforeFieldVal = (targetSeg as any)[field] ?? null;
+
+    // Build the edited segment.
+    const editedSeg: TimeSegment = { ...targetSeg, [field]: value };
+
+    // If complete, recompute workMinutes (S6 cross-midnight-aware).
+    if (editedSeg.complete && editedSeg.clockOutManual) {
+      const openForRecompute: TimeSegment = {
+        ...editedSeg,
+        complete: false,
+        workMinutes: undefined,
+      };
+      const recomputed = closeActiveSegment(
+        openForRecompute,
+        editedSeg.clockOutManual,
+        editedSeg.clockOutSystem ?? 0,
+        editedSeg.skipLunch ?? false,
+      );
+      editedSeg.workMinutes = recomputed.workMinutes;
+    }
+
+    // Rebuild the segments array — update the target in-place if persisted,
+    // or update the matching open segment if the target was the synthesized current.
+    let newSegments: TimeSegment[];
+    if (targetIdx >= 0) {
+      newSegments = persistedSegs.map((s, i) => (i === targetIdx ? editedSeg : s));
+    } else {
+      // The current segment — may be dual-written as an open segment in segments[].
+      const openIdx = persistedSegs.findIndex((s) => !s.complete);
+      if (openIdx >= 0) {
+        newSegments = persistedSegs.map((s, i) =>
+          i === openIdx
+            ? { ...s, [field]: value, ...(editedSeg.complete ? { workMinutes: editedSeg.workMinutes } : {}) }
+            : s,
+        );
+      } else {
+        newSegments = [...persistedSegs, editedSeg];
+      }
+    }
+
+    // Recompute day total from all complete segments.
+    const totalWorkMinutes = newSegments.reduce(
+      (sum, s) => sum + (s.complete ? s.workMinutes || 0 : 0),
+      0,
+    );
+
+    // Update top-level field if the target mirrors it (current segment or
+    // last persisted segment whose clockIn matches the root).
+    const isCurrent = currentSeg && segmentId === currentSeg.id;
+    const isLastMirroring =
+      targetIdx >= 0 &&
+      targetIdx === persistedSegs.length - 1 &&
+      before.clockInManual === targetSeg.clockInManual;
+    const updateTopLevel = isCurrent || isLastMirroring;
+
+    const patch: any = {
+      segments: newSegments.map((s) => stripUndefined(s as any)),
+      totalWorkMinutes,
+      status: 'corrected',
+      updatedAt: Timestamp.now(),
+      updatedBy: userId,
+    };
+    if (updateTopLevel) {
+      patch[field] = value;
+    }
+
+    // 1) Audit FIRST (mandatory, non-bypassable).
+    await auditLogService.logTimeCorrection({
+      actorUid: userId,
+      actorName,
+      actorRole: 'employee',
+      targetId: entryId,
+      before: { segmentId, [field]: beforeFieldVal, totalWorkMinutes: before.totalWorkMinutes },
+      after: { segmentId, [field]: value, totalWorkMinutes },
+      reason: trimmedReason,
+    });
+
+    // 2) Mutate time record.
+    await updateDoc(doc(db, 'timeEntries', entryId), patch);
 
     // Re-read + return hydrated view.
     const freshSnap = await getDoc(doc(db, 'timeEntries', entryId));

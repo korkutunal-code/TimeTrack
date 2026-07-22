@@ -1,9 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
-import { Clock, Coffee, LogOut, LogIn, AlertCircle, Loader2, Pencil, Send } from 'lucide-react';
+import { Coffee, LogOut, LogIn, Loader2, Pencil, Send } from 'lucide-react';
 
 import type { User } from '../../lib/auth';
-import { dbService, type TimeEntry, type CorrectionRequest } from '../../lib/database';
+import { dbService, type TimeEntry, type TimeSegment, type CorrectionRequest } from '../../lib/database';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -35,11 +35,49 @@ const FIELDS: FieldConfig[] = [
   { key: 'clockOutManual', label: 'Clock Out', icon: <LogOut className="size-3.5" />, issueType: 'Clock Out', systemKey: 'clockOutSystem', isLunch: false },
 ];
 
-const ACTIVE_STATUSES: CorrectionRequest['status'][] = ['Pending', 'Open', 'In Progress'];
+interface ShiftRow {
+  key: string;
+  entry: TimeEntry;
+  segment: TimeSegment;
+  shiftNumber: number;
+  totalShifts: number;
+}
 
-/** Get the system (epoch millis) timestamp for a given field on an entry. */
-function systemTsFor(entry: TimeEntry, field: FieldConfig): number | undefined {
-  return (entry as any)[field.systemKey] as number | undefined;
+/**
+ * Flatten entries into one row per shift/segment. A split-shift day with 2
+ * segments produces 2 rows. The synthesized "current" segment (from top-level
+ * fields) is included only when it is NOT a duplicate of the last archived
+ * segment (the dual-write case in the ClockPunch flow).
+ */
+function flattenToShiftRows(entries: TimeEntry[]): ShiftRow[] {
+  const rows: ShiftRow[] = [];
+  for (const entry of entries) {
+    const segs = entry.segments ?? [];
+    const current = (entry as any).currentSegment as TimeSegment | null;
+
+    const allShifts: TimeSegment[] = [...segs];
+    if (current) {
+      const last = segs.length > 0 ? segs[segs.length - 1] : null;
+      const isDup =
+        last &&
+        last.clockInManual === current.clockInManual &&
+        last.complete === current.complete;
+      if (!isDup) {
+        allShifts.push(current);
+      }
+    }
+
+    allShifts.forEach((seg, i) => {
+      rows.push({
+        key: `${entry.id}|${seg.id}`,
+        entry,
+        segment: seg,
+        shiftNumber: i + 1,
+        totalShifts: allShifts.length,
+      });
+    });
+  }
+  return rows;
 }
 
 /** Whether a system timestamp is within the last 24 hours (direct-edit window). */
@@ -59,12 +97,13 @@ interface TimeAdjustmentModalProps {
  * Quick Edit & Correction Request modal.
  *
  * Shows the last 14 days of the employee's time entries as an editable table.
+ * Every shift/segment is its own row (split-shift days show multiple rows).
  * Clicking a time cell:
- *  - ≤24h old (by the field's system timestamp): INLINE DIRECT EDIT — updates
- *    timeEntries + auditLog (employee self-audit) instantly.
- *  - >24h old (or no system ts): CORRECTION REQUEST — creates a `correctionRequests`
- *    doc (status "Pending") for admin approval; the cell shows a yellow
- *    "Pending" badge while the request is active.
+ *  - ≤24h old (by the segment's system timestamp): INLINE DIRECT EDIT —
+ *    updates the specific segment in timeEntries + auditLog instantly.
+ *  - >24h old (or no system ts): CORRECTION REQUEST — creates a
+ *    `correctionRequests` doc (status "Pending") for admin approval; the cell
+ *    shows a yellow "Pending" badge while the request is active.
  */
 export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjustmentModalProps) {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
@@ -72,12 +111,12 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
   const [loading, setLoading] = useState(false);
 
   // Inline direct-edit state (≤24h path).
-  const [editing, setEditing] = useState<{ entryId: string; field: EditableField } | null>(null);
+  const [editing, setEditing] = useState<{ entryId: string; segmentId: string; field: EditableField } | null>(null);
   const [editValue, setEditValue] = useState('');
   const [editReason, setEditReason] = useState('');
 
   // Correction-request form state (>24h path).
-  const [requesting, setRequesting] = useState<{ entry: TimeEntry; field: FieldConfig } | null>(null);
+  const [requesting, setRequesting] = useState<{ row: ShiftRow; field: FieldConfig } | null>(null);
   const [reqTime, setReqTime] = useState('');
   const [reqReason, setReqReason] = useState('');
 
@@ -106,29 +145,34 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
     if (open) load();
   }, [open, load]);
 
-  // Active-request lookup keyed by `${date}|${issueType}`.
-  const activeRequestMap = new Map<string, CorrectionRequest>();
-  for (const r of requests) {
-    activeRequestMap.set(`${r.requested_date}|${r.issue_type}`, r);
-  }
+  const rows = useMemo(() => flattenToShiftRows(entries), [entries]);
 
-  const handleCellClick = (entry: TimeEntry, field: FieldConfig) => {
-    const current = (entry as any)[field.key] as string | undefined;
+  // Active-request lookup keyed by `${date}|${issueType}`.
+  const activeRequestMap = useMemo(() => {
+    const m = new Map<string, CorrectionRequest>();
+    for (const r of requests) {
+      m.set(`${r.requested_date}|${r.issue_type}`, r);
+    }
+    return m;
+  }, [requests]);
+
+  const handleCellClick = (row: ShiftRow, field: FieldConfig) => {
+    const current = (row.segment as any)[field.key] as string | undefined;
     if (!current) {
-      toast.info(`No ${field.label.toLowerCase()} time recorded for this day.`);
+      toast.info(`No ${field.label.toLowerCase()} time recorded for this shift.`);
       return;
     }
-    const ts = systemTsFor(entry, field);
+    const ts = (row.segment as any)[field.systemKey] as number | undefined;
     if (within24h(ts)) {
       // Direct-edit path.
       setRequesting(null);
-      setEditing({ entryId: entry.id, field: field.key });
+      setEditing({ entryId: row.entry.id, segmentId: row.segment.id, field: field.key });
       setEditValue(current);
       setEditReason('');
     } else {
       // Correction-request path.
       setEditing(null);
-      setRequesting({ entry, field });
+      setRequesting({ row, field });
       setReqTime(current);
       setReqReason('');
     }
@@ -146,10 +190,11 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
     }
     setSubmitting(true);
     try {
-      await dbService.directEditTimeField({
+      await dbService.directEditSegmentField({
         userId: user.uid,
         actorName: user.name,
         entryId: editing.entryId,
+        segmentId: editing.segmentId,
         field: editing.field,
         value: editValue.trim(),
         reason: editReason.trim(),
@@ -175,26 +220,31 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
       toast.error('A reason is required.');
       return;
     }
-    const { entry, field } = requesting;
+    const { row, field } = requesting;
+    const seg = row.segment;
     setSubmitting(true);
     try {
-      // Build original_* context fields for the admin view.
-      const original_lunch = entry.skipLunch
+      const original_lunch = seg.skipLunch
         ? 'Skipped'
-        : entry.lunchOutManual && entry.lunchInManual
-          ? `${entry.lunchOutManual} - ${entry.lunchInManual}`
+        : seg.lunchOutManual && seg.lunchInManual
+          ? `${seg.lunchOutManual} - ${seg.lunchInManual}`
           : undefined;
+
+      // Include shift context in notes when the day has multiple shifts,
+      // since the correction-request schema is per-day not per-segment.
+      const shiftContext =
+        row.totalShifts > 1 ? ` (Shift ${row.shiftNumber} of ${row.totalShifts})` : '';
 
       await dbService.createCorrectionRequest({
         employee_id: user.uid,
         employee_name: user.name,
-        requested_date: entry.date,
+        requested_date: row.entry.date,
         issue_type: field.issueType,
-        notes: reqReason.trim(),
+        notes: `${reqReason.trim()}${shiftContext}`,
         suggested_time: reqTime.trim(),
         requested_lunch: field.isLunch ? reqTime.trim() : undefined,
-        original_clock_in: entry.clockInManual,
-        original_clock_out: entry.clockOutManual,
+        original_clock_in: seg.clockInManual,
+        original_clock_out: seg.clockOutManual,
         original_lunch,
         status: 'Pending',
         created_at: Date.now(),
@@ -213,7 +263,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Pencil className="size-4" />
@@ -230,42 +280,51 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
           <div className="flex items-center justify-center py-12">
             <Loader2 className="size-6 animate-spin text-muted-foreground" />
           </div>
-        ) : entries.length === 0 ? (
+        ) : rows.length === 0 ? (
           <p className="text-center text-sm text-muted-foreground py-8">
             No time entries in the last 14 days.
           </p>
         ) : (
-          <div className="overflow-x-auto -mx-2 px-2">
-            <table className="w-full text-sm border-collapse min-w-[640px]">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground border-b">
-                  <th className="py-2 pr-3 font-semibold">Date</th>
+                  <th className="py-2 pr-2 font-semibold whitespace-nowrap">Date</th>
                   {FIELDS.map((f) => (
-                    <th key={f.key} className="py-2 px-2 font-semibold">
+                    <th key={f.key} className="py-2 px-1.5 font-semibold whitespace-nowrap">
                       <span className="flex items-center gap-1">{f.icon}{f.label}</span>
                     </th>
                   ))}
-                  <th className="py-2 pl-2 font-semibold">Status</th>
+                  <th className="py-2 pl-1.5 font-semibold whitespace-nowrap">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {entries.map((entry) => (
-                  <tr key={entry.id} className="border-b last:border-0">
-                    <td className="py-2 pr-3 align-top font-medium whitespace-nowrap">
-                      {entry.date}
+                {rows.map((row) => (
+                  <tr key={row.key} className="border-b last:border-0">
+                    <td className="py-2 pr-2 align-top font-medium whitespace-nowrap">
+                      <div className="flex flex-col gap-0.5">
+                        <span>{row.entry.date}</span>
+                        {row.totalShifts > 1 && (
+                          <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200 text-[10px] px-1.5 py-0 h-4 w-fit">
+                            Shift {row.shiftNumber}
+                          </Badge>
+                        )}
+                      </div>
                     </td>
                     {FIELDS.map((field) => {
-                      const value = (entry as any)[field.key] as string | undefined;
+                      const value = (row.segment as any)[field.key] as string | undefined;
                       const isEditing =
-                        editing?.entryId === entry.id && editing.field === field.key;
+                        editing?.entryId === row.entry.id &&
+                        editing?.segmentId === row.segment.id &&
+                        editing.field === field.key;
                       const isRequesting =
-                        requesting?.entry.id === entry.id && requesting.field.key === field.key;
-                      const activeReq = activeRequestMap.get(`${entry.date}|${field.issueType}`);
+                        requesting?.row.key === row.key && requesting.field.key === field.key;
+                      const activeReq = activeRequestMap.get(`${row.entry.date}|${field.issueType}`);
                       return (
-                        <td key={field.key} className="py-2 px-2 align-top">
+                        <td key={field.key} className="py-2 px-1.5 align-top">
                           {isEditing ? (
                             // Inline direct-edit form (≤24h).
-                            <div className="flex flex-col gap-1 min-w-[110px]">
+                            <div className="flex flex-col gap-1 min-w-[90px]">
                               <Input
                                 type="time"
                                 value={editValue}
@@ -291,7 +350,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
                             </div>
                           ) : isRequesting ? (
                             // Correction-request form (>24h).
-                            <div className="flex flex-col gap-1 min-w-[110px]">
+                            <div className="flex flex-col gap-1 min-w-[90px]">
                               <Label className="text-xs text-muted-foreground">
                                 Requested {field.label}
                               </Label>
@@ -321,11 +380,11 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
                           ) : (
                             <button
                               type="button"
-                              onClick={() => handleCellClick(entry, field)}
-                              className="group flex flex-col items-start gap-1 text-left rounded-md px-1.5 py-1 hover:bg-muted/60 transition-colors cursor-pointer"
+                              onClick={() => handleCellClick(row, field)}
+                              className="group flex flex-col items-start gap-1 text-left rounded-md px-1 py-0.5 hover:bg-muted/60 transition-colors cursor-pointer"
                               title={value ? 'Click to edit or request a correction' : 'No time recorded'}
                             >
-                              <span className="font-mono tabular-nums text-foreground">
+                              <span className="font-mono tabular-nums text-foreground text-xs">
                                 {value || '—'}
                               </span>
                               {activeReq && (
@@ -338,9 +397,9 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
                         </td>
                       );
                     })}
-                    <td className="py-2 pl-2 align-top">
+                    <td className="py-2 pl-1.5 align-top">
                       <span className="text-xs text-muted-foreground">
-                        {entry.status === 'corrected' ? 'Corrected' : entry.complete ? 'Complete' : 'Open'}
+                        {row.entry.status === 'corrected' ? 'Corrected' : row.segment.complete ? 'Complete' : 'Open'}
                       </span>
                     </td>
                   </tr>
@@ -349,12 +408,6 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
             </table>
           </div>
         )}
-
-        <div className="flex items-center gap-2 pt-2 text-xs text-muted-foreground">
-          <AlertCircle className="size-3.5 shrink-0" />
-          Direct edits (≤24h) are recorded in the audit trail. Older changes need
-          admin approval.
-        </div>
       </DialogContent>
     </Dialog>
   );
