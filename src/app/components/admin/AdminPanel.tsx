@@ -185,7 +185,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       toast.success('User deleted from database');
       setUserToDelete(null);
     } catch (e: any) {
-      const msg = e.message || 'Failed to delete user';
+      const msg = e instanceof Error ? e.message : 'Failed to delete user';
       setDeleteError(msg);
       toast.error(msg);
     } finally {
@@ -206,7 +206,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       toast.success(`User ${updated.active ? 'activated' : 'deactivated'}`);
       setUserToToggleStatus(null);
     } catch (e: any) {
-      const msg = e.message || 'Failed to update user status';
+      const msg = e instanceof Error ? e.message : 'Failed to update user status';
       setStatusError(msg);
       toast.error(msg);
     } finally {
