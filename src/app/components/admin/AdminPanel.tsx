@@ -17,7 +17,7 @@ import { Badge } from '../ui/badge';
 import { UserAvatar } from '../ui/user-avatar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 import { toast } from 'sonner';
-import { UserPlus, Upload, Download, Edit, Trash2, UserCog, CheckCircle2, HelpCircle, ChevronDown, Loader2 } from 'lucide-react';
+import { UserPlus, Upload, Download, Edit, Trash2, UserCog, CheckCircle2, HelpCircle, ChevronDown, Loader2, UserCheck, UserX } from 'lucide-react';
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
@@ -39,6 +39,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [userToToggleStatus, setUserToToggleStatus] = useState<{ user: User; targetStatus: 'Active' | 'Inactive' } | null>(null);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   const [newUser, setNewUser] = useState({
@@ -190,15 +193,24 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     }
   };
 
-  const handleToggleActive = async (user: User) => {
+  const confirmToggleStatus = async () => {
+    if (!userToToggleStatus) return;
+    setUpdatingStatus(true);
+    setStatusError(null);
     try {
+      const { user, targetStatus } = userToToggleStatus;
       const updated = await dbService.updateUser(user.uid, {
-        active: !user.active,
+        active: targetStatus === 'Active',
       });
       onUsersChange(allUsers.map(u => u.uid === updated.uid ? updated : u));
       toast.success(`User ${updated.active ? 'activated' : 'deactivated'}`);
-    } catch (error) {
-      toast.error('Failed to update user status');
+      setUserToToggleStatus(null);
+    } catch (e: any) {
+      const msg = e.message || 'Failed to update user status';
+      setStatusError(msg);
+      toast.error(msg);
+    } finally {
+      setUpdatingStatus(false);
     }
   };
 
@@ -207,7 +219,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     return (
       <button
         type="button"
-        onClick={() => handleToggleActive(user)}
+        onClick={() => setUserToToggleStatus({ user, targetStatus: active ? 'Inactive' : 'Active' })}
         aria-label={active ? `Deactivate ${user.name}` : `Activate ${user.name}`}
         className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors cursor-pointer hover:opacity-80 ${
           active
@@ -1143,6 +1155,85 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             >
               {deleting ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Trash2 className="size-4 mr-2" />}
               {deleting ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Status Toggle Confirmation */}
+      <AlertDialog
+        open={!!userToToggleStatus}
+        onOpenChange={(open) => {
+          if (!open && !updatingStatus) {
+            setUserToToggleStatus(null);
+            setStatusError(null);
+          }
+        }}
+      >
+        <AlertDialogContent
+          className={`rounded-2xl border shadow-2xl ${
+            userToToggleStatus?.targetStatus === 'Inactive'
+              ? 'border-amber-100'
+              : 'border-emerald-100'
+          }`}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle
+              className={`flex items-center gap-2 text-xl ${
+                userToToggleStatus?.targetStatus === 'Inactive'
+                  ? 'text-amber-900'
+                  : 'text-emerald-900'
+              }`}
+            >
+              {userToToggleStatus?.targetStatus === 'Inactive' ? (
+                <UserX className="size-6 text-amber-500" />
+              ) : (
+                <UserCheck className="size-6 text-emerald-500" />
+              )}
+              {userToToggleStatus?.targetStatus === 'Inactive' ? 'Deactivate User' : 'Activate User'}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-600 text-base">
+              {userToToggleStatus?.targetStatus === 'Inactive'
+                ? <>Are you sure you want to deactivate <strong>{userToToggleStatus?.user.name}</strong>? They will no longer be able to clock in or access employee features.</>
+                : <>Are you sure you want to activate <strong>{userToToggleStatus?.user.name}</strong>? They will regain access to clock in and use system features.</>}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {statusError && (
+            <p className="text-sm text-red-600 -mt-2">{statusError}</p>
+          )}
+
+          <AlertDialogFooter className="mt-6 gap-3 sm:gap-0">
+            <AlertDialogCancel
+              disabled={updatingStatus}
+              className="rounded-xl font-medium sm:w-1/2"
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={updatingStatus}
+              className={`rounded-xl font-bold sm:w-1/2 text-white disabled:opacity-60 ${
+                userToToggleStatus?.targetStatus === 'Inactive'
+                  ? 'bg-amber-600 hover:bg-amber-700'
+                  : 'bg-emerald-600 hover:bg-emerald-700'
+              }`}
+              onClick={async (e) => {
+                e.preventDefault();
+                await confirmToggleStatus();
+              }}
+            >
+              {updatingStatus ? (
+                <Loader2 className="size-4 mr-2 animate-spin" />
+              ) : userToToggleStatus?.targetStatus === 'Inactive' ? (
+                <UserX className="size-4 mr-2" />
+              ) : (
+                <UserCheck className="size-4 mr-2" />
+              )}
+              {updatingStatus
+                ? 'Updating…'
+                : userToToggleStatus?.targetStatus === 'Inactive'
+                  ? 'Deactivate'
+                  : 'Activate'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
