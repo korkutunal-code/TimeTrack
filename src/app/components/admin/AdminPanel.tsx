@@ -15,7 +15,6 @@ import { Checkbox } from '../ui/checkbox';
 import { Textarea } from '../ui/textarea';
 import { Badge } from '../ui/badge';
 import { UserAvatar } from '../ui/user-avatar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { toast } from 'sonner';
 import { UserPlus, Upload, Download, Edit, Trash2, UserCog, CheckCircle2, HelpCircle, ChevronDown } from 'lucide-react';
 
@@ -213,40 +212,31 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     );
   };
 
-  const renderInlineActions = (user: User) => (
-    <div className="inline-flex items-center gap-1">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0 hover:bg-muted/80 text-muted-foreground hover:text-foreground"
-            onClick={() => {
-              setEditingUser(user);
-              setEditUserOpen(true);
-            }}
-            aria-label={`Edit ${user.name}`}
-          >
-            <Edit className="size-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>Edit User</TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
-            onClick={() => handleDeleteUser(user.uid)}
-            aria-label={`Delete ${user.name}`}
-          >
-            <Trash2 className="size-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>Delete User</TooltipContent>
-      </Tooltip>
-    </div>
+  const renderEditButton = (user: User) => (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-8 w-8 p-0 hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+      onClick={() => {
+        setEditingUser(user);
+        setEditUserOpen(true);
+      }}
+      aria-label={`Edit ${user.name}`}
+    >
+      <Edit className="size-4" />
+    </Button>
+  );
+
+  const renderDeleteButton = (user: User) => (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+      onClick={() => handleDeleteUser(user.uid)}
+      aria-label={`Delete ${user.name}`}
+    >
+      <Trash2 className="size-4" />
+    </Button>
   );
 
   const loadCorrectionEntry = async () => {
@@ -564,7 +554,10 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                         <p className="text-sm text-muted-foreground truncate">{user.email}</p>
                       </div>
                     </div>
-                    <div className="shrink-0">{renderInlineActions(user)}</div>
+                    <div className="shrink-0 inline-flex items-center gap-1">
+                      {renderEditButton(user)}
+                      {renderDeleteButton(user)}
+                    </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <Badge variant="outline" className="capitalize">{user.role}</Badge>
@@ -584,7 +577,8 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                   <TableHead>Email</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="text-center">Edit</TableHead>
+                  <TableHead className="text-center">Delete</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -603,10 +597,11 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                     <TableCell>
                       {renderStatusPill(user)}
                     </TableCell>
-                    <TableCell className="text-right">
-                      <div className="inline-flex items-center gap-1 justify-end">
-                        {renderInlineActions(user)}
-                      </div>
+                    <TableCell className="text-center">
+                      {renderEditButton(user)}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {renderDeleteButton(user)}
                     </TableCell>
                   </TableRow>
                 ))}
