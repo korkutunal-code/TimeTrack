@@ -23,7 +23,7 @@ import {
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { toast } from 'sonner';
-import { UserPlus, Upload, Download, Edit, Trash2, UserCog, MoreVertical, CheckCircle2, HelpCircle } from 'lucide-react';
+import { UserPlus, Upload, Download, Edit, Trash2, UserCog, MoreVertical, CheckCircle2, HelpCircle, ChevronDown } from 'lucide-react';
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
@@ -42,6 +42,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const [editUserOpen, setEditUserOpen] = useState(false);
   const [correctEntryOpen, setCorrectEntryOpen] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   const [newUser, setNewUser] = useState({
     name: '',
@@ -408,16 +409,29 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       {/* Admin Quick Start Guide */}
       <Card className="border border-indigo-200 shadow-xl bg-gradient-to-br from-indigo-50 to-white/80 backdrop-blur-xl rounded-2xl overflow-hidden">
         <CardHeader className="bg-white/40 border-b border-indigo-50 pb-3">
-          <CardTitle className="text-indigo-800 font-bold flex items-center gap-2 text-base">
-            <HelpCircle className="size-5 text-indigo-500" />
-            Admin Quick Start Guide
-          </CardTitle>
+          <button
+            type="button"
+            onClick={() => setIsGuideOpen((open) => !open)}
+            aria-expanded={isGuideOpen}
+            aria-controls="admin-quick-start-guide-body"
+            className="w-full flex items-center justify-between text-left group"
+          >
+            <CardTitle className="text-indigo-800 font-bold flex items-center gap-2 text-base">
+              <HelpCircle className="size-5 text-indigo-500" />
+              Admin Quick Start Guide
+            </CardTitle>
+            <ChevronDown
+              className={`size-5 text-indigo-500 shrink-0 transition-transform duration-200 group-hover:text-indigo-700 ${isGuideOpen ? 'rotate-180' : 'rotate-0'}`}
+            />
+          </button>
         </CardHeader>
-        <CardContent className="pt-4 text-sm text-slate-700 space-y-3">
-          <p><strong>1. Adding Users:</strong> Use "Create New User" to add individuals, or "Bulk Import" to upload a batch via CSV.</p>
-          <p><strong>2. Fixing Mistakes:</strong> If an employee forgets to clock out, their day is marked incomplete. Click "Correct Entry" below to manually input their times and unblock them for the next day.</p>
-          <p><strong>3. Deactivation:</strong> When an employee leaves, use "Deactivate" rather than "Delete" to preserve their historical time records.</p>
-        </CardContent>
+        {isGuideOpen && (
+          <CardContent id="admin-quick-start-guide-body" className="pt-4 text-sm text-slate-700 space-y-3">
+            <p><strong>1. Adding Users:</strong> Use "Create New User" to add individuals, or "Bulk Import" to upload a batch via CSV.</p>
+            <p><strong>2. Fixing Mistakes:</strong> If an employee forgets to clock out, their day is marked incomplete. Click "Correct Entry" below to manually input their times and unblock them for the next day.</p>
+            <p><strong>3. Deactivation:</strong> When an employee leaves, use "Deactivate" rather than "Delete" to preserve their historical time records.</p>
+          </CardContent>
+        )}
       </Card>
 
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl overflow-hidden">
