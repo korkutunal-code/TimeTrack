@@ -435,28 +435,24 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       </Card>
 
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl overflow-hidden">
-        <CardHeader className="bg-white/40 border-b border-indigo-50 pb-4">
-          <CardTitle className="text-slate-800 font-bold">Quick Actions</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => setCreateUserOpen(true)}>
-              <UserPlus className="size-4 mr-2" />
-              Create New User
-            </Button>
-            <Button variant="outline" onClick={() => setBulkImportOpen(true)}>
-              <Upload className="size-4 mr-2" />
-              Bulk Import
-            </Button>
-            <Button variant="outline" onClick={() => setCorrectEntryOpen(true)}>
-              <Edit className="size-4 mr-2" />
-              Correct Entry
-            </Button>
-            <Button variant="outline" onClick={() => { loadSettings(); setSettingsOpen(true); }}>
-              <UserCog className="size-4 mr-2" />
-              System Settings
-            </Button>
-          </div>
+        <CardContent className="flex flex-row items-center gap-4 flex-wrap py-4">
+          <CardTitle className="text-slate-800 font-bold whitespace-nowrap">Quick Actions</CardTitle>
+          <Button onClick={() => setCreateUserOpen(true)}>
+            <UserPlus className="size-4 mr-2" />
+            Create New User
+          </Button>
+          <Button variant="outline" onClick={() => setBulkImportOpen(true)}>
+            <Upload className="size-4 mr-2" />
+            Bulk Import
+          </Button>
+          <Button variant="outline" onClick={() => setCorrectEntryOpen(true)}>
+            <Edit className="size-4 mr-2" />
+            Correct Entry
+          </Button>
+          <Button variant="outline" onClick={() => { loadSettings(); setSettingsOpen(true); }}>
+            <UserCog className="size-4 mr-2" />
+            System Settings
+          </Button>
         </CardContent>
       </Card>
 
