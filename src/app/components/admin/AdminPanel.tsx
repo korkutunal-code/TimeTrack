@@ -15,7 +15,6 @@ import { Checkbox } from '../ui/checkbox';
 import { Textarea } from '../ui/textarea';
 import { Badge } from '../ui/badge';
 import { UserAvatar } from '../ui/user-avatar';
-import { StatusDot } from '../ui/status-dot';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -198,6 +197,25 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     } catch (error) {
       toast.error('Failed to update user status');
     }
+  };
+
+  const renderStatusPill = (user: User) => {
+    const active = user.active;
+    return (
+      <button
+        type="button"
+        onClick={() => handleToggleActive(user)}
+        aria-label={active ? `Deactivate ${user.name}` : `Activate ${user.name}`}
+        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors cursor-pointer hover:opacity-80 ${
+          active
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+            : 'bg-slate-100 border-slate-200 text-slate-600'
+        }`}
+      >
+        <span className={`size-2 rounded-full ${active ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+        {active ? 'Active' : 'Inactive'}
+      </button>
+    );
   };
 
   const loadCorrectionEntry = async () => {
@@ -531,10 +549,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                           <Edit className="size-4 mr-2" />
                           Edit User
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleToggleActive(user)}>
-                          <UserCog className="size-4 mr-2" />
-                          {user.active ? 'Deactivate' : 'Activate'}
-                        </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-red-600"
                           onClick={() => handleDeleteUser(user.uid)}
@@ -547,10 +561,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                   </div>
                   <div className="flex items-center gap-3">
                     <Badge variant="outline" className="capitalize">{user.role}</Badge>
-                    <StatusDot
-                      status={user.active ? 'active' : 'inactive'}
-                      showLabel
-                    />
+                    {renderStatusPill(user)}
                   </div>
                 </CardContent>
               </Card>
@@ -583,10 +594,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                       <Badge variant="outline" className="capitalize">{user.role}</Badge>
                     </TableCell>
                     <TableCell>
-                      <StatusDot
-                        status={user.active ? 'active' : 'inactive'}
-                        showLabel
-                      />
+                      {renderStatusPill(user)}
                     </TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
@@ -604,10 +612,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                           >
                             <Edit className="size-4 mr-2" />
                             Edit User
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleToggleActive(user)}>
-                            <UserCog className="size-4 mr-2" />
-                            {user.active ? 'Deactivate' : 'Activate'}
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="text-red-600"
