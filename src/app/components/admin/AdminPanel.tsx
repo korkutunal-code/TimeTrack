@@ -15,14 +15,9 @@ import { Checkbox } from '../ui/checkbox';
 import { Textarea } from '../ui/textarea';
 import { Badge } from '../ui/badge';
 import { UserAvatar } from '../ui/user-avatar';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '../ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { toast } from 'sonner';
-import { UserPlus, Upload, Download, Edit, Trash2, UserCog, MoreVertical, CheckCircle2, HelpCircle, ChevronDown } from 'lucide-react';
+import { UserPlus, Upload, Download, Edit, Trash2, UserCog, CheckCircle2, HelpCircle, ChevronDown } from 'lucide-react';
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
@@ -217,6 +212,42 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       </button>
     );
   };
+
+  const renderInlineActions = (user: User) => (
+    <div className="inline-flex items-center gap-1">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 p-0 hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              setEditingUser(user);
+              setEditUserOpen(true);
+            }}
+            aria-label={`Edit ${user.name}`}
+          >
+            <Edit className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Edit User</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+            onClick={() => handleDeleteUser(user.uid)}
+            aria-label={`Delete ${user.name}`}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Delete User</TooltipContent>
+      </Tooltip>
+    </div>
+  );
 
   const loadCorrectionEntry = async () => {
     if (!correctionUserId || !correctionDate) {
@@ -533,31 +564,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                         <p className="text-sm text-muted-foreground truncate">{user.email}</p>
                       </div>
                     </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0">
-                          <MoreVertical className="size-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={() => {
-                            setEditingUser(user);
-                            setEditUserOpen(true);
-                          }}
-                        >
-                          <Edit className="size-4 mr-2" />
-                          Edit User
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-red-600"
-                          onClick={() => handleDeleteUser(user.uid)}
-                        >
-                          <Trash2 className="size-4 mr-2" />
-                          Delete User
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <div className="shrink-0">{renderInlineActions(user)}</div>
                   </div>
                   <div className="flex items-center gap-3">
                     <Badge variant="outline" className="capitalize">{user.role}</Badge>
@@ -597,31 +604,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                       {renderStatusPill(user)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                            <MoreVertical className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setEditingUser(user);
-                              setEditUserOpen(true);
-                            }}
-                          >
-                            <Edit className="size-4 mr-2" />
-                            Edit User
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-red-600"
-                            onClick={() => handleDeleteUser(user.uid)}
-                          >
-                            <Trash2 className="size-4 mr-2" />
-                            Delete User
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <div className="inline-flex items-center gap-1 justify-end">
+                        {renderInlineActions(user)}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
