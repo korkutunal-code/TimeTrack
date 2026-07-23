@@ -15,8 +15,9 @@ import { Checkbox } from '../ui/checkbox';
 import { Textarea } from '../ui/textarea';
 import { Badge } from '../ui/badge';
 import { UserAvatar } from '../ui/user-avatar';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 import { toast } from 'sonner';
-import { UserPlus, Upload, Download, Edit, Trash2, UserCog, CheckCircle2, HelpCircle, ChevronDown } from 'lucide-react';
+import { UserPlus, Upload, Download, Edit, Trash2, UserCog, CheckCircle2, HelpCircle, ChevronDown, Loader2 } from 'lucide-react';
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
@@ -35,6 +36,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const [editUserOpen, setEditUserOpen] = useState(false);
   const [correctEntryOpen, setCorrectEntryOpen] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   const [newUser, setNewUser] = useState({
@@ -167,17 +171,22 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     }
   };
 
-  const handleDeleteUser = async (uid: string) => {
-    if (!confirm('Are you sure you want to delete this user? This will remove the Firestore profile. The Auth user must be deleted separately in Firebase Console.')) {
-      return;
-    }
-
+  const confirmDeleteUser = async () => {
+    if (!userToDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
     try {
+      const uid = userToDelete.uid;
       await dbService.deleteUserProfile(uid);
       onUsersChange(allUsers.filter(u => u.uid !== uid));
       toast.success('User deleted from database');
-    } catch (error) {
-      toast.error('Failed to delete user');
+      setUserToDelete(null);
+    } catch (e: any) {
+      const msg = e.message || 'Failed to delete user';
+      setDeleteError(msg);
+      toast.error(msg);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -232,7 +241,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       variant="ghost"
       size="sm"
       className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
-      onClick={() => handleDeleteUser(user.uid)}
+      onClick={() => setUserToDelete(user)}
       aria-label={`Delete ${user.name}`}
     >
       <Trash2 className="size-4" />
@@ -1085,6 +1094,59 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
 
       {/* Bulk Import Dialog */}
       <BulkImportDialog open={bulkImportOpen} onOpenChange={setBulkImportOpen} currentUser={currentUser} onImportComplete={() => dbService.getAllUsers().then(onUsersChange)} />
+
+      {/* Delete User Confirmation */}
+      <AlertDialog
+        open={!!userToDelete}
+        onOpenChange={(open) => {
+          if (!open && !deleting) {
+            setUserToDelete(null);
+            setDeleteError(null);
+          }
+        }}
+      >
+        <AlertDialogContent className="rounded-2xl border-red-100 shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-red-900 text-xl">
+              <Trash2 className="size-6 text-red-500" />
+              Delete User
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-600 text-base space-y-2">
+              <span className="block">
+                Are you sure you want to delete <strong>{userToDelete?.name}</strong>?
+                This will remove the Firestore profile.
+              </span>
+              <span className="block">
+                The Auth user must be deleted separately in Firebase Console.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {deleteError && (
+            <p className="text-sm text-red-600 -mt-2">{deleteError}</p>
+          )}
+
+          <AlertDialogFooter className="mt-6 gap-3 sm:gap-0">
+            <AlertDialogCancel
+              disabled={deleting}
+              className="rounded-xl font-medium sm:w-1/2"
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              className="bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold sm:w-1/2 disabled:opacity-60"
+              onClick={async (e) => {
+                e.preventDefault();
+                await confirmDeleteUser();
+              }}
+            >
+              {deleting ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Trash2 className="size-4 mr-2" />}
+              {deleting ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
