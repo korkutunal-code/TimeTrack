@@ -163,7 +163,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     try {
       const updated = await dbService.updateUser(editingUser.uid, {
         name: editingUser.name,
-        role: editingUser.role,
         work_email: editingUser.work_email,
         phone_number: editingUser.phone_number,
         sms_opt_in: editingUser.sms_opt_in,
@@ -885,22 +884,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                     placeholder="e.g. America/Los_Angeles"
                   />
                 </div>
-              </div>
-              <div>
-                <Label>Role</Label>
-                <Select
-                  value={editingUser.role}
-                  onValueChange={(value) => setEditingUser({ ...editingUser, role: value as User['role'] })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="employee">Employee</SelectItem>
-                    <SelectItem value="manager">Manager</SelectItem>
-                    <SelectItem value="admin">Admin</SelectItem>
-                  </SelectContent>
-                </Select>
               </div>
               <div className="flex items-center space-x-2">
                 <Checkbox
