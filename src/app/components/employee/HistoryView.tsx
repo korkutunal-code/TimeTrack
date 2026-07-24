@@ -131,10 +131,8 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
     if (periodFilter === 'custom' && !appliedRange) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setEntries([]);
-       
       setLoading(false);
     } else if (periodFilter === 'custom' && appliedRange) {
-       
       loadHistory();
     }
   }, [periodFilter, appliedRange, loadHistory]);

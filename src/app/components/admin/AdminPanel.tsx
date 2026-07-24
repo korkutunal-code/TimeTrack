@@ -158,7 +158,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   });
 
   const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [searchTerm] = useState('');
   const [selectedWorkModels, setSelectedWorkModels] = useState<string[]>(WORK_MODEL_OPTIONS.map(o => o.value));
   const [selectedRoles, setSelectedRoles] = useState<string[]>(ROLE_OPTIONS.map(o => o.value));
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>(STATUS_OPTIONS.map(o => o.value));
@@ -630,12 +629,10 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   };
 
   const filteredUsers = allUsers.filter(user => {
-    const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesWorkModel = selectedWorkModels.includes(user.workModel || 'On-site');
     const matchesRole = selectedRoles.includes(user.role);
     const matchesStatus = selectedStatuses.includes(user.active ? 'Active' : 'Inactive');
-    return matchesSearch && matchesWorkModel && matchesRole && matchesStatus;
+    return matchesWorkModel && matchesRole && matchesStatus;
   });
 
   const resetFilters = () => {
