@@ -29,7 +29,10 @@ import {
 
 describe('dateHelpers', () => {
     it('formatDateYYYYMMDD zero-pads', () => {
-        expect(formatDateYYYYMMDD(new Date(2025, 0, 5))).toBe('2025-01-05');
+        // Anchor at noon UTC: PT is always UTC-7/-8, so the instant falls on the
+        // same PT calendar day on any machine TZ. A local constructor like
+        // `new Date(2025, 0, 5)` would be TZ-dependent (fails east of UTC-8).
+        expect(formatDateYYYYMMDD(new Date(Date.UTC(2025, 0, 5, 12)))).toBe('2025-01-05');
     });
 
     it('parseDate returns UTC-anchored date — use UTC getters for verification', () => {
