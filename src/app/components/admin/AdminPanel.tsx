@@ -158,7 +158,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       const updated = await dbService.updateUser(editingUser.uid, {
         name: editingUser.name,
         role: editingUser.role,
-        active: editingUser.active,
         work_email: editingUser.work_email,
         phone_number: editingUser.phone_number,
         sms_opt_in: editingUser.sms_opt_in,
@@ -809,14 +808,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                     <SelectItem value="admin">Admin</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="editActive"
-                  checked={editingUser.active}
-                  onCheckedChange={(checked) => setEditingUser({ ...editingUser, active: !!checked })}
-                />
-                <Label htmlFor="editActive">Active</Label>
               </div>
               <div className="flex items-center space-x-2">
                 <Checkbox
