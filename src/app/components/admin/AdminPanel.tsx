@@ -637,8 +637,8 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead className="text-center">Work Model</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead className="text-center">Role</TableHead>
+                  <TableHead className="text-center">Status</TableHead>
                   <TableHead className="text-center">Edit</TableHead>
                   <TableHead className="text-center">Delete</TableHead>
                 </TableRow>
@@ -657,8 +657,10 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                         {renderWorkModelPill(user)}
                       </div>
                     </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="capitalize">{user.role}</Badge>
+                    <TableCell className="text-center">
+                      <div className="flex items-center justify-center">
+                        <Badge variant="outline" className="capitalize">{user.role}</Badge>
+                      </div>
                     </TableCell>
                     <TableCell className="text-center">
                       <div className="flex items-center justify-center">
