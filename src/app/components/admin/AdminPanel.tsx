@@ -754,21 +754,21 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
 
           {/* Desktop Table View */}
           <div className="hidden md:block border border-indigo-100 rounded-xl min-h-[240px] bg-white/50 backdrop-blur-sm shadow-inner">
-            <Table>
+            <Table className="table-fixed w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead className="text-center">
+                  <TableHead className="w-[32%] text-left">User</TableHead>
+                  <TableHead className="w-[18%] text-center">
                     <FilterHeader column="workModel" title="Work Model" options={WORK_MODEL_OPTIONS} selected={selectedWorkModels} setSelected={setSelectedWorkModels} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
                   </TableHead>
-                  <TableHead className="text-center">
+                  <TableHead className="w-[18%] text-center">
                     <FilterHeader column="role" title="Role" options={ROLE_OPTIONS} selected={selectedRoles} setSelected={setSelectedRoles} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
                   </TableHead>
-                  <TableHead className="text-center">
+                  <TableHead className="w-[18%] text-center">
                     <FilterHeader column="status" title="Status" options={STATUS_OPTIONS} selected={selectedStatuses} setSelected={setSelectedStatuses} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
                   </TableHead>
-                  <TableHead className="text-center">Edit</TableHead>
-                  <TableHead className="text-center">Delete</TableHead>
+                  <TableHead className="w-[7%] text-center">Edit</TableHead>
+                  <TableHead className="w-[7%] text-center">Delete</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -784,9 +784,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                 ) : filteredUsers.map(user => (
                   <TableRow key={user.uid} className="hover:bg-muted/50">
                     <TableCell>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
                         <UserAvatar name={user.name} size="sm" />
-                        <span className="font-medium">{user.name}</span>
+                        <span className="font-medium truncate">{user.name}</span>
                       </div>
                     </TableCell>
                     <TableCell className="text-center">
