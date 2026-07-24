@@ -19,10 +19,10 @@ import type { TimeEntry, TimeSegment } from './database';
  * so we strip them before passing to `setDoc` / `updateDoc`. This is a known
  * foot-gun: callers often spread `...entry` and pick up optional fields.
  */
-export function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
+export function stripUndefined<T extends object>(obj: T): Partial<T> {
   const out: Partial<T> = {};
   for (const k of Object.keys(obj) as (keyof T)[]) {
-    if (obj[k] !== undefined) out[k] = obj[k] as any;
+    if (obj[k] !== undefined) out[k] = obj[k];
   }
   return out;
 }
@@ -134,7 +134,7 @@ export function getActiveSegment(entry: TimeEntry | null | undefined): TimeSegme
 
   // Fallback 1: synthesized current view from mapEntry (used when the doc has
   // BOTH legacy fields and segments[] that we deliberately excluded).
-  const cur = (entry as any).currentSegment as TimeSegment | null | undefined;
+  const cur = entry.currentSegment;
   if (cur && !cur.complete) return cur;
 
   // Fallback 2: legacy half-baked doc (clockInManual written, no segments, no
@@ -206,7 +206,7 @@ export function buildConsistentClosePatch(args: {
     skipLunch: args.skipLunch,
     complete: false,
   };
-  if (args.taskId) (openSeg as any).taskId = args.taskId;
+  if (args.taskId) openSeg.taskId = args.taskId;
 
   const closedSeg = closeActiveSegment(openSeg, args.clockOut, args.clockOutSystem ?? 0, args.skipLunch);
 

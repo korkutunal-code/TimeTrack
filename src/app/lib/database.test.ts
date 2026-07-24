@@ -19,7 +19,7 @@ import {
   applyLunchToSegment,
   buildConsistentClosePatch,
 } from './segmentOps';
-import type { TimeSegment, TimeEntry } from './database';
+import type { TimeSegment } from './database';
 import { calculateTotalHours } from './database';
 
 describe('stripUndefined', () => {

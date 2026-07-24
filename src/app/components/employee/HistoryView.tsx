@@ -108,8 +108,9 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
         data = [];
       }
       setEntries(data);
-    } catch (error: any) {
-      const msg = error?.message || error?.code || 'Unknown error';
+    } catch (error: unknown) {
+      const err = error as { message?: string; code?: string };
+      const msg = err?.message || err?.code || 'Unknown error';
       console.error('[History] Failed to load history:', error);
       setErrorMessage(`Failed to load history: ${msg}`);
       setEntries([]);
@@ -130,10 +131,10 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
     if (periodFilter === 'custom' && !appliedRange) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setEntries([]);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setLoading(false);
     } else if (periodFilter === 'custom' && appliedRange) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       loadHistory();
     }
   }, [periodFilter, appliedRange, loadHistory]);

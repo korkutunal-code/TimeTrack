@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { arrayUnion, collection, doc, getDoc, getDocs, limit, query, setDoc, Timestamp, updateDoc, where } from 'firebase/firestore';
+import type { DocumentData } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { AlertCircle, AlertTriangle, ArrowRight, CheckCircle2, Clock, Coffee, History, LogIn, LogOut as LogOutIcon, Zap, HelpCircle, FileWarning, CalendarDays, Globe, Play, Target } from 'lucide-react';
 
 import type { User } from '../../lib/auth';
-import type { TimeEntry } from '../../lib/database';
+import type { CorrectionRequest, TimeEntry } from '../../lib/database';
 import { dbService, buildConsistentClosePatch } from '../../lib/database';
 import { db } from '../../lib/firebase';
 import { auditLogService } from '../../../services/auditLogService';
@@ -13,7 +14,6 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Alert, AlertDescription } from '../ui/alert';
-import { Progress } from '../ui/progress';
 import { ProgressStepper } from '../ui/progress-stepper';
 import { formatHoursHMM } from '../../../utils/timeCalculations';
 import { dragmeService, type DragmeTask } from '../../../services/dragmeService';
@@ -24,15 +24,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 
 // Existing business logic (ported from the previous HTML/JS app)
  
-import { calculateLunchMinutes, deriveSegmentWorkMinutes } from '../../../utils/timeCalculations';
-import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
+import { deriveSegmentWorkMinutes } from '../../../utils/timeCalculations';
+import { getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import {
   checkTimeAnomalies,
   validateClockIn,
   validateLunchOut,
   validateLunchIn,
-  validateClockOut,
-  timeToMinutes
+  validateClockOut
 } from '@/utils/timeValidation';
 import { checkEntryAccess, getYesterdayDate } from '../../../utils/timeWindows';
 import {
@@ -119,7 +118,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       try {
         const list = await dragmeService.fetchTasks();
         setTasks(list);
-      } catch (e) {
+      } catch {
         // Silent — dropdown will simply show "No tasks available".
       }
     })();
@@ -176,10 +175,10 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
             autoClosed: true,
             updatedAt: now,
             updatedBy: user.uid,
-          } as any);
+          });
           toast.warning(`Shift auto-closed after ${MAX_SHIFT_HOURS}h`);
           await initLoad();
-        } catch (e) {
+        } catch {
           // silent retry on next tick
         }
       }
@@ -208,10 +207,10 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       if (!TEST_MODE && !isAdmin) {
         const yesterdayDate = getYesterdayDate();
         const ySnap = await getDoc(doc(db, 'timeEntries', `${user.uid}_${yesterdayDate}`));
-        let yesterdayEntry: any = ySnap.exists() ? ySnap.data() : null;
+        let yesterdayEntry: DocumentData | null = ySnap.exists() ? ySnap.data() : null;
 
         const tSnap = await getDoc(doc(db, 'timeEntries', `${user.uid}_${today}`));
-        const todayEntryRaw: any = tSnap.exists() ? tSnap.data() : null;
+        const todayEntryRaw: DocumentData | null = tSnap.exists() ? tSnap.data() : null;
 
         // First-day exception (copied from old sequential logic)
         if (!yesterdayEntry && !todayEntryRaw) {
@@ -241,7 +240,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
 
       const existingEntry = await dbService.getTimeEntry(user.uid, today);
       setEntry(existingEntry);
-    } catch (e) {
+    } catch {
       toast.error('Failed to load entry');
     } finally {
       setLoading(false);
@@ -305,7 +304,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
           clockOutSystemTime: entry.clockOutSystem ? new Date(entry.clockOutSystem) : null,
           skipLunch: !!entry.skipLunch,
           workMinutes: justCompletedMins,
-          taskId: (entry as any).taskId || null,
+          taskId: entry.taskId || null,
           complete: true,
         }),
         // Reset the "current segment" top-level fields for a fresh shift
@@ -333,7 +332,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
         updatedAt: now,
         updatedBy: user.uid,
         ...(anomalyLog && { anomaly_flag: true }),
-      } as any);
+      });
       return;
     }
 
@@ -390,7 +389,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       updatedAt: now,
       updatedBy: user.uid,
       ...(anomalyLog && { anomaly_flag: true }),
-    } as any);
+    });
   }
 
   async function submitLunchIn(anomalyLog = false) {
@@ -421,7 +420,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       updatedAt: now,
       updatedBy: user.uid,
       ...(anomalyLog && { anomaly_flag: true }),
-    } as any);
+    });
   }
 
   async function submitClockOut(anomalyLog = false) {
@@ -465,7 +464,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       lunchIn: entry.skipLunch ? undefined : (entry.lunchInManual || undefined),
       clockOutSystem: Date.now(),
       clockInSystem: entry.clockInSystem,
-      taskId: (entry as any).taskId || undefined,
+      taskId: entry.taskId || undefined,
       existingSegments: entry.segments,
       mode: 'append',
     });
@@ -489,7 +488,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       updatedAt: now,
       updatedBy: user.uid,
       ...(anomalyLog && { anomaly_flag: true }),
-    } as any);
+    });
 
     // Push to Dragme (best-effort, non-blocking on UI success)
     if (taskId) {
@@ -501,8 +500,8 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
           date: today,
           userId: user.uid,
         })
-        .catch((err: any) => {
-          toast.error(`Dragme sync failed: ${err?.message || 'unknown error'}`);
+        .catch((err: unknown) => {
+          toast.error(`Dragme sync failed: ${(err as Error)?.message || 'unknown error'}`);
         });
     }
   }
@@ -537,8 +536,8 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
 
       toast.success('Time submitted successfully');
       await initLoad();
-    } catch (e: any) {
-      toast.error(e?.message || 'Failed to submit time');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message || 'Failed to submit time');
     } finally {
       setSubmitting(false);
     }
@@ -569,8 +568,8 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       await submitLunchOut(true);
       toast.success('Lunch skipped');
       await initLoad();
-    } catch (e: any) {
-      toast.error(e?.message || 'Failed to skip lunch');
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message || 'Failed to skip lunch');
     } finally {
       setSubmitting(false);
     }
@@ -597,7 +596,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
         voidReason: 'Employee voided via test mode',
         updatedAt: Timestamp.now(),
         updatedBy: user.uid,
-      } as any);
+      });
       toast.success('Entry voided');
       await initLoad();
     } catch {
@@ -767,8 +766,8 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
                 await submitClockIn(false);
                 toast.success('New shift started');
                 await initLoad();
-              } catch (e: any) {
-                toast.error(e?.message || 'Failed to start new shift');
+              } catch (e: unknown) {
+                toast.error((e as Error)?.message || 'Failed to start new shift');
               } finally {
                 setSubmitting(false);
               }
@@ -920,8 +919,8 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
 
       toast.success('Manager notified for correction.');
       await initLoad();
-    } catch (e: any) {
-      toast.error('Failed to request correction: ' + (e.message || 'Unknown error'));
+    } catch (e: unknown) {
+      toast.error('Failed to request correction: ' + ((e as Error).message || 'Unknown error'));
     } finally {
       setSubmitting(false);
     }
@@ -957,7 +956,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
         }
       }
 
-      const payload: any = {
+      const payload: Omit<CorrectionRequest, 'id'> = {
         employee_id: user.uid,
         employee_name: user.name,
         requested_date: targetDate,
@@ -987,7 +986,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       setCorrectionRequestedOut('');
       setCorrectionRequestedLunch('');
       setCorrectionDate('');
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error('[CorrectionRequest] Failed to submit:', e);
       toast.error('Failed to submit correction request. Please ensure all data is valid and try again.');
     } finally {
@@ -1010,7 +1009,6 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
   }
 
   const { steps, currentStep } = getStepInfo();
-  const progress = (currentStep / 4) * 100;
 
   const stepperSteps = [
     { id: 'clock-in', label: 'Clock In' },

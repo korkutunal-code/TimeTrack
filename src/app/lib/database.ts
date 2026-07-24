@@ -1,4 +1,5 @@
 import { collection, doc, getDoc, getDocs, orderBy, query, Timestamp, updateDoc, where, limit, startAfter, deleteDoc, addDoc, setDoc } from 'firebase/firestore';
+import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { db } from './firebase';
 import type { User } from './auth';
 import { stripUndefined, buildConsistentClosePatch, closeActiveSegment } from './segmentOps';
@@ -44,9 +45,9 @@ export interface TimeEntry {
   clockOutManual?: string;
 
   // Notification system locks to prevent repeated spams per day
-  lunch_reminder_sent_at?: any;
-  clockout_reminder_sent_at?: any;
-  longshift_reminder_sent_at?: any;
+  lunch_reminder_sent_at?: Timestamp | number | null;
+  clockout_reminder_sent_at?: Timestamp | number | null;
+  longshift_reminder_sent_at?: Timestamp | number | null;
   clockOutSystem?: number;  // millis
 
   skipLunch?: boolean;
@@ -70,9 +71,15 @@ export interface TimeEntry {
   correctionRequested?: boolean;
   anomalyFlag?: boolean;
 
+  /** Dragme task id (optional, dual-written at entry level by legacy flows). */
+  taskId?: string | null;
+
   status?: 'active' | 'corrected' | 'voided' | 'archived';
 
   completedAt?: number;     // millis
+
+  /** Synthesized current-segment view exposed by mapEntry (not persisted). */
+  currentSegment?: TimeSegment | null;
 }
 
 export interface CorrectionRequest {
@@ -100,13 +107,18 @@ export interface CorrectionRequest {
   updated_by?: string;
 }
 
-type FirestoreTimeEntry = any;
+type FirestoreTimeEntry = DocumentData;
+
+/** Structural type for Firestore Timestamp-like values (avoids `any` casts). */
+interface TimestampLike {
+  toDate(): Date;
+}
 
 function tsToMillis(ts: unknown): number | undefined {
   if (!ts) return undefined;
   if (typeof ts === 'number') return ts;
   if (ts instanceof Date) return ts.getTime();
-  if (ts && typeof (ts as any).toDate === 'function') return (ts as any).toDate().getTime();
+  if (ts && typeof (ts as TimestampLike).toDate === 'function') return (ts as TimestampLike).toDate().getTime();
   return undefined;
 }
 
@@ -118,7 +130,7 @@ function minutesToHours(mins: unknown): number | undefined {
 }
 
 /** Compute minutes for the currently-active segment using its clock/lunch fields. */
-function deriveCurrentSegmentMinutes(e: Partial<TimeEntry>, archived: TimeSegment[]): number | undefined {
+function deriveCurrentSegmentMinutes(e: Partial<TimeEntry>, _archived: TimeSegment[]): number | undefined {
   // If totalWorkMinutes is present and this is a fresh single-segment doc, prefer it minus archived.
   if (!e.clockInManual) return undefined;
   if (e.clockOutManual) {
@@ -187,7 +199,7 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
   // or most-recently-completed) segment lives in the legacy top-level fields.
   // Hydrated entry.segments = [...archived, current (if present)].
   const archivedRaw = Array.isArray(data.segments) ? data.segments : [];
-  const archived: TimeSegment[] = archivedRaw.map((s: any, i: number) => {
+  const archived: TimeSegment[] = archivedRaw.map((s: DocumentData, i: number) => {
     const out: TimeSegment = {
       id: String(s.id ?? `${id}_arch_${i}`),
       clockInManual: s.clockInManual || undefined,
@@ -210,7 +222,7 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
       complete: s.complete === true,
       autoClosed: s.autoClosed === true,
     };
-    if (s.taskId) (out as any).taskId = s.taskId; // omit when not set; never write undefined
+    if (s.taskId) out.taskId = s.taskId; // omit when not set; never write undefined
     return out;
   });
 
@@ -238,7 +250,7 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
         // back to the document (e.g. via toggleLunch's updateDoc), the whole
         // write fails. We use stripUndefined on the entry-derived fields then
         // force-include the always-present ones.
-        const fromEntry: any = {
+        const fromEntry: Partial<TimeSegment> = {
           clockInManual: entry.clockInManual,
           clockInSystem: entry.clockInSystem,
           lunchOutManual: entry.lunchOutManual,
@@ -256,7 +268,7 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
           autoClosed: data.autoClosed === true,
           ...stripUndefined(fromEntry),
         };
-        if (data.taskId) (out as any).taskId = data.taskId; // omit when not set
+        if (data.taskId) out.taskId = data.taskId; // omit when not set
         return out;
       })()
     : null;
@@ -295,8 +307,7 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
   }
 
   // Expose the current segment on the entry for UI consumers.
-  // Cast because TimeEntry's interface doesn't have this field declared.
-  (entry as any).currentSegment = current;
+  entry.currentSegment = current;
 
   // Override day-level hours to include all archived segments too.
   if (archived.length > 0) {
@@ -468,7 +479,7 @@ class DatabaseService {
   async getAllTimeEntries(): Promise<TimeEntry[]> {
     const PAGE_SIZE = 500;
     const all: TimeEntry[] = [];
-    let lastDoc: any = null;
+    let lastDoc: QueryDocumentSnapshot<DocumentData> | null = null;
 
     // First page
     const firstQ = lastDoc
@@ -497,7 +508,7 @@ class DatabaseService {
   async getAllUsers(): Promise<User[]> {
     const snap = await getDocs(collection(db, 'users'));
     return snap.docs.map(d => {
-      const data = d.data() as any;
+      const data = d.data();
       return {
         uid: d.id,
         email: String(data.email || ''),
@@ -517,10 +528,10 @@ class DatabaseService {
     await updateDoc(doc(db, 'users', uid), {
       ...updates,
       updatedAt: new Date(),
-    } as any);
+    });
     const snap = await getDoc(doc(db, 'users', uid));
     if (!snap.exists()) throw new Error('User not found');
-    const data = snap.data() as any;
+    const data = snap.data();
     return {
       uid: snap.id,
       email: String(data.email || ''),
@@ -546,7 +557,7 @@ class DatabaseService {
     const snap = await getDocs(q);
     if (snap.empty) return null;
     const d = snap.docs[0];
-    const data = d.data() as any;
+    const data = d.data();
     return {
       uid: d.id,
       email: String(data.email || ''),
@@ -563,7 +574,7 @@ class DatabaseService {
 
   async updateTimeEntry(id: string, updates: Partial<TimeEntry>): Promise<TimeEntry> {
     // Only supports a subset of fields used in admin corrections in this React UI.
-    const patch: any = { updatedAt: Timestamp.now() };
+    const patch: Record<string, unknown> = { updatedAt: Timestamp.now() };
     if (updates.clockInManual !== undefined) patch.clockInManual = updates.clockInManual;
     if (updates.lunchOutManual !== undefined) patch.lunchOutManual = updates.lunchOutManual;
     if (updates.lunchInManual !== undefined) patch.lunchInManual = updates.lunchInManual;
@@ -613,10 +624,10 @@ class DatabaseService {
       throw new Error('You can only edit your own time entries.');
     }
 
-    const beforeFieldVal = (before as any)[field] ?? null;
+    const beforeFieldVal = before[field] ?? null;
 
     // Build the "after" view with the edited top-level field.
-    const after: any = { ...before, [field]: value };
+    const after: TimeEntry = { ...before, [field]: value };
     const hasClockOut = !!after.clockOutManual;
 
     // Dual-write the matching segment field (S7 contract).
@@ -642,7 +653,7 @@ class DatabaseService {
       // total is derived live by mapEntry, so don't persist a total here.
       const activeIdx = segments.findIndex((s) => !s.complete);
       if (activeIdx >= 0) {
-        (segments[activeIdx] as any)[field] = value;
+        segments[activeIdx][field] = value;
       }
     }
 
@@ -668,14 +679,14 @@ class DatabaseService {
     // 2) Only after the durable audit row exists, mutate the time record.
     await updateDoc(doc(db, 'timeEntries', entryId), {
       [field]: value,
-      segments: segments.map((s) => stripUndefined(s as any)),
+      segments: segments.map((s) => stripUndefined(s)),
       ...(hasClockOut
         ? { totalWorkMinutes: after.totalWorkMinutes, totalHours: after.totalHours }
         : {}),
       status: 'corrected',
       updatedAt: Timestamp.now(),
       updatedBy: userId,
-    } as any);
+    });
 
     // Re-read + return hydrated view.
     const freshSnap = await getDoc(doc(db, 'timeEntries', entryId));
@@ -715,7 +726,7 @@ class DatabaseService {
 
     // Find the target segment: in persisted segments[] or the synthesized current.
     const persistedSegs = before.segments ? before.segments.map((s) => ({ ...s })) : [];
-    const currentSeg = (before as any).currentSegment as TimeSegment | null;
+    const currentSeg = before.currentSegment ?? null;
 
     let targetIdx = persistedSegs.findIndex((s) => s.id === segmentId);
     let targetSeg: TimeSegment | null = null;
@@ -728,7 +739,7 @@ class DatabaseService {
       throw new Error('Shift not found. It may have been modified.');
     }
 
-    const beforeFieldVal = (targetSeg as any)[field] ?? null;
+    const beforeFieldVal = targetSeg[field] ?? null;
 
     // Build the edited segment.
     const editedSeg: TimeSegment = { ...targetSeg, [field]: value };
@@ -783,8 +794,8 @@ class DatabaseService {
       before.clockInManual === targetSeg.clockInManual;
     const updateTopLevel = isCurrent || isLastMirroring;
 
-    const patch: any = {
-      segments: newSegments.map((s) => stripUndefined(s as any)),
+    const patch: Record<string, unknown> = {
+      segments: newSegments.map((s) => stripUndefined(s)),
       totalWorkMinutes,
       status: 'corrected',
       updatedAt: Timestamp.now(),
@@ -846,7 +857,7 @@ class DatabaseService {
 
     // Find the target segment.
     const persistedSegs = before.segments ? before.segments.map((s) => ({ ...s })) : [];
-    const currentSeg = (before as any).currentSegment as TimeSegment | null;
+    const currentSeg = before.currentSegment ?? null;
 
     let targetIdx = persistedSegs.findIndex((s) => s.id === segmentId);
     let targetSeg: TimeSegment | null = null;
@@ -925,7 +936,7 @@ class DatabaseService {
       clockOutManual: clockOut,
       clockOutSystem: now.toMillis(),
       clockOutSystemTime: now,
-      segments: newSegments.map((s) => stripUndefined(s as any)),
+      segments: newSegments.map((s) => stripUndefined(s)),
       totalWorkMinutes,
       totalHours: totalWorkMinutes / 60,
       complete: true,
@@ -935,7 +946,7 @@ class DatabaseService {
       status: 'corrected',
       updatedAt: now,
       updatedBy: userId,
-    } as any);
+    });
 
     // Re-read + return hydrated view.
     const freshSnap = await getDoc(doc(db, 'timeEntries', entryId));
@@ -975,7 +986,7 @@ class DatabaseService {
 
     // Find the target segment.
     const persistedSegs = before.segments ? before.segments.map((s) => ({ ...s })) : [];
-    const currentSeg = (before as any).currentSegment as TimeSegment | null;
+    const currentSeg = before.currentSegment ?? null;
 
     let targetIdx = persistedSegs.findIndex((s) => s.id === segmentId);
     let targetSeg: TimeSegment | null = null;
@@ -1045,8 +1056,8 @@ class DatabaseService {
 
     // 2) Mutate the timeEntries doc. The shift stays open (no completion
     //    flags); only the lunch-in field + segment are updated.
-    const patch: any = {
-      segments: newSegments.map((s) => stripUndefined(s as any)),
+    const patch: Record<string, unknown> = {
+      segments: newSegments.map((s) => stripUndefined(s)),
       status: 'corrected',
       updatedAt: now,
       updatedBy: userId,
@@ -1080,7 +1091,7 @@ class DatabaseService {
     // a non-lunch Clock Out request leaves `requested_lunch: undefined`, which
     // throws "Unsupported field value: undefined". Strip all undefined keys
     // before write so any correction request saves cleanly.
-    const payload: Record<string, any> = { ...data, created_at: Timestamp.now() };
+    const payload: Record<string, unknown> = { ...data, created_at: Timestamp.now() };
     for (const key of Object.keys(payload)) {
       if (payload[key] === undefined) delete payload[key];
     }
@@ -1196,7 +1207,7 @@ class DatabaseService {
     // 1) Read the correction request to get the target field + suggested time.
     const reqSnap = await getDoc(doc(db, 'correctionRequests', requestId));
     if (!reqSnap.exists()) throw new Error('Correction request not found.');
-    const reqData = reqSnap.data() as any;
+    const reqData = reqSnap.data();
     const request = {
       id: requestId,
       employee_id: reqData.employee_id,
@@ -1212,7 +1223,7 @@ class DatabaseService {
 
     // 2) If not Resolved, just update the request doc (no time-entry mutation).
     if (newStatus !== 'Resolved') {
-      const patch: any = {
+      const patch: Record<string, unknown> = {
         status: newStatus,
         updated_at: Timestamp.now(),
         updated_by: adminUid,
@@ -1262,10 +1273,10 @@ class DatabaseService {
       throw new Error(`Time entry not found for ${request.employee_id} on ${request.requested_date}. Create it first or update manually.`);
     }
     const before = mapEntry(entryId, beforeSnap.data());
-    const beforeFieldVal = (before as any)[field] ?? null;
+    const beforeFieldVal = before[field] ?? null;
 
     // 5) Build the after view + dual-write segments via S7 helper.
-    const after: any = { ...before, [field]: value };
+    const after: TimeEntry = { ...before, [field]: value };
     let segments = before.segments ? before.segments.map((s) => ({ ...s })) : [];
     const hasClockOut = !!after.clockOutManual;
     if (hasClockOut && after.clockInManual) {
@@ -1287,7 +1298,7 @@ class DatabaseService {
       after.totalHours = closePatch.totalWorkMinutes / 60;
     } else {
       const activeIdx = segments.findIndex((s) => !s.complete);
-      if (activeIdx >= 0) (segments[activeIdx] as any)[field] = value;
+      if (activeIdx >= 0) segments[activeIdx][field] = value;
     }
 
     // 6) Audit FIRST (mandatory, non-bypassable). Admin action.
@@ -1309,7 +1320,7 @@ class DatabaseService {
     // these, an admin-approved clock-out would still show as "Incomplete/Open".
     await updateDoc(doc(db, 'timeEntries', entryId), {
       [field]: value,
-      segments: segments.map((s) => stripUndefined(s as any)),
+      segments: segments.map((s) => stripUndefined(s)),
       ...(hasClockOut
         ? {
             totalWorkMinutes: after.totalWorkMinutes,
@@ -1323,7 +1334,7 @@ class DatabaseService {
       status: 'corrected',
       updatedAt: Timestamp.now(),
       updatedBy: adminUid,
-    } as any);
+    });
 
     // 8) Only after timeEntries is updated, mark the correction request Resolved.
     await updateDoc(doc(db, 'correctionRequests', requestId), {
@@ -1335,7 +1346,7 @@ class DatabaseService {
   }
 
   async updateCorrectionRequest(id: string, updates: Partial<CorrectionRequest>): Promise<void> {
-    const patch: any = { updated_at: Timestamp.now() };
+    const patch: Record<string, unknown> = { updated_at: Timestamp.now() };
     if (updates.status !== undefined) patch.status = updates.status;
     if (updates.resolution_note !== undefined) patch.resolution_note = updates.resolution_note;
     if (updates.rejection_reason !== undefined) patch.rejection_reason = updates.rejection_reason;
@@ -1343,7 +1354,7 @@ class DatabaseService {
     await updateDoc(doc(db, 'correctionRequests', id), patch);
   }
 
-  async getPayrollSettings(): Promise<any> {
+  async getPayrollSettings(): Promise<DocumentData | null> {
     const snap = await getDoc(doc(db, 'systemSettings', 'payroll'));
     if (snap.exists()) {
       return snap.data();

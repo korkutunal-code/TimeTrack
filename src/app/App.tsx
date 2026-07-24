@@ -11,7 +11,6 @@ import { PayrollReports } from './components/admin/PayrollReports';
 import { AuditViewer } from './components/admin/AuditViewer';
 import { PatternMetrics } from './components/admin/PatternMetrics';
 import { CorrectionRequests } from './components/admin/CorrectionRequests';
-import { Card } from './components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Badge } from './components/ui/badge';
 import { UserAvatar } from './components/ui/user-avatar';
@@ -33,7 +32,6 @@ import { QABar } from './components/QABar';
 import { ReportProblemButton } from './components/ReportProblemButton';
 
 type EmployeeView = 'today' | 'history';
-type ManagerView = 'dashboard';
 type AdminView = 'panel' | 'payroll' | 'audit' | 'metrics' | 'corrections';
 
 export default function App() {
@@ -100,17 +98,22 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Depend on uid/role primitives (not the user object identity) so this only
+  // re-runs when the signed-in user or their role actually changes.
+  const currentUserUid = currentUser?.uid;
+  const currentUserRole = currentUser?.role;
+
   useEffect(() => {
     let cancelled = false;
 
     async function loadUsersIfAllowed() {
-      if (!currentUser) {
+      if (!currentUserUid) {
         setAllUsers([]);
         return;
       }
 
       // Only managers/admins can list all users (Firestore rules enforce this too).
-      if (currentUser.role === 'manager' || currentUser.role === 'admin') {
+      if (currentUserRole === 'manager' || currentUserRole === 'admin') {
         try {
           const users = await dbService.getAllUsers();
           if (!cancelled) setAllUsers(users);
@@ -126,7 +129,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [currentUser?.uid, currentUser?.role]);
+  }, [currentUserUid, currentUserRole]);
 
   const handleLogout = async () => {
     await authService.logout();

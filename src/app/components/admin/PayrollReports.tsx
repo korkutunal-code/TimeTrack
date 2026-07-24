@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
 import { collection, getDocs, orderBy, query, where, doc, getDoc } from 'firebase/firestore';
+import type { DocumentData } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -14,7 +15,7 @@ import { generateCSV, downloadCSV } from '../../../services/exportService';
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
-import { calculateBiweeklyOvertimeTotals, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations.js';
+import { calculateBiweeklyOvertimeTotals } from '../../../utils/overtimeCalculations.js';
 
 interface PayrollReportsProps {
   allUsers: User[];
@@ -27,7 +28,7 @@ interface PayrollSummary {
   overtimeHours: number;
   doubleTimeHours: number;
   totalHours: number;
-  dailyEntries?: any[];
+  dailyEntries?: DocumentData[];
 }
 
 export function PayrollReports({ allUsers }: PayrollReportsProps) {
@@ -162,11 +163,11 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
 
       const snap = await getDocs(q);
       const rawEntries = snap.docs
-        .map(d => d.data() as any)
+        .map(d => d.data())
         .filter(e => e.dayComplete === true);
 
       // Group by employee and calculate biweekly overtime totals (California rules)
-      const byUser = new Map<string, any[]>();
+      const byUser = new Map<string, DocumentData[]>();
       rawEntries.forEach(e => {
         const uid = String(e.userId || '');
         if (!byUser.has(uid)) byUser.set(uid, []);
@@ -190,7 +191,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
       summaries.sort((a, b) => a.userName.localeCompare(b.userName));
       setReport(summaries);
       toast.success('Report generated');
-    } catch (error) {
+    } catch {
       toast.error('Failed to generate report');
     } finally {
       setLoading(false);
@@ -428,7 +429,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                           </tr>
                         </thead>
                         <tbody>
-                          {summary.dailyEntries.map((day: any) => (
+                          {summary.dailyEntries.map((day: DocumentData) => (
                             <tr key={day.workDate} className="border-b border-slate-100 hover:bg-slate-50/50">
                               <td className="p-1.5 font-medium">{day.workDate.split('-').slice(1).join('/')}</td>
                               <td className="p-1.5">{day.clockInManual || '--'}</td>

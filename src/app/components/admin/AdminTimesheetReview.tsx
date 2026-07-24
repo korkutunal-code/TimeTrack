@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { User } from '../../lib/auth';
 import { dbService, TimeEntry, getActiveSegment } from '../../lib/database';
 import { Button } from '../ui/button';
@@ -17,6 +17,11 @@ interface AdminTimesheetReviewProps {
   onCorrectEntry?: (userId: string, dateStr: string) => void; // parent opens existing correction dialog
 }
 
+/** Entry row enriched for this view. `correctionNotes` is a raw Firestore field
+ *  some legacy docs carry; mapEntry normally folds it into `adminNotes`, but the
+ *  checks below preserve the historical runtime behavior of reading it. */
+type ReviewEntry = TimeEntry & { userName: string; correctionNotes?: string };
+
 /**
  * Weekly timesheet review surface for admins/managers.
  * Phase 1 deliverable — supports filters, status visibility, correction action, and weekly CSV export.
@@ -24,31 +29,30 @@ interface AdminTimesheetReviewProps {
  * Never hard-deletes; only reads existing timeEntries.
  */
 export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimesheetReviewProps) {
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [selectedUserId, setSelectedUserId] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'corrected' | 'incomplete'>('all');
-  const [entries, setEntries] = useState<Array<TimeEntry & { userName: string }>>([]);
-  const [loading, setLoading] = useState(false);
-
-  // Default to last 7 days (America/Los_Angeles sense)
-  const setDefaultRange = () => {
+  // Default to last 7 days (America/Los_Angeles sense), computed lazily so the
+  // mount effect is unnecessary. Local date arithmetic treated as PT logical
+  // day strings (matches existing patterns).
+  const computeDefaultRange = () => {
     const today = new Date();
-    // Use local date arithmetic but treat as PT logical day strings (matches existing patterns)
     const end = today.toISOString().slice(0, 10);
     const startD = new Date(today);
     startD.setDate(startD.getDate() - 6);
     const start = startD.toISOString().slice(0, 10);
+    return { start, end };
+  };
+
+  const [startDate, setStartDate] = useState(() => computeDefaultRange().start);
+  const [endDate, setEndDate] = useState(() => computeDefaultRange().end);
+  const [selectedUserId, setSelectedUserId] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'corrected' | 'incomplete'>('all');
+  const [entries, setEntries] = useState<ReviewEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const setDefaultRange = () => {
+    const { start, end } = computeDefaultRange();
     setStartDate(start);
     setEndDate(end);
   };
-
-  useEffect(() => {
-    if (!startDate || !endDate) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setDefaultRange();
-    }
-  }, []);
 
   const loadTimesheetData = async () => {
     if (!startDate || !endDate) {
@@ -64,25 +68,25 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
         .filter(e => selectedUserId === 'all' || e.userId === selectedUserId);
 
       // Attach denormalized user name for display
-      const withNames = filtered.map(e => ({
+      const withNames: ReviewEntry[] = filtered.map(e => ({
         ...e,
         userName: allUsers.find(u => u.uid === e.userId)?.name || 'Unknown',
         // Treat status field; default to active for legacy rows
-        status: (e as any).status || 'active',
+        status: e.status || 'active',
       }));
 
       // Client-side status filter
       const statusFiltered = statusFilter === 'all'
         ? withNames
         : withNames.filter(e => {
-            if (statusFilter === 'corrected') return (e as any).status === 'corrected' || !!(e as any).correctionNotes;
+            if (statusFilter === 'corrected') return e.status === 'corrected' || !!e.correctionNotes;
             if (statusFilter === 'incomplete') return !e.clockOutManual && !e.complete;
             return true;
           });
 
       setEntries(statusFiltered);
       toast.success(`Loaded ${statusFiltered.length} entries`);
-    } catch (err) {
+    } catch {
       toast.error('Failed to load timesheet data');
     } finally {
       setLoading(false);
@@ -98,7 +102,7 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
     const headers = ['Date', 'Employee', 'Clock In', 'Clock Out', 'Hours', 'Status', 'Flags'];
     const rows = entries.map(e => {
       const hrs = dbService.calculateTotalHours(e);
-      const status = (e as any).status || ((e as any).correctionNotes ? 'corrected' : 'active');
+      const status = e.status || (e.correctionNotes ? 'corrected' : 'active');
       return [
         e.date,
         e.userName,
@@ -126,7 +130,7 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
   };
 
   const totalHours = entries.reduce((sum, e) => sum + dbService.calculateTotalHours(e), 0);
-  const correctedCount = entries.filter(e => (e as any).status === 'corrected' || !!(e as any).correctionNotes).length;
+  const correctedCount = entries.filter(e => e.status === 'corrected' || !!e.correctionNotes).length;
 
   return (
     <div className="space-y-4">
@@ -175,7 +179,7 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
             </div>
             <div>
               <Label className="text-xs">Status</Label>
-              <Select value={statusFilter} onValueChange={(v: any) => setStatusFilter(v)}>
+              <Select value={statusFilter} onValueChange={(v: string) => setStatusFilter(v as typeof statusFilter)}>
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Statuses</SelectItem>
@@ -230,7 +234,7 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
               <TableBody>
                 {entries.sort((a, b) => b.date.localeCompare(a.date)).map(entry => {
                   const hrs = dbService.calculateTotalHours(entry);
-                  const isCorrected = !!(entry as any).correctionNotes || (entry as any).status === 'corrected';
+                  const isCorrected = !!entry.correctionNotes || entry.status === 'corrected';
                   const isOpen = getActiveSegment(entry) !== null && !entry.clockOutManual;
                   return (
                     <TableRow key={entry.id} className={isCorrected ? 'bg-amber-50/40' : ''}>

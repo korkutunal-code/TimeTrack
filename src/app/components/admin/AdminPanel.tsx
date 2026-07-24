@@ -3,6 +3,7 @@ import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
 import { dbService, TimeEntry, buildConsistentClosePatch } from '../../lib/database';
 import { doc, getDoc, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
+import type { DocumentData } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -157,7 +158,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   });
 
   const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm] = useState('');
   const [selectedWorkModels, setSelectedWorkModels] = useState<string[]>(WORK_MODEL_OPTIONS.map(o => o.value));
   const [selectedRoles, setSelectedRoles] = useState<string[]>(ROLE_OPTIONS.map(o => o.value));
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>(STATUS_OPTIONS.map(o => o.value));
@@ -269,7 +270,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       toast.success('User updated successfully');
       setEditUserOpen(false);
       setEditingUser(null);
-    } catch (error) {
+    } catch {
       toast.error('Failed to update user');
     }
   };
@@ -284,7 +285,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       onUsersChange(allUsers.filter(u => u.uid !== uid));
       toast.success('User deleted from database');
       setUserToDelete(null);
-    } catch (e: any) {
+    } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to delete user';
       setDeleteError(msg);
       toast.error(msg);
@@ -305,7 +306,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       onUsersChange(allUsers.map(u => u.uid === updated.uid ? updated : u));
       toast.success(`User ${updated.active ? 'activated' : 'deactivated'}`);
       setUserToToggleStatus(null);
-    } catch (e: any) {
+    } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to update user status';
       setStatusError(msg);
       toast.error(msg);
@@ -324,7 +325,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       onUsersChange(allUsers.map(u => u.uid === updated.uid ? updated : u));
       toast.success(`Work model updated to ${targetWorkModel}`);
       setUserToToggleWorkModel(null);
-    } catch (e: any) {
+    } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to update work model';
       setWorkModelError(msg);
       toast.error(msg);
@@ -363,7 +364,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       toast.success(`Role updated to ${selectedRole}`);
       setUserToEditRole(null);
       setSelectedRole(null);
-    } catch (e: any) {
+    } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to update role';
       setRoleError(msg);
       toast.error(msg);
@@ -448,7 +449,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       } else {
         toast.error('No entry found for this date');
       }
-    } catch (error) {
+    } catch {
       toast.error('Failed to load entry');
     }
   };
@@ -554,7 +555,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         status: 'corrected',
         updatedAt: now,
         updatedBy: currentUser.uid,
-      } as any);
+      });
 
       toast.success('Entry corrected successfully (audit trail recorded)');
       setCorrectionEntry(null);
@@ -576,8 +577,8 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       const remindersSnap = await getDoc(doc(db, 'systemSettings', 'reminders'));
       const payrollSnap = await getDoc(doc(db, 'systemSettings', 'payroll'));
 
-      let rData: any = {};
-      let pData: any = {};
+      let rData: DocumentData = {};
+      let pData: DocumentData = {};
 
       if (remindersSnap.exists()) rData = remindersSnap.data();
       if (payrollSnap.exists()) pData = payrollSnap.data();
@@ -1595,7 +1596,7 @@ function BulkImportDialog({ open, onOpenChange, currentUser, onImportComplete }:
         onImportComplete();
       }
       toast.success(`Import complete: ${result.success} created, ${result.failed} failed`);
-    } catch (e) {
+    } catch {
       toast.error('Import failed');
     } finally {
       setImporting(false);

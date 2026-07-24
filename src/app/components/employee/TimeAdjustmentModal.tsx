@@ -53,7 +53,7 @@ function flattenToShiftRows(entries: TimeEntry[]): ShiftRow[] {
   const rows: ShiftRow[] = [];
   for (const entry of entries) {
     const segs = entry.segments ?? [];
-    const current = (entry as any).currentSegment as TimeSegment | null;
+    const current = entry.currentSegment ?? null;
 
     const allShifts: TimeSegment[] = [...segs];
     if (current) {
@@ -136,8 +136,8 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
       ]);
       setEntries(ents.filter((e) => e.status !== 'voided' && e.status !== 'archived'));
       setRequests(reqs);
-    } catch (e: any) {
-      toast.error('Failed to load entries: ' + (e.message || e));
+    } catch (e: unknown) {
+      toast.error('Failed to load entries: ' + ((e as Error).message || String(e)));
     } finally {
       setLoading(false);
     }
@@ -160,7 +160,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
   }, [requests]);
 
   const handleCellClick = (row: ShiftRow, field: FieldConfig) => {
-    const current = (row.segment as any)[field.key] as string | undefined;
+    const current = row.segment[field.key];
 
     // Retroactive shift close: ANY click on an empty Clock Out cell. Does NOT
     // depend on `segment.complete` — a doc may be missing segments[] or have
@@ -223,7 +223,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
       toast.info(`No ${field.label.toLowerCase()} time recorded for this shift.`);
       return;
     }
-    const ts = (row.segment as any)[field.systemKey] as number | undefined;
+    const ts = row.segment[field.systemKey];
     if (within24h(ts)) {
       // Direct-edit path.
       setRequesting(null);
@@ -292,8 +292,8 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
       setEditing(null);
       await load();
       onSaved();
-    } catch (e: any) {
-      toast.error(e.message || 'Could not save the adjustment.');
+    } catch (e: unknown) {
+      toast.error((e as Error).message || 'Could not save the adjustment.');
     } finally {
       setSubmitting(false);
     }
@@ -343,8 +343,8 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
       setRequesting(null);
       await load();
       onSaved();
-    } catch (e: any) {
-      toast.error(e.message || 'Could not submit the correction request.');
+    } catch (e: unknown) {
+      toast.error((e as Error).message || 'Could not submit the correction request.');
     } finally {
       setSubmitting(false);
     }
@@ -401,7 +401,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
                       </div>
                     </td>
                     {FIELDS.map((field) => {
-                      const value = (row.segment as any)[field.key] as string | undefined;
+                      const value = row.segment[field.key];
                       const isEditing =
                         editing?.entryId === row.entry.id &&
                         editing?.segmentId === row.segment.id &&

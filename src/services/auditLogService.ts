@@ -12,8 +12,8 @@ export interface AuditLogEntry {
   targetId: string; // timeEntries doc id (e.g., uid_YYYY-MM-DD)
 
   // Immutable before/after snapshots (critical for legal defensibility)
-  before: Record<string, any>;
-  after: Record<string, any>;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
 
   reason: string; // MUST be non-empty human-entered string
 
@@ -36,8 +36,8 @@ function stripUndefinedDeep<T>(value: T): T {
     return value.map(stripUndefinedDeep) as unknown as T;
   }
   if (value && typeof value === 'object' && !(value instanceof Timestamp) && !(value instanceof Date)) {
-    const out: Record<string, any> = {};
-    for (const [k, v] of Object.entries(value as Record<string, any>)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       const cleaned = stripUndefinedDeep(v);
       if (cleaned !== undefined) out[k] = cleaned;
     }
@@ -66,8 +66,8 @@ export class AuditLogService {
     actorRole?: 'admin' | 'manager' | 'system' | 'employee';
     action?: AuditLogEntry['action'];
     targetId: string;
-    before: Record<string, any>;
-    after: Record<string, any>;
+    before: Record<string, unknown>;
+    after: Record<string, unknown>;
     reason: string;
     correctionRequestId?: string;
   }): Promise<string> {
@@ -108,7 +108,7 @@ export class AuditLogService {
     actorName?: string;
   actorRole: 'admin' | 'manager' | 'system' | 'employee';
     targetId: string;
-    before: Record<string, any>;
+    before: Record<string, unknown>;
     reason: string;
   }): Promise<string> {
     const trimmedReason = (params.reason || '').trim();

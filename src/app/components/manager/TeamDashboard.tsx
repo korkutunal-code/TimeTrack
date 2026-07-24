@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
 import { TimeEntry, dbService, buildConsistentClosePatch } from '../../lib/database';
@@ -26,7 +26,7 @@ import {
   DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { toast } from 'sonner';
-import { Download, Printer, RefreshCw, Eye, Users, AlertTriangle, Calendar, Clock, Filter, LogIn, LogOut, Coffee, CheckCircle2, XCircle, MoreVertical, Edit, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Download, Printer, RefreshCw, Eye, Users, AlertTriangle, Calendar, Clock, Filter, LogIn, LogOut, Coffee, MoreVertical, Edit, Trash2 } from 'lucide-react';
 
 interface TeamDashboardProps {
   user: User;
@@ -35,15 +35,13 @@ interface TeamDashboardProps {
 
 export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
-  const [filteredEntries, setFilteredEntries] = useState<TimeEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const [selectedUserId, setSelectedUserId] = useState<string>('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [status, setStatus] = useState<string>('all');
   const [selectedEntry, setSelectedEntry] = useState<TimeEntry | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [filtersExpanded, setFiltersExpanded] = useState(false);
 
   // Edit Entry State
   const [editEntryOpen, setEditEntryOpen] = useState(false);
@@ -56,24 +54,21 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
     loadEntries();
   }, []);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/immutability
-    applyFilters();
-  }, [entries, selectedUserId, startDate, endDate, status]);
-
   const loadEntries = async () => {
     setLoading(true);
     try {
       const data = await dbService.getAllTimeEntries();
       setEntries(data);
-    } catch (error) {
+    } catch {
       toast.error('Failed to load entries');
     } finally {
       setLoading(false);
     }
   };
 
-  const applyFilters = () => {
+  // Derived during render (no filter effect/state) so React never sees a
+  // synchronous setState inside an effect (react-hooks/set-state-in-effect).
+  const filteredEntries = useMemo(() => {
     let filtered = [...entries];
 
     if (selectedUserId !== 'all') {
@@ -96,8 +91,8 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
       filtered = filtered.filter(e => e.flags && e.flags.length > 0);
     }
 
-    setFilteredEntries(filtered);
-  };
+    return filtered;
+  }, [entries, selectedUserId, startDate, endDate, status]);
 
   const setQuickDate = (preset: string) => {
     // Bug fix: previously used `today.getDay()` and `setDate()` in local TZ.
@@ -300,12 +295,12 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
         correctionNotes: adminNotes.trim(),
         updatedAt: now,
         updatedBy: user.uid,
-      } as any);
+      });
 
       toast.success('Entry updated successfully');
       setEditEntryOpen(false);
       loadEntries();
-    } catch (error) {
+    } catch {
       toast.error('Failed to update entry');
     }
   };
@@ -333,10 +328,10 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
         voidReason: reason.trim(),
         updatedAt: Timestamp.now(),
         updatedBy: user.uid,
-      } as any);
+      });
       toast.success('Entry voided');
       loadEntries();
-    } catch (error) {
+    } catch {
       toast.error('Failed to void entry');
     }
   };

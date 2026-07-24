@@ -1,17 +1,14 @@
 import {
   doc,
-  getDoc,
   runTransaction,
   Timestamp,
   updateDoc,
-  setDoc,
 } from 'firebase/firestore';
 import { db } from '../app/lib/firebase';
 import type { TimeEntry, TimeSegment } from '../app/lib/database';
 import {
   dbService,
   getActiveSegment,
-  hasOpenSegment,
   createInitialSegment,
   closeActiveSegment,
   applyLunchToSegment,
@@ -139,7 +136,7 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
   // Layer 2: retry the transaction on transient network failures so a flaky
   // connection doesn't silently drop the clock-in (root cause of stuck open
   // shifts). Validation errors are not retried (withRetry checks the message).
-  const result = await withRetry(
+  await withRetry(
     () => runTransaction(db, async (tx) => {
     const ref = doc(db, 'timeEntries', entryId);
     const snap = await tx.get(ref);
@@ -156,10 +153,10 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
         status: snap.data().status,
         segments: Array.isArray(snap.data().segments) ? snap.data().segments : undefined,
         // minimal for hasOpen check
-      } as any;
+      } as TimeEntry;
     }
 
-    const v = validateCanPunchIn(existing as any);
+    const v = validateCanPunchIn(existing);
     if (!v.valid) {
       throw new Error(v.message || 'Cannot punch in');
     }
@@ -179,7 +176,7 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
       .filter((s) => s.complete)
       .reduce((sum, s) => sum + (s.workMinutes || 0), 0);
 
-    const payload: any = {
+    const payload: Record<string, unknown> = {
       userId,
       workDate: ptDate,
       clockInManual: ptTime,
@@ -188,7 +185,7 @@ export async function punchIn(userId: string, taskId?: string): Promise<TimeEntr
       currentStep: 2,
       dayComplete: false,
       complete: false,
-      segments: [...existingSegments, stripUndefined(newSeg as any)],
+      segments: [...existingSegments, stripUndefined(newSeg)],
       totalWorkMinutes: closedSegmentsTotal,
       createdBy: userId,
       updatedAt: now,
@@ -243,7 +240,7 @@ export async function punchOut(userId: string): Promise<TimeEntry> {
   // Layer 2: retry the transaction on transient network failures so a flaky
   // connection doesn't silently drop the clock-out (root cause of stuck open
   // shifts like 06-15/06-24/06-25/07-10). Validation errors are not retried.
-  const result = await withRetry(
+  await withRetry(
     () => runTransaction(db, async (tx) => {
       const ref = doc(db, 'timeEntries', entryId);
       const snap = await tx.get(ref);
@@ -259,19 +256,19 @@ export async function punchOut(userId: string): Promise<TimeEntry> {
         clockInManual: snap.data().clockInManual || undefined,
         clockOutManual: snap.data().clockOutManual || undefined,
         complete: snap.data().complete || snap.data().dayComplete || false,
-      } as any;
+      } as TimeEntry;
     }
 
-    const v = validateCanPunchOut(existing as any);
+    const v = validateCanPunchOut(existing);
     if (!v.valid) throw new Error(v.message);
 
-    const active = getActiveSegment(existing as any);
+    const active = getActiveSegment(existing);
     if (!active) throw new Error('No active segment');
 
     const closedSeg = closeActiveSegment(active, ptTime, now.toMillis());
 
     const archived = (existing?.segments || []).filter((s: TimeSegment) => s.id !== active.id);
-    const finalSegments = [...archived, closedSeg].map((s) => stripUndefined(s as any));
+    const finalSegments = [...archived, closedSeg].map((s) => stripUndefined(s));
 
     const preTotal = (existing?.totalWorkMinutes as number) || 0;
     const newTotal = preTotal + (closedSeg.workMinutes || 0);
@@ -288,7 +285,7 @@ export async function punchOut(userId: string): Promise<TimeEntry> {
       totalWorkMinutes: newTotal,
       updatedAt: now,
       updatedBy: userId,
-    } as any);
+    });
 
     return { entryId, closedSeg, finalSegments, newTotal };
   }),
@@ -330,7 +327,7 @@ export async function toggleLunch(userId: string, skip = false): Promise<TimeEnt
   const updatedSeg = applyLunchToSegment(active, action, ptTime, now.toMillis());
 
   // Dual update legacy lunch fields + the segment in place
-  const patch: any = {
+  const patch: Record<string, unknown> = {
     updatedAt: now,
     updatedBy: userId,
   };
@@ -348,7 +345,7 @@ export async function toggleLunch(userId: string, skip = false): Promise<TimeEnt
 
   // Rebuild segments array with the updated one
   const newSegments = (pre?.segments || []).map((s) =>
-    s.id === active.id ? stripUndefined(updatedSeg as any) : stripUndefined(s as any)
+    s.id === active.id ? stripUndefined(updatedSeg) : stripUndefined(s)
   );
   patch.segments = newSegments;
 

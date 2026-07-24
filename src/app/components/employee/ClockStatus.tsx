@@ -1,4 +1,4 @@
-import { Clock, Coffee, LogOut, Calendar, TrendingUp } from 'lucide-react';
+import { Clock, Coffee, TrendingUp } from 'lucide-react';
 import { Card, CardContent } from '../ui/card';
 import { Badge } from '../ui/badge';
 import type { TimeSegment } from '../../lib/database';

@@ -7,7 +7,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
 import { Textarea } from '../ui/textarea';
-import { Badge } from '../ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Label } from '../ui/label';
 import { toast } from 'sonner';
@@ -159,9 +158,9 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
       setSelectedRequest(null);
       setResolutionNote('');
       await loadRequests();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[CorrectionRequests] Failed to update:', err);
-      toast.error(err.message || 'Failed to update request. The time entry was NOT changed.');
+      toast.error((err as Error).message || 'Failed to update request. The time entry was NOT changed.');
     } finally {
       setSaving(false);
     }

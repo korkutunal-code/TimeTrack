@@ -10,8 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Badge } from '../ui/badge';
 import { Checkbox } from '../ui/checkbox';
 import { toast } from 'sonner';
-import { Search, AlertTriangle, Clock, Shield, Download, Info } from 'lucide-react';
-import { generateCSV, downloadCSV } from '../../../services/exportService';
+import { Search, AlertTriangle, Clock, Shield, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 
 interface AuditViewerProps {
@@ -117,16 +116,11 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
 
       setResults(filtered);
       toast.success(`Found ${filtered.length} entries`);
-    } catch (error) {
+    } catch {
       toast.error('Failed to load entries');
     } finally {
       setLoading(false);
     }
-  };
-
-  const parseTimeToMinutes = (time: string): number => {
-    const [hours, minutes] = time.split(':').map(Number);
-    return hours * 60 + minutes;
   };
 
   const formatGap = (minutes: number | undefined): string => {
@@ -156,24 +150,6 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
       after_hours_submission: 'After Hours',
     };
     return labels[flag] || flag;
-  };
-
-  const exportCSV = () => {
-    if (results.length === 0) return;
-
-    const headers = ['Date', 'Employee', 'Clock In', 'Clock Out', 'Flags', 'Gaps'];
-    const rows = results.map(r => [
-      r.entry.date,
-      r.userName,
-      r.entry.clockInManual,
-      r.entry.clockOutManual,
-      r.flags.join('; '),
-      `In:${r.gaps.clockIn || 0}m, Out:${r.gaps.clockOut || 0}m`
-    ]);
-
-    const csvContent = generateCSV(headers, rows);
-    downloadCSV(`audit-report-${startDate}-to-${endDate}`, csvContent);
-    toast.success('Audit report exported');
   };
 
   const suspiciousCount = results.filter(r => r.flags.length > 0).length;

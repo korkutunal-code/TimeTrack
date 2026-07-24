@@ -252,7 +252,7 @@ export function checkTimeAnomalies(
     step: number | 'complete',
     time: string,
     workDate: string,
-    entry: any
+    entry: Partial<TimeEntry> | null
 ): AnomalyResult {
     if (!time || step === 'complete') return { hasAnomaly: false };
 
@@ -275,7 +275,7 @@ export function checkTimeAnomalies(
                 };
             }
         }
-    } catch (e) { /* ignore date parse errors */ }
+    } catch { /* ignore date parse errors */ }
 
     // 2. Early Arrival Check (Before 6:00 AM)
     if (step === 0) { // Clock In
@@ -353,12 +353,12 @@ function hasOpenSegmentLocal(entry: TimeEntry | null | undefined): boolean {
   // (the canonical implementation). Without this guard, the punchIn validator
   // and the UI both treat soft-voided test data as an open shift, which
   // makes cleanup scripts useless and forces a manual segments[] rewrite.
-  if ((entry as any).status === 'voided' || (entry as any).status === 'archived') return false;
+  if (entry.status === 'voided' || entry.status === 'archived') return false;
   if (entry.segments?.length) {
     const last = entry.segments[entry.segments.length - 1];
     if (last && last.complete !== true) return true;
   }
-  const cur = (entry as any).currentSegment as { complete?: boolean } | undefined;
+  const cur = entry.currentSegment;
   if (cur && cur.complete !== true) return true;
   if (entry.clockInManual && !entry.clockOutManual && !entry.complete) return true;
   return false;

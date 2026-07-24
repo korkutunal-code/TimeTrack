@@ -23,7 +23,7 @@ async function loadUserProfile(uid: string): Promise<User> {
   if (!snap.exists()) {
     throw new Error('Account not initialized or access revoked');
   }
-  const data = snap.data() as any;
+  const data = snap.data();
   return {
     uid,
     email: String(data.email || ''),
@@ -86,8 +86,8 @@ class AuthService {
         throw new Error('Account inactive');
       }
       return profile;
-    } catch (err: any) {
-      if (err.message === 'Account not initialized or access revoked') {
+    } catch (err: unknown) {
+      if ((err as Error).message === 'Account not initialized or access revoked') {
         // First time log in with google -> initialize profile
         const newProfile = {
           uid,
@@ -132,7 +132,7 @@ class AuthService {
           return;
         }
         callback(profile);
-      } catch (e) {
+      } catch {
         await signOut(auth);
         callback(null);
       }

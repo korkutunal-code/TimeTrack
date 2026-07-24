@@ -53,8 +53,8 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
       ]);
       setStatus(s);
       setWeek(w);
-    } catch (e: any) {
-      toast.error('Failed to load punch status: ' + (e.message || e));
+    } catch (e: unknown) {
+      toast.error('Failed to load punch status: ' + ((e as Error).message || String(e)));
     } finally {
       setLoading(false);
     }
@@ -109,8 +109,8 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
       setWriteFailure(null);
       toast.success('Clocked in — shift started');
       await load();
-    } catch (e: any) {
-      const msg = e.message || 'Could not clock in';
+    } catch (e: unknown) {
+      const msg = (e as Error).message || 'Could not clock in';
       toast.error(msg);
       setWriteFailure({ action: 'in', message: msg });
     } finally {
@@ -129,8 +129,8 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
       setWriteFailure(null);
       toast.success('Clocked out — shift complete');
       await load();
-    } catch (e: any) {
-      const msg = e.message || 'Could not clock out';
+    } catch (e: unknown) {
+      const msg = (e as Error).message || 'Could not clock out';
       toast.error(msg);
       setWriteFailure({ action: 'out', message: msg });
     } finally {
@@ -151,8 +151,8 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
       setWriteFailure(null);
       toast.success(isEnding ? 'Lunch ended — welcome back' : 'Lunch started');
       await load();
-    } catch (e: any) {
-      const msg = e.message || 'Lunch action failed';
+    } catch (e: unknown) {
+      const msg = (e as Error).message || 'Lunch action failed';
       toast.error(msg);
       setWriteFailure({ action: 'lunch', message: msg });
     } finally {

@@ -21,9 +21,21 @@ interface EmployeeRisk {
   riskLevel: 'high' | 'medium' | 'low';
 }
 
+interface PatternMetricsData {
+  summary: {
+    totalEntries: number;
+    flaggedEntries: number;
+    flaggedPercentage: number;
+    activeEmployees: number;
+  };
+  flagDistribution: Array<{ name: string; value: number }>;
+  employeeRisks: EmployeeRisk[];
+  insights: string[];
+}
+
 export function PatternMetrics({ allUsers }: PatternMetricsProps) {
   const [period, setPeriod] = useState<string>('30');
-  const [metrics, setMetrics] = useState<any>(null);
+  const [metrics, setMetrics] = useState<PatternMetricsData | null>(null);
   const [loading, setLoading] = useState(false);
 
   const analyzePatterns = async () => {
@@ -121,7 +133,7 @@ export function PatternMetrics({ allUsers }: PatternMetricsProps) {
       });
 
       toast.success('Analysis complete');
-    } catch (error) {
+    } catch {
       toast.error('Failed to analyze patterns');
     } finally {
       setLoading(false);
@@ -256,7 +268,7 @@ export function PatternMetrics({ allUsers }: PatternMetricsProps) {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
-                  {metrics.flagDistribution.map((item: any, i: number) => (
+                  {metrics.flagDistribution.map((item: { name: string; value: number }, i: number) => (
                     <div key={i} className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
                       <span className="text-sm font-medium text-slate-700 capitalize">{item.name}</span>
                       <div className="flex items-center gap-2">

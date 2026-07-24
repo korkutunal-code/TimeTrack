@@ -194,17 +194,8 @@ export function getEntriesForWorkweek(allEntries: OvertimeEntry[], workWeekStart
 
     const startStr = workWeekStartDate; // YYYY-MM-DD in PT = week start inclusive
 
-    // Compute week end: add 7 PT days by using a PT-noon anchor to avoid any
+    // Compute week end: add 7 PT days using a noon anchor to avoid any
     // midnight-boundary DST issues, then format the PT calendar day after adding.
-    const ptNoonOfStart = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'America/Los_Angeles',
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-        hour12: false,
-    }).format(new Date(Date.UTC(y, m - 1, d, 12, 0, 0, 0))); // noon UTC = afternoon PT
-
-    // Parse the PT noon string back to get the day after 7 PT days
-    // Use simple string manipulation: split and add days
     const endDate = new Date(Date.UTC(y, m - 1, d + 7, 12, 0, 0, 0));
     const endStr = new Intl.DateTimeFormat('en-CA', {
         timeZone: 'America/Los_Angeles',

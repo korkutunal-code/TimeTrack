@@ -10,8 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import { stripUndefined, createInitialSegment, closeActiveSegment, applyLunchToSegment, getActiveSegment, hasOpenSegment } from './segmentOps';
-import { getActiveSegment as dbGetActiveSegment, hasOpenSegment as dbHasOpenSegment } from './database';
-import type { TimeSegment, TimeEntry } from './database';
+import type { TimeSegment } from './database';
 import { validateCanPunchIn, validateCanPunchOut, validateCanToggleLunch } from '../../utils/timeValidation';
 import { getCurrentPTDate, getCurrentPTTimeHHMM, getPTWeekStart } from '../../utils/timeCalculations';
 
@@ -653,7 +652,6 @@ describe('Additional edge cases from Known Suspicions', () => {
     // server Timestamp.now() for clockInSystem" — verify the id is client-local
     const before = Date.now();
     const seg = createInitialSegment('08:00', before);
-    const after = Date.now();
     // The id contains the timestamp
     expect(seg.id).toMatch(/^seg_\d+_/);
     // clockInSystem is the server time passed in, not Date.now()
