@@ -213,6 +213,38 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     }
   };
 
+  const handleToggleWorkModel = async (user: User) => {
+    const newWorkModel = user.workModel === 'Remote' ? 'On-site' : 'Remote';
+    try {
+      const updated = await dbService.updateUser(user.uid, { workModel: newWorkModel });
+      onUsersChange(allUsers.map(u => u.uid === updated.uid ? updated : u));
+      toast.success('Work model updated');
+    } catch (e: any) {
+      const msg = e instanceof Error ? e.message : 'Failed to update work model';
+      toast.error(msg);
+    }
+  };
+
+  const renderWorkModelPill = (user: User) => {
+    const remote = user.workModel === 'Remote';
+    return (
+      <button
+        type="button"
+        title="Click to change work model"
+        onClick={() => handleToggleWorkModel(user)}
+        aria-label={`Set ${user.name} work model to ${remote ? 'On-site' : 'Remote'}`}
+        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all duration-150 hover:shadow-xs hover:scale-[1.02] active:scale-95 ${
+          remote
+            ? 'bg-purple-50 border-purple-300 text-purple-800 hover:bg-purple-100 hover:border-purple-400'
+            : 'bg-blue-50 border-blue-300 text-blue-800 hover:bg-blue-100 hover:border-blue-400'
+        }`}
+      >
+        <span className={`size-2 rounded-full ${remote ? 'bg-purple-500' : 'bg-blue-500'}`} />
+        {remote ? 'Remote' : 'On-site'}
+      </button>
+    );
+  };
+
   const renderStatusPill = (user: User) => {
     const active = user.active;
     return (
@@ -578,8 +610,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                       {renderDeleteButton(user)}
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
                     <Badge variant="outline" className="capitalize">{user.role}</Badge>
+                    {renderWorkModelPill(user)}
                     {renderStatusPill(user)}
                   </div>
                 </CardContent>
@@ -593,7 +626,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
               <TableHeader>
                 <TableRow>
                   <TableHead>User</TableHead>
-                  <TableHead>Email</TableHead>
+                  <TableHead className="text-center">Work Model</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-center">Edit</TableHead>
@@ -609,7 +642,11 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                         <span className="font-medium">{user.name}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{user.email}</TableCell>
+                    <TableCell className="text-center">
+                      <div className="flex items-center justify-center">
+                        {renderWorkModelPill(user)}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="capitalize">{user.role}</Badge>
                     </TableCell>

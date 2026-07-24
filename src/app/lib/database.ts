@@ -1,7 +1,6 @@
 import { collection, doc, getDoc, getDocs, orderBy, query, Timestamp, updateDoc, where, limit, startAfter, deleteDoc, addDoc, setDoc } from 'firebase/firestore';
 import { db } from './firebase';
-import type { User } from './auth';
-import { stripUndefined, buildConsistentClosePatch, closeActiveSegment } from './segmentOps';
+import type { User } from './auth';import { stripUndefined, buildConsistentClosePatch, closeActiveSegment } from './segmentOps';
 import { deriveSegmentWorkMinutes } from '../../utils/timeCalculations';
 import { auditLogService } from '../../services/auditLogService';
 
@@ -504,6 +503,7 @@ class DatabaseService {
         name: String(data.name || ''),
         role: String(data.role || 'employee').toLowerCase() as User['role'],
         active: data.active !== false,
+        workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
       };
     });
   }
@@ -522,6 +522,7 @@ class DatabaseService {
       name: String(data.name || ''),
       role: String(data.role || 'employee').toLowerCase() as User['role'],
       active: data.active !== false,
+      workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
     };
   }
 
@@ -543,6 +544,7 @@ class DatabaseService {
       name: String(data.name || ''),
       role: String(data.role || 'employee').toLowerCase() as User['role'],
       active: data.active !== false,
+      workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
     };
   }
 

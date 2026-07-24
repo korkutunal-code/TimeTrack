@@ -3,6 +3,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
 
 export type UserRole = 'employee' | 'manager' | 'admin';
+export type WorkModel = 'On-site' | 'Remote';
 
 export interface User {
   uid: string;
@@ -14,6 +15,7 @@ export interface User {
   phone_number?: string;
   sms_opt_in?: boolean;
   timezone?: string;
+  workModel: WorkModel;
 }
 
 async function loadUserProfile(uid: string): Promise<User> {
@@ -32,6 +34,7 @@ async function loadUserProfile(uid: string): Promise<User> {
     phone_number: data.phone_number,
     sms_opt_in: !!data.sms_opt_in,
     timezone: data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+    workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
   };
 }
 
@@ -59,6 +62,7 @@ class AuthService {
       createdAt: new Date(),
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       sms_opt_in: false,
+      workModel: 'On-site' as WorkModel,
     };
 
     // Create the profile document in Firestore
@@ -94,6 +98,7 @@ class AuthService {
           createdAt: new Date(),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           sms_opt_in: false,
+          workModel: 'On-site' as WorkModel,
         };
 
         // Create the profile document in Firestore
