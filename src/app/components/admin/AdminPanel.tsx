@@ -13,11 +13,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
 import { Checkbox } from '../ui/checkbox';
 import { Textarea } from '../ui/textarea';
-import { Badge } from '../ui/badge';
 import { UserAvatar } from '../ui/user-avatar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 import { toast } from 'sonner';
-import { UserPlus, Upload, Download, Edit, Trash2, UserCog, CheckCircle2, HelpCircle, ChevronDown, Loader2, UserCheck, UserX, Building2, Laptop } from 'lucide-react';
+import { UserPlus, Upload, Download, Edit, Trash2, UserCog, CheckCircle2, HelpCircle, ChevronDown, Loader2, UserCheck, UserX, Building2, Laptop, Shield } from 'lucide-react';
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
@@ -45,6 +44,10 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const [userToToggleWorkModel, setUserToToggleWorkModel] = useState<{ user: User; targetWorkModel: 'On-site' | 'Remote' } | null>(null);
   const [updatingWorkModel, setUpdatingWorkModel] = useState(false);
   const [workModelError, setWorkModelError] = useState<string | null>(null);
+  const [userToEditRole, setUserToEditRole] = useState<User | null>(null);
+  const [selectedRole, setSelectedRole] = useState<User['role'] | null>(null);
+  const [updatingRole, setUpdatingRole] = useState(false);
+  const [roleError, setRoleError] = useState<string | null>(null);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   const [newUser, setNewUser] = useState({
@@ -254,6 +257,42 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       </button>
     );
   };
+
+  const confirmUpdateRole = async () => {
+    if (!userToEditRole || !selectedRole) return;
+    setUpdatingRole(true);
+    setRoleError(null);
+    try {
+      const updated = await dbService.updateUser(userToEditRole.uid, { role: selectedRole });
+      onUsersChange(allUsers.map(u => u.uid === updated.uid ? updated : u));
+      toast.success(`Role updated to ${selectedRole}`);
+      setUserToEditRole(null);
+      setSelectedRole(null);
+    } catch (e: any) {
+      const msg = e instanceof Error ? e.message : 'Failed to update role';
+      setRoleError(msg);
+      toast.error(msg);
+    } finally {
+      setUpdatingRole(false);
+    }
+  };
+
+  const renderRolePill = (user: User) => (
+    <button
+      type="button"
+      title="Click to change user role"
+      onClick={() => {
+        setUserToEditRole(user);
+        setSelectedRole(user.role);
+        setRoleError(null);
+      }}
+      aria-label={`Change ${user.name} role`}
+      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold capitalize text-slate-700 cursor-pointer hover:bg-slate-100 hover:border-slate-300 hover:shadow-xs transition-all duration-150 active:scale-95"
+    >
+      <span className="size-2 rounded-full bg-slate-400" />
+      {user.role}
+    </button>
+  );
 
   const renderStatusPill = (user: User) => {
     const active = user.active;
@@ -621,7 +660,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                     </div>
                   </div>
                   <div className="flex items-center gap-3 flex-wrap">
-                    <Badge variant="outline" className="capitalize">{user.role}</Badge>
+                    {renderRolePill(user)}
                     {renderWorkModelPill(user)}
                     {renderStatusPill(user)}
                   </div>
@@ -659,7 +698,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                     </TableCell>
                     <TableCell className="text-center">
                       <div className="flex items-center justify-center">
-                        <Badge variant="outline" className="capitalize">{user.role}</Badge>
+                        {renderRolePill(user)}
                       </div>
                     </TableCell>
                     <TableCell className="text-center">
@@ -1359,6 +1398,77 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                 : userToToggleWorkModel?.targetWorkModel === 'Remote'
                   ? 'Set to Remote'
                   : 'Set to On-site'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Role Change Confirmation */}
+      <AlertDialog
+        open={!!userToEditRole}
+        onOpenChange={(open) => {
+          if (!open && !updatingRole) {
+            setUserToEditRole(null);
+            setSelectedRole(null);
+            setRoleError(null);
+          }
+        }}
+      >
+        <AlertDialogContent className="rounded-2xl border border-indigo-100 shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-indigo-900 text-xl">
+              <Shield className="size-6 text-indigo-500" />
+              Change User Role
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-600 text-base">
+              Select a new role for <strong>{userToEditRole?.name}</strong>{' '}
+              (Current role: <span className="capitalize font-medium">{userToEditRole?.role}</span>):
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className="flex flex-col gap-2 -mt-1">
+            {(['employee', 'manager', 'admin'] as User['role'][]).map((r) => {
+              const isSelected = selectedRole === r;
+              return (
+                <button
+                  key={r}
+                  type="button"
+                  disabled={updatingRole}
+                  onClick={() => setSelectedRole(r)}
+                  className={`flex items-center justify-between rounded-xl border px-4 py-2.5 text-sm font-semibold capitalize transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isSelected
+                      ? 'border-indigo-400 bg-indigo-50 text-indigo-800 shadow-xs'
+                      : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 hover:border-slate-300'
+                  }`}
+                >
+                  {r}
+                  {isSelected && <CheckCircle2 className="size-4 text-indigo-600" />}
+                </button>
+              );
+            })}
+          </div>
+
+          {roleError && (
+            <p className="text-sm text-red-600 -mt-1">{roleError}</p>
+          )}
+
+          <AlertDialogFooter className="mt-6 gap-3 sm:gap-0">
+            <AlertDialogCancel
+              disabled={updatingRole}
+              className="rounded-xl font-medium sm:w-1/2"
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={updatingRole || !selectedRole || selectedRole === userToEditRole?.role}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold sm:w-1/2 disabled:opacity-60"
+              onClick={async (e) => {
+                e.preventDefault();
+                await confirmUpdateRole();
+              }}
+            >
+              {updatingRole ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Shield className="size-4 mr-2" />}
+              {updatingRole ? 'Updating…' : 'Update Role'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
