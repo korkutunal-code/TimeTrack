@@ -17,7 +17,7 @@ import { Badge } from '../ui/badge';
 import { UserAvatar } from '../ui/user-avatar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 import { toast } from 'sonner';
-import { UserPlus, Upload, Download, Edit, Trash2, UserCog, CheckCircle2, HelpCircle, ChevronDown, Loader2, UserCheck, UserX } from 'lucide-react';
+import { UserPlus, Upload, Download, Edit, Trash2, UserCog, CheckCircle2, HelpCircle, ChevronDown, Loader2, UserCheck, UserX, Building2, Laptop } from 'lucide-react';
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
@@ -42,6 +42,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const [userToToggleStatus, setUserToToggleStatus] = useState<{ user: User; targetStatus: 'Active' | 'Inactive' } | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [userToToggleWorkModel, setUserToToggleWorkModel] = useState<{ user: User; targetWorkModel: 'On-site' | 'Remote' } | null>(null);
+  const [updatingWorkModel, setUpdatingWorkModel] = useState(false);
+  const [workModelError, setWorkModelError] = useState<string | null>(null);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   const [newUser, setNewUser] = useState({
@@ -213,15 +216,22 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     }
   };
 
-  const handleToggleWorkModel = async (user: User) => {
-    const newWorkModel = user.workModel === 'Remote' ? 'On-site' : 'Remote';
+  const confirmToggleWorkModel = async () => {
+    if (!userToToggleWorkModel) return;
+    setUpdatingWorkModel(true);
+    setWorkModelError(null);
     try {
-      const updated = await dbService.updateUser(user.uid, { workModel: newWorkModel });
+      const { user, targetWorkModel } = userToToggleWorkModel;
+      const updated = await dbService.updateUser(user.uid, { workModel: targetWorkModel });
       onUsersChange(allUsers.map(u => u.uid === updated.uid ? updated : u));
-      toast.success('Work model updated');
+      toast.success(`Work model updated to ${targetWorkModel}`);
+      setUserToToggleWorkModel(null);
     } catch (e: any) {
       const msg = e instanceof Error ? e.message : 'Failed to update work model';
+      setWorkModelError(msg);
       toast.error(msg);
+    } finally {
+      setUpdatingWorkModel(false);
     }
   };
 
@@ -231,7 +241,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       <button
         type="button"
         title="Click to change work model"
-        onClick={() => handleToggleWorkModel(user)}
+        onClick={() => setUserToToggleWorkModel({ user, targetWorkModel: remote ? 'On-site' : 'Remote' })}
         aria-label={`Set ${user.name} work model to ${remote ? 'On-site' : 'Remote'}`}
         className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all duration-150 hover:shadow-xs hover:scale-[1.02] active:scale-95 ${
           remote
@@ -1267,6 +1277,86 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                 : userToToggleStatus?.targetStatus === 'Inactive'
                   ? 'Deactivate'
                   : 'Activate'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Work Model Toggle Confirmation */}
+      <AlertDialog
+        open={!!userToToggleWorkModel}
+        onOpenChange={(open) => {
+          if (!open && !updatingWorkModel) {
+            setUserToToggleWorkModel(null);
+            setWorkModelError(null);
+          }
+        }}
+      >
+        <AlertDialogContent
+          className={`rounded-2xl border shadow-2xl ${
+            userToToggleWorkModel?.targetWorkModel === 'Remote'
+              ? 'border-purple-100'
+              : 'border-blue-100'
+          }`}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle
+              className={`flex items-center gap-2 text-xl ${
+                userToToggleWorkModel?.targetWorkModel === 'Remote'
+                  ? 'text-purple-900'
+                  : 'text-blue-900'
+              }`}
+            >
+              {userToToggleWorkModel?.targetWorkModel === 'Remote' ? (
+                <Laptop className="size-6 text-purple-500" />
+              ) : (
+                <Building2 className="size-6 text-blue-500" />
+              )}
+              {userToToggleWorkModel?.targetWorkModel === 'Remote'
+                ? 'Change Work Model to Remote'
+                : 'Change Work Model to On-site'}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-600 text-base">
+              Are you sure you want to change <strong>{userToToggleWorkModel?.user.name}</strong>'s work model to{' '}
+              {userToToggleWorkModel?.targetWorkModel}?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {workModelError && (
+            <p className="text-sm text-red-600 -mt-2">{workModelError}</p>
+          )}
+
+          <AlertDialogFooter className="mt-6 gap-3 sm:gap-0">
+            <AlertDialogCancel
+              disabled={updatingWorkModel}
+              className="rounded-xl font-medium sm:w-1/2"
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={updatingWorkModel}
+              className={`rounded-xl font-bold sm:w-1/2 text-white disabled:opacity-60 ${
+                userToToggleWorkModel?.targetWorkModel === 'Remote'
+                  ? 'bg-purple-600 hover:bg-purple-700'
+                  : 'bg-blue-600 hover:bg-blue-700'
+              }`}
+              onClick={async (e) => {
+                e.preventDefault();
+                await confirmToggleWorkModel();
+              }}
+            >
+              {updatingWorkModel ? (
+                <Loader2 className="size-4 mr-2 animate-spin" />
+              ) : userToToggleWorkModel?.targetWorkModel === 'Remote' ? (
+                <Laptop className="size-4 mr-2" />
+              ) : (
+                <Building2 className="size-4 mr-2" />
+              )}
+              {updatingWorkModel
+                ? 'Updating…'
+                : userToToggleWorkModel?.targetWorkModel === 'Remote'
+                  ? 'Set to Remote'
+                  : 'Set to On-site'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
