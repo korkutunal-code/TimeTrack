@@ -58,12 +58,24 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
         const gaps: AuditResult['gaps'] = {};
         const flags: string[] = [];
 
+        const ptHourAndMinutes = (millis: number): { h: number; m: number } => {
+          const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/Los_Angeles',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          }).formatToParts(new Date(millis));
+          const h = Number(parts.find(p => p.type === 'hour')?.value ?? '0');
+          const m = Number(parts.find(p => p.type === 'minute')?.value ?? '0');
+          return { h: h === 24 ? 0 : h, m };
+        };
+
         const calculateGap = (manual: string | undefined, systemMillis: number | undefined) => {
           if (!manual || !systemMillis) return undefined;
           const [h, m] = manual.split(':').map(Number);
           const manualMinutes = h * 60 + m;
-          const systemDate = new Date(systemMillis);
-          const systemMinutes = systemDate.getHours() * 60 + systemDate.getMinutes();
+          const { h: sh, m: sm } = ptHourAndMinutes(systemMillis);
+          const systemMinutes = sh * 60 + sm;
           let gap = systemMinutes - manualMinutes;
           // Handle wrap-around (next day submissions)
           if (gap < -720) gap += 1440;
@@ -85,9 +97,9 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
           if (mins < 5) flags.push('batch_submission');
         }
 
-        // Flag 3: After-hours completion (>=6pm or <6am)
+        // Flag 3: After-hours completion (>=6pm or <6am), in canonical PT
         if (entry.completedAt) {
-          const h = new Date(entry.completedAt).getHours();
+          const { h } = ptHourAndMinutes(entry.completedAt);
           if (h >= 18 || h < 6) flags.push('after_hours_submission');
         }
 
@@ -129,6 +141,7 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
   const formatTimestamp = (timestamp: number | undefined): string => {
     if (!timestamp) return '--';
     return new Date(timestamp).toLocaleString('en-US', {
+      timeZone: 'America/Los_Angeles',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
