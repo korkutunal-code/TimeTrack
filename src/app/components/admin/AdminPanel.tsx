@@ -1,4 +1,4 @@
-import { useState, useEffect, type Dispatch, type SetStateAction } from 'react';
+import { useState, useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
 import { dbService, TimeEntry, buildConsistentClosePatch } from '../../lib/database';
@@ -13,7 +13,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
 import { Checkbox } from '../ui/checkbox';
 import { Textarea } from '../ui/textarea';
-import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { UserAvatar } from '../ui/user-avatar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 import { toast } from 'sonner';
@@ -46,6 +45,83 @@ const STATUS_OPTIONS = [
   { value: 'Active', label: 'Active' },
   { value: 'Inactive', label: 'Inactive' },
 ];
+
+function FilterHeader({
+  column,
+  title,
+  options,
+  selected,
+  setSelected,
+  openColumn,
+  setOpenColumn,
+}: {
+  column: FilterColumn;
+  title: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  setSelected: Dispatch<SetStateAction<string[]>>;
+  openColumn: FilterColumn | null;
+  setOpenColumn: Dispatch<SetStateAction<FilterColumn | null>>;
+}) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const isOpen = openColumn === column;
+  const active = selected.length < options.length;
+  const allSelected = selected.length === options.length;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpenColumn(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen, setOpenColumn]);
+
+  return (
+    <div ref={wrapperRef} className="relative inline-flex items-center gap-1">
+      <span>{title}</span>
+      <button
+        type="button"
+        aria-label={`Filter ${title}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpenColumn(isOpen ? null : column);
+        }}
+        className={`cursor-pointer p-0 transition-colors ${
+          active
+            ? 'text-indigo-600 fill-indigo-50 font-bold'
+            : 'text-slate-400 hover:text-slate-600'
+        }`}
+      >
+        <Filter className="size-3.5" />
+      </button>
+      {isOpen && (
+        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 bg-white rounded-lg shadow-xl border border-slate-200 p-3 min-w-[140px] text-left">
+          <button
+            type="button"
+            onClick={() => setSelected(allSelected ? [] : options.map(o => o.value))}
+            className="text-xs font-medium text-indigo-600 hover:text-indigo-800 mb-2"
+          >
+            {allSelected ? 'Clear' : 'Select All'}
+          </button>
+          <div className="flex flex-col">
+            {options.map((o) => {
+              const checked = selected.includes(o.value);
+              return (
+                <label key={o.value} className="flex items-center gap-2 cursor-pointer py-1 text-sm text-slate-700">
+                  <Checkbox checked={checked} onCheckedChange={(c) => setSelected(c ? [...selected, o.value] : selected.filter(v => v !== o.value))} />
+                  {o.label}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelProps) {
   const [createUserOpen, setCreateUserOpen] = useState(false);
@@ -86,6 +162,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const [selectedRoles, setSelectedRoles] = useState<string[]>(ROLE_OPTIONS.map(o => o.value));
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>(STATUS_OPTIONS.map(o => o.value));
   const [openFilterMenu, setOpenFilterMenu] = useState<FilterColumn | null>(null);
+  const [openMobileFilterMenu, setOpenMobileFilterMenu] = useState<FilterColumn | null>(null);
 
   const [correctionEntry, setCorrectionEntry] = useState<TimeEntry | null>(null);
   const [originalCorrectionEntry, setOriginalCorrectionEntry] = useState<TimeEntry | null>(null);
@@ -356,63 +433,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       <Trash2 className="size-4" />
     </button>
   );
-
-  const renderFilterHeader = (
-    column: FilterColumn,
-    title: string,
-    options: { value: string; label: string }[],
-    selected: string[],
-    setSelected: Dispatch<SetStateAction<string[]>>,
-  ) => {
-    const active = selected.length < options.length;
-    const allSelected = selected.length === options.length;
-    const toggle = (value: string, checked: boolean) => {
-      setSelected(checked ? [...selected, value] : selected.filter(v => v !== value));
-    };
-    return (
-      <div className="flex items-center justify-center gap-1">
-        <span>{title}</span>
-        <Popover open={openFilterMenu === column} onOpenChange={(o) => setOpenFilterMenu(o ? column : null)}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              aria-label={`Filter ${title}`}
-              className={`cursor-pointer p-0 transition-colors ${
-                active
-                  ? 'text-indigo-600 fill-indigo-50 font-bold'
-                  : 'text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <Filter className="size-3.5" />
-            </button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="center"
-            className="min-w-[150px] w-auto p-3 text-left bg-white rounded-lg border border-slate-200 shadow-xl"
-          >
-            <button
-              type="button"
-              onClick={() => setSelected(allSelected ? [] : options.map(o => o.value))}
-              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 mb-2"
-            >
-              {allSelected ? 'Clear' : 'Select All'}
-            </button>
-            <div className="flex flex-col">
-              {options.map((o) => {
-                const checked = selected.includes(o.value);
-                return (
-                  <label key={o.value} className="flex items-center gap-2 cursor-pointer py-1 text-sm text-slate-700">
-                    <Checkbox checked={checked} onCheckedChange={(c) => toggle(o.value, !!c)} />
-                    {o.label}
-                  </label>
-                );
-              })}
-            </div>
-          </PopoverContent>
-        </Popover>
-      </div>
-    );
-  };
 
   const loadCorrectionEntry = async () => {
     if (!correctionUserId || !correctionDate) {
@@ -687,9 +707,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         <CardContent className="space-y-4">
           {/* Mobile Filter Bar — mirrors the desktop column-header popovers */}
           <div className="md:hidden flex flex-wrap items-center gap-3">
-            {renderFilterHeader('workModel', 'Work Model', WORK_MODEL_OPTIONS, selectedWorkModels, setSelectedWorkModels)}
-            {renderFilterHeader('role', 'Role', ROLE_OPTIONS, selectedRoles, setSelectedRoles)}
-            {renderFilterHeader('status', 'Status', STATUS_OPTIONS, selectedStatuses, setSelectedStatuses)}
+            <FilterHeader column="workModel" title="Work Model" options={WORK_MODEL_OPTIONS} selected={selectedWorkModels} setSelected={setSelectedWorkModels} openColumn={openMobileFilterMenu} setOpenColumn={setOpenMobileFilterMenu} />
+            <FilterHeader column="role" title="Role" options={ROLE_OPTIONS} selected={selectedRoles} setSelected={setSelectedRoles} openColumn={openMobileFilterMenu} setOpenColumn={setOpenMobileFilterMenu} />
+            <FilterHeader column="status" title="Status" options={STATUS_OPTIONS} selected={selectedStatuses} setSelected={setSelectedStatuses} openColumn={openMobileFilterMenu} setOpenColumn={setOpenMobileFilterMenu} />
           </div>
           {/* Mobile Card View */}
           <div className="md:hidden space-y-3">
@@ -726,13 +746,13 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead className="text-center">
-                    {renderFilterHeader('workModel', 'Work Model', WORK_MODEL_OPTIONS, selectedWorkModels, setSelectedWorkModels)}
+                    <FilterHeader column="workModel" title="Work Model" options={WORK_MODEL_OPTIONS} selected={selectedWorkModels} setSelected={setSelectedWorkModels} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
                   </TableHead>
                   <TableHead className="text-center">
-                    {renderFilterHeader('role', 'Role', ROLE_OPTIONS, selectedRoles, setSelectedRoles)}
+                    <FilterHeader column="role" title="Role" options={ROLE_OPTIONS} selected={selectedRoles} setSelected={setSelectedRoles} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
                   </TableHead>
                   <TableHead className="text-center">
-                    {renderFilterHeader('status', 'Status', STATUS_OPTIONS, selectedStatuses, setSelectedStatuses)}
+                    <FilterHeader column="status" title="Status" options={STATUS_OPTIONS} selected={selectedStatuses} setSelected={setSelectedStatuses} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
                   </TableHead>
                   <TableHead className="text-center">Edit</TableHead>
                   <TableHead className="text-center">Delete</TableHead>
