@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type Dispatch, type SetStateAction } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
 import { dbService, TimeEntry, buildConsistentClosePatch } from '../../lib/database';
@@ -13,10 +13,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
 import { Checkbox } from '../ui/checkbox';
 import { Textarea } from '../ui/textarea';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { UserAvatar } from '../ui/user-avatar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 import { toast } from 'sonner';
-import { UserPlus, Upload, Download, Edit, Trash2, UserCog, CheckCircle2, HelpCircle, ChevronDown, Loader2, UserCheck, UserX, Building2, Laptop, Shield } from 'lucide-react';
+import { UserPlus, Upload, Download, Edit, Trash2, UserCog, CheckCircle2, HelpCircle, ChevronDown, Loader2, UserCheck, UserX, Building2, Laptop, Shield, Filter } from 'lucide-react';
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
@@ -29,6 +30,22 @@ interface AdminPanelProps {
   allUsers: User[];
   onUsersChange: (users: User[]) => void;
 }
+
+type FilterColumn = 'workModel' | 'role' | 'status';
+
+const WORK_MODEL_OPTIONS = [
+  { value: 'On-site', label: 'On-site' },
+  { value: 'Remote', label: 'Remote' },
+];
+const ROLE_OPTIONS = [
+  { value: 'employee', label: 'Employee' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'manager', label: 'Manager' },
+];
+const STATUS_OPTIONS = [
+  { value: 'Active', label: 'Active' },
+  { value: 'Inactive', label: 'Inactive' },
+];
 
 export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelProps) {
   const [createUserOpen, setCreateUserOpen] = useState(false);
@@ -65,9 +82,10 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
 
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [workModelFilter, setWorkModelFilter] = useState<'All' | 'On-site' | 'Remote'>('All');
-  const [roleFilter, setRoleFilter] = useState<'All' | 'Employee' | 'Admin' | 'Manager'>('All');
-  const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Inactive'>('All');
+  const [selectedWorkModels, setSelectedWorkModels] = useState<string[]>(WORK_MODEL_OPTIONS.map(o => o.value));
+  const [selectedRoles, setSelectedRoles] = useState<string[]>(ROLE_OPTIONS.map(o => o.value));
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(STATUS_OPTIONS.map(o => o.value));
+  const [openFilterMenu, setOpenFilterMenu] = useState<FilterColumn | null>(null);
 
   const [correctionEntry, setCorrectionEntry] = useState<TimeEntry | null>(null);
   const [originalCorrectionEntry, setOriginalCorrectionEntry] = useState<TimeEntry | null>(null);
@@ -339,29 +357,60 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     </button>
   );
 
-  const renderHeaderFilter = (
-    value: string,
-    onChange: (v: string) => void,
+  const renderFilterHeader = (
+    column: FilterColumn,
+    title: string,
     options: { value: string; label: string }[],
-    allValue: string,
-    allLabel: string,
+    selected: string[],
+    setSelected: Dispatch<SetStateAction<string[]>>,
   ) => {
-    const active = value !== allValue;
+    const active = selected.length < options.length;
+    const allSelected = selected.length === options.length;
+    const toggle = (value: string, checked: boolean) => {
+      setSelected(checked ? [...selected, value] : selected.filter(v => v !== value));
+    };
     return (
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`bg-transparent text-xs font-medium border rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer ${
-          active
-            ? 'border-indigo-400 bg-indigo-50 text-indigo-700'
-            : 'text-slate-500 border-slate-200'
-        }`}
-      >
-        <option value={allValue}>{allLabel}</option>
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
+      <div className="flex items-center justify-center gap-1">
+        <span>{title}</span>
+        <Popover open={openFilterMenu === column} onOpenChange={(o) => setOpenFilterMenu(o ? column : null)}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Filter ${title}`}
+              className={`cursor-pointer p-0 transition-colors ${
+                active
+                  ? 'text-indigo-600 fill-indigo-50 font-bold'
+                  : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <Filter className="size-3.5" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="center"
+            className="min-w-[150px] w-auto p-3 text-left bg-white rounded-lg border border-slate-200 shadow-xl"
+          >
+            <button
+              type="button"
+              onClick={() => setSelected(allSelected ? [] : options.map(o => o.value))}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 mb-2"
+            >
+              {allSelected ? 'Clear' : 'Select All'}
+            </button>
+            <div className="flex flex-col">
+              {options.map((o) => {
+                const checked = selected.includes(o.value);
+                return (
+                  <label key={o.value} className="flex items-center gap-2 cursor-pointer py-1 text-sm text-slate-700">
+                    <Checkbox checked={checked} onCheckedChange={(c) => toggle(o.value, !!c)} />
+                    {o.label}
+                  </label>
+                );
+              })}
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
     );
   };
 
@@ -562,11 +611,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const filteredUsers = allUsers.filter(user => {
     const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       user.email.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesWorkModel = workModelFilter === 'All' || (user.workModel || 'On-site') === workModelFilter;
-    const matchesRole = roleFilter === 'All' || user.role === roleFilter.toLowerCase();
-    const matchesStatus = statusFilter === 'All' ||
-      (statusFilter === 'Active' && user.active) ||
-      (statusFilter === 'Inactive' && !user.active);
+    const matchesWorkModel = selectedWorkModels.includes(user.workModel || 'On-site');
+    const matchesRole = selectedRoles.includes(user.role);
+    const matchesStatus = selectedStatuses.includes(user.active ? 'Active' : 'Inactive');
     return matchesSearch && matchesWorkModel && matchesRole && matchesStatus;
   });
 
@@ -673,32 +720,13 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead className="text-center">
-                    <div className="flex flex-col items-center gap-1">
-                      <span>Work Model</span>
-                      {renderHeaderFilter(workModelFilter, (v) => setWorkModelFilter(v as 'All' | 'On-site' | 'Remote'), [
-                        { value: 'On-site', label: 'On-site' },
-                        { value: 'Remote', label: 'Remote' },
-                      ], 'All', 'All Models')}
-                    </div>
+                    {renderFilterHeader('workModel', 'Work Model', WORK_MODEL_OPTIONS, selectedWorkModels, setSelectedWorkModels)}
                   </TableHead>
                   <TableHead className="text-center">
-                    <div className="flex flex-col items-center gap-1">
-                      <span>Role</span>
-                      {renderHeaderFilter(roleFilter, (v) => setRoleFilter(v as 'All' | 'Employee' | 'Admin' | 'Manager'), [
-                        { value: 'Employee', label: 'Employee' },
-                        { value: 'Admin', label: 'Admin' },
-                        { value: 'Manager', label: 'Manager' },
-                      ], 'All', 'All Roles')}
-                    </div>
+                    {renderFilterHeader('role', 'Role', ROLE_OPTIONS, selectedRoles, setSelectedRoles)}
                   </TableHead>
                   <TableHead className="text-center">
-                    <div className="flex flex-col items-center gap-1">
-                      <span>Status</span>
-                      {renderHeaderFilter(statusFilter, (v) => setStatusFilter(v as 'All' | 'Active' | 'Inactive'), [
-                        { value: 'Active', label: 'Active' },
-                        { value: 'Inactive', label: 'Inactive' },
-                      ], 'All', 'All Statuses')}
-                    </div>
+                    {renderFilterHeader('status', 'Status', STATUS_OPTIONS, selectedStatuses, setSelectedStatuses)}
                   </TableHead>
                   <TableHead className="text-center">Edit</TableHead>
                   <TableHead className="text-center">Delete</TableHead>
