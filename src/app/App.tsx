@@ -289,7 +289,7 @@ export default function App() {
           <TabsList className="grid grid-cols-3 sm:grid-cols-6 w-full gap-1">
             <TabsTrigger value="panel" className="text-xs sm:text-sm">
               <Settings className="size-4 mr-0 sm:mr-2" />
-              <span className="hidden sm:inline">Admin</span>
+              <span className="hidden sm:inline">User Base</span>
               <span className="sm:hidden">Panel</span>
             </TabsTrigger>
             <TabsTrigger value="payroll" className="text-xs sm:text-sm">
