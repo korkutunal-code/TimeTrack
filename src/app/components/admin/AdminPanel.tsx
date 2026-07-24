@@ -685,6 +685,12 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Mobile Filter Bar — mirrors the desktop column-header popovers */}
+          <div className="md:hidden flex flex-wrap items-center gap-3">
+            {renderFilterHeader('workModel', 'Work Model', WORK_MODEL_OPTIONS, selectedWorkModels, setSelectedWorkModels)}
+            {renderFilterHeader('role', 'Role', ROLE_OPTIONS, selectedRoles, setSelectedRoles)}
+            {renderFilterHeader('status', 'Status', STATUS_OPTIONS, selectedStatuses, setSelectedStatuses)}
+          </div>
           {/* Mobile Card View */}
           <div className="md:hidden space-y-3">
             {filteredUsers.map(user => (
