@@ -65,8 +65,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
 
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [roleFilter, setRoleFilter] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [workModelFilter, setWorkModelFilter] = useState<'All' | 'On-site' | 'Remote'>('All');
+  const [roleFilter, setRoleFilter] = useState<'All' | 'Employee' | 'Admin' | 'Manager'>('All');
+  const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Inactive'>('All');
 
   const [correctionEntry, setCorrectionEntry] = useState<TimeEntry | null>(null);
   const [originalCorrectionEntry, setOriginalCorrectionEntry] = useState<TimeEntry | null>(null);
@@ -338,6 +339,32 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     </button>
   );
 
+  const renderHeaderFilter = (
+    value: string,
+    onChange: (v: string) => void,
+    options: { value: string; label: string }[],
+    allValue: string,
+    allLabel: string,
+  ) => {
+    const active = value !== allValue;
+    return (
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={`bg-transparent text-xs font-medium border rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer ${
+          active
+            ? 'border-indigo-400 bg-indigo-50 text-indigo-700'
+            : 'text-slate-500 border-slate-200'
+        }`}
+      >
+        <option value={allValue}>{allLabel}</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    );
+  };
+
   const loadCorrectionEntry = async () => {
     if (!correctionUserId || !correctionDate) {
       toast.error('Select employee and date');
@@ -535,11 +562,12 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const filteredUsers = allUsers.filter(user => {
     const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       user.email.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesRole = roleFilter === 'all' || user.role === roleFilter;
-    const matchesStatus = statusFilter === 'all' ||
-      (statusFilter === 'active' && user.active) ||
-      (statusFilter === 'inactive' && !user.active);
-    return matchesSearch && matchesRole && matchesStatus;
+    const matchesWorkModel = workModelFilter === 'All' || (user.workModel || 'On-site') === workModelFilter;
+    const matchesRole = roleFilter === 'All' || user.role === roleFilter.toLowerCase();
+    const matchesStatus = statusFilter === 'All' ||
+      (statusFilter === 'Active' && user.active) ||
+      (statusFilter === 'Inactive' && !user.active);
+    return matchesSearch && matchesWorkModel && matchesRole && matchesStatus;
   });
 
   return (
@@ -610,36 +638,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
-            <div>
-              <Label>Filter by Role</Label>
-              <Select value={roleFilter} onValueChange={setRoleFilter}>
-                <SelectTrigger className="h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Roles</SelectItem>
-                  <SelectItem value="employee">Employee</SelectItem>
-                  <SelectItem value="manager">Manager</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Status</Label>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
           {/* Mobile Card View */}
           <div className="md:hidden space-y-3">
             {filteredUsers.map(user => (
@@ -674,9 +672,34 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
               <TableHeader>
                 <TableRow>
                   <TableHead>User</TableHead>
-                  <TableHead className="text-center">Work Model</TableHead>
-                  <TableHead className="text-center">Role</TableHead>
-                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead className="text-center">
+                    <div className="flex flex-col items-center gap-1">
+                      <span>Work Model</span>
+                      {renderHeaderFilter(workModelFilter, (v) => setWorkModelFilter(v as 'All' | 'On-site' | 'Remote'), [
+                        { value: 'On-site', label: 'On-site' },
+                        { value: 'Remote', label: 'Remote' },
+                      ], 'All', 'All Models')}
+                    </div>
+                  </TableHead>
+                  <TableHead className="text-center">
+                    <div className="flex flex-col items-center gap-1">
+                      <span>Role</span>
+                      {renderHeaderFilter(roleFilter, (v) => setRoleFilter(v as 'All' | 'Employee' | 'Admin' | 'Manager'), [
+                        { value: 'Employee', label: 'Employee' },
+                        { value: 'Admin', label: 'Admin' },
+                        { value: 'Manager', label: 'Manager' },
+                      ], 'All', 'All Roles')}
+                    </div>
+                  </TableHead>
+                  <TableHead className="text-center">
+                    <div className="flex flex-col items-center gap-1">
+                      <span>Status</span>
+                      {renderHeaderFilter(statusFilter, (v) => setStatusFilter(v as 'All' | 'Active' | 'Inactive'), [
+                        { value: 'Active', label: 'Active' },
+                        { value: 'Inactive', label: 'Inactive' },
+                      ], 'All', 'All Statuses')}
+                    </div>
+                  </TableHead>
                   <TableHead className="text-center">Edit</TableHead>
                   <TableHead className="text-center">Delete</TableHead>
                 </TableRow>
