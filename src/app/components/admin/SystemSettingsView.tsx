@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Checkbox } from '../ui/checkbox';
 import { toast } from 'sonner';
-import { Save, Loader2 } from 'lucide-react';
+import { Save, Loader2, ChevronDown } from 'lucide-react';
 
 interface SystemSettingsViewProps {
   currentUser: User;
@@ -30,6 +30,7 @@ export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
   });
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [isReminderSettingsOpen, setIsReminderSettingsOpen] = useState(true);
 
   const loadSettings = async () => {
     setLoadingSettings(true);
@@ -109,60 +110,95 @@ export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
     <div className="space-y-6">
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl">
         <CardHeader className="bg-white/40 pb-2">
-          <CardTitle className="text-slate-800 font-bold">Reminder Settings</CardTitle>
+          <button
+            type="button"
+            onClick={() => setIsReminderSettingsOpen((open) => !open)}
+            aria-expanded={isReminderSettingsOpen}
+            className="w-full flex items-center justify-between text-left"
+          >
+            <CardTitle className="text-slate-800 font-bold">Reminder Settings</CardTitle>
+            <ChevronDown
+              className={`size-5 text-slate-500 transition-transform duration-200 ${isReminderSettingsOpen ? 'rotate-180' : 'rotate-0'}`}
+            />
+          </button>
         </CardHeader>
-        <CardContent className="space-y-4 pt-4">
-          <div className="flex items-center space-x-2 border-b pb-4">
-            <Checkbox
-              id="globalEmail"
-              checked={systemSettings.enable_email_reminders}
-              onCheckedChange={(checked) => setSystemSettings({ ...systemSettings, enable_email_reminders: !!checked })}
-            />
-            <Label htmlFor="globalEmail">Enable Email Reminders Globally</Label>
-          </div>
+        {isReminderSettingsOpen && (
+          <CardContent className="pt-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
+              <div className="space-y-4">
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    id="globalEmail"
+                    checked={systemSettings.enable_email_reminders}
+                    onCheckedChange={(checked) => setSystemSettings({ ...systemSettings, enable_email_reminders: !!checked })}
+                  />
+                  <Label htmlFor="globalEmail">Enable Email Reminders Globally</Label>
+                </label>
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    id="globalSMS"
+                    checked={systemSettings.enable_sms_reminders}
+                    onCheckedChange={(checked) => setSystemSettings({ ...systemSettings, enable_sms_reminders: !!checked })}
+                  />
+                  <Label htmlFor="globalSMS">Enable SMS Reminders Globally</Label>
+                </label>
+              </div>
 
-          <div className="flex items-center space-x-2 border-b pb-4">
-            <Checkbox
-              id="globalSMS"
-              checked={systemSettings.enable_sms_reminders}
-              onCheckedChange={(checked) => setSystemSettings({ ...systemSettings, enable_sms_reminders: !!checked })}
-            />
-            <Label htmlFor="globalSMS">Enable SMS Reminders Globally</Label>
-          </div>
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={!!systemSettings.lunch_reminder_time}
+                    onCheckedChange={(checked) => setSystemSettings({ ...systemSettings, lunch_reminder_time: checked ? (systemSettings.lunch_reminder_time || '15:00') : '' })}
+                  />
+                  <Label>Lunch Reminder Time</Label>
+                </label>
+                <Input
+                  type="time"
+                  value={systemSettings.lunch_reminder_time}
+                  onChange={(e) => setSystemSettings({ ...systemSettings, lunch_reminder_time: e.target.value })}
+                  className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
+                />
+                <p className="text-xs text-slate-400">If they haven't logged lunch out. Based on employee timezone.</p>
+              </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>Lunch Reminder Time</Label>
-              <Input
-                type="time"
-                value={systemSettings.lunch_reminder_time}
-                onChange={(e) => setSystemSettings({ ...systemSettings, lunch_reminder_time: e.target.value })}
-              />
-              <p className="text-xs text-slate-400 mt-1">If they haven't logged lunch out. Based on employee timezone.</p>
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={!!systemSettings.clockout_reminder_time}
+                    onCheckedChange={(checked) => setSystemSettings({ ...systemSettings, clockout_reminder_time: checked ? (systemSettings.clockout_reminder_time || '18:00') : '' })}
+                  />
+                  <Label>Clock Out Reminder</Label>
+                </label>
+                <Input
+                  type="time"
+                  value={systemSettings.clockout_reminder_time}
+                  onChange={(e) => setSystemSettings({ ...systemSettings, clockout_reminder_time: e.target.value })}
+                  className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
+                />
+                <p className="text-xs text-slate-400">If still clocked in. Based on employee timezone.</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={!!systemSettings.longshift_threshold_hours}
+                    onCheckedChange={(checked) => setSystemSettings({ ...systemSettings, longshift_threshold_hours: checked ? (systemSettings.longshift_threshold_hours || 10) : 0 })}
+                  />
+                  <Label>Long Shift Threshold (Hours)</Label>
+                </label>
+                <Input
+                  type="number"
+                  min="1"
+                  max="24"
+                  value={systemSettings.longshift_threshold_hours}
+                  onChange={(e) => setSystemSettings({ ...systemSettings, longshift_threshold_hours: parseFloat(e.target.value) || 10 })}
+                  className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
+                />
+                <p className="text-xs text-slate-400">Warn if continuously clocked in over this amount of hours.</p>
+              </div>
             </div>
-            <div>
-              <Label>Clock Out Reminder</Label>
-              <Input
-                type="time"
-                value={systemSettings.clockout_reminder_time}
-                onChange={(e) => setSystemSettings({ ...systemSettings, clockout_reminder_time: e.target.value })}
-              />
-              <p className="text-xs text-slate-400 mt-1">If still clocked in. Based on employee timezone.</p>
-            </div>
-          </div>
-
-          <div>
-            <Label>Long Shift Threshold (Hours)</Label>
-            <Input
-              type="number"
-              min="1"
-              max="24"
-              value={systemSettings.longshift_threshold_hours}
-              onChange={(e) => setSystemSettings({ ...systemSettings, longshift_threshold_hours: parseFloat(e.target.value) || 10 })}
-            />
-            <p className="text-xs text-slate-400 mt-1">Warn if continuously clocked in over this amount of hours.</p>
-          </div>
-        </CardContent>
+          </CardContent>
+        )}
       </Card>
 
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl">
