@@ -218,12 +218,13 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     return (
       <button
         type="button"
+        title="Click to change user status"
         onClick={() => setUserToToggleStatus({ user, targetStatus: active ? 'Inactive' : 'Active' })}
         aria-label={active ? `Deactivate ${user.name}` : `Activate ${user.name}`}
-        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors cursor-pointer hover:opacity-80 ${
+        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all duration-150 hover:shadow-xs hover:scale-[1.02] active:scale-95 ${
           active
-            ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-            : 'bg-slate-100 border-slate-200 text-slate-600'
+            ? 'bg-emerald-50 border-emerald-300 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400'
+            : 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200 hover:border-slate-400'
         }`}
       >
         <span className={`size-2 rounded-full ${active ? 'bg-emerald-500' : 'bg-slate-400'}`} />
@@ -233,30 +234,28 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   };
 
   const renderEditButton = (user: User) => (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="h-8 w-8 p-0 hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+    <button
+      type="button"
+      aria-label={`Edit ${user.name}`}
       onClick={() => {
         setEditingUser(user);
         setEditUserOpen(true);
       }}
-      aria-label={`Edit ${user.name}`}
+      className="inline-flex items-center justify-center p-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-600 cursor-pointer transition-all duration-150 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-600 hover:shadow-xs active:scale-95"
     >
       <Edit className="size-4" />
-    </Button>
+    </button>
   );
 
   const renderDeleteButton = (user: User) => (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
-      onClick={() => setUserToDelete(user)}
+    <button
+      type="button"
       aria-label={`Delete ${user.name}`}
+      onClick={() => setUserToDelete(user)}
+      className="inline-flex items-center justify-center p-2 rounded-lg border border-red-200 bg-red-50/60 text-red-600 cursor-pointer transition-all duration-150 hover:bg-red-100 hover:border-red-300 hover:text-red-700 hover:shadow-xs active:scale-95"
     >
       <Trash2 className="size-4" />
-    </Button>
+    </button>
   );
 
   const loadCorrectionEntry = async () => {
@@ -614,14 +613,20 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                     <TableCell>
                       <Badge variant="outline" className="capitalize">{user.role}</Badge>
                     </TableCell>
-                    <TableCell>
-                      {renderStatusPill(user)}
+                    <TableCell className="text-center">
+                      <div className="flex items-center justify-center">
+                        {renderStatusPill(user)}
+                      </div>
                     </TableCell>
                     <TableCell className="text-center">
-                      {renderEditButton(user)}
+                      <div className="flex items-center justify-center">
+                        {renderEditButton(user)}
+                      </div>
                     </TableCell>
                     <TableCell className="text-center">
-                      {renderDeleteButton(user)}
+                      <div className="flex items-center justify-center">
+                        {renderDeleteButton(user)}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
