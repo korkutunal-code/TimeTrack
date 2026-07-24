@@ -504,6 +504,10 @@ class DatabaseService {
         name: String(data.name || ''),
         role: String(data.role || 'employee').toLowerCase() as User['role'],
         active: data.active !== false,
+        work_email: data.work_email,
+        phone_number: data.phone_number,
+        sms_opt_in: !!data.sms_opt_in,
+        timezone: data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
         workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
       };
     });
@@ -523,6 +527,10 @@ class DatabaseService {
       name: String(data.name || ''),
       role: String(data.role || 'employee').toLowerCase() as User['role'],
       active: data.active !== false,
+      work_email: data.work_email,
+      phone_number: data.phone_number,
+      sms_opt_in: !!data.sms_opt_in,
+      timezone: data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
       workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
     };
   }
@@ -545,6 +553,10 @@ class DatabaseService {
       name: String(data.name || ''),
       role: String(data.role || 'employee').toLowerCase() as User['role'],
       active: data.active !== false,
+      work_email: data.work_email,
+      phone_number: data.phone_number,
+      sms_opt_in: !!data.sms_opt_in,
+      timezone: data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
       workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
     };
   }
