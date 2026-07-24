@@ -1,6 +1,7 @@
 import { collection, doc, getDoc, getDocs, orderBy, query, Timestamp, updateDoc, where, limit, startAfter, deleteDoc, addDoc, setDoc } from 'firebase/firestore';
 import { db } from './firebase';
-import type { User } from './auth';import { stripUndefined, buildConsistentClosePatch, closeActiveSegment } from './segmentOps';
+import type { User } from './auth';
+import { stripUndefined, buildConsistentClosePatch, closeActiveSegment } from './segmentOps';
 import { deriveSegmentWorkMinutes } from '../../utils/timeCalculations';
 import { auditLogService } from '../../services/auditLogService';
 
