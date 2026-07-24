@@ -11,6 +11,7 @@ import { PayrollReports } from './components/admin/PayrollReports';
 import { AuditViewer } from './components/admin/AuditViewer';
 import { PatternMetrics } from './components/admin/PatternMetrics';
 import { CorrectionRequests } from './components/admin/CorrectionRequests';
+import { SystemSettingsView } from './components/admin/SystemSettingsView';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Badge } from './components/ui/badge';
 import { UserAvatar } from './components/ui/user-avatar';
@@ -27,12 +28,12 @@ import {
   DropdownMenuTrigger,
 } from './components/ui/dropdown-menu';
 import { Toaster } from './components/ui/sonner';
-import { LogOut, Clock, Users, Settings, FileText, Search, TrendingUp, FileWarning } from 'lucide-react';
+import { LogOut, Clock, Users, Settings, FileText, Search, TrendingUp, FileWarning, Sliders } from 'lucide-react';
 import { QABar } from './components/QABar';
 import { ReportProblemButton } from './components/ReportProblemButton';
 
 type EmployeeView = 'today' | 'history';
-type AdminView = 'panel' | 'payroll' | 'audit' | 'metrics' | 'corrections';
+type AdminView = 'panel' | 'payroll' | 'audit' | 'metrics' | 'corrections' | 'settings';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -289,7 +290,7 @@ export default function App() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       <Tabs value={adminView} onValueChange={(v) => setAdminView(v as AdminView)} className="space-y-4">
         <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-          <TabsList className="grid grid-cols-3 sm:grid-cols-6 w-full gap-1">
+          <TabsList className="grid grid-cols-3 sm:grid-cols-7 w-full gap-1">
             <TabsTrigger value="panel" className="text-xs sm:text-sm">
               <Settings className="size-4 mr-0 sm:mr-2" />
               <span className="hidden sm:inline">User Base</span>
@@ -317,6 +318,11 @@ export default function App() {
               <FileWarning className="size-4 mr-0 sm:mr-2" />
               <span className="hidden sm:inline">Corrections</span>
               <span className="sm:hidden">Fix</span>
+            </TabsTrigger>
+            <TabsTrigger value="settings" className="text-xs sm:text-sm">
+              <Sliders className="size-4 mr-0 sm:mr-2" />
+              <span className="hidden sm:inline">Settings</span>
+              <span className="sm:hidden">Set</span>
             </TabsTrigger>
           </TabsList>
         </div>
@@ -347,6 +353,10 @@ export default function App() {
 
         <TabsContent value="corrections">
           <CorrectionRequests currentUser={currentUser} />
+        </TabsContent>
+
+        <TabsContent value="settings">
+          <SystemSettingsView currentUser={currentUser} />
         </TabsContent>
       </Tabs>
     </div>
