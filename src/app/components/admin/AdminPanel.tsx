@@ -670,7 +670,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       </Card>
 
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl overflow-hidden">
-        <CardHeader className="bg-white/40 border-b border-indigo-50 pb-4">
+        <CardHeader className="bg-white/40 pb-2">
           <CardTitle className="text-slate-800 font-bold flex items-center justify-between">
             <span>Manage Users</span>
             <SectionHelp 
@@ -679,7 +679,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
               sections={[
                 { title: "Adding Users", content: "Create a new profile or bulk import via CSV template." },
                 { title: "Status Toggle", content: "Deactivate users instead of deleting them to preserve historical aggregates." },
-                { title: "Actions Menu", content: "Use the three dots menu on the right edge to access Edit or Deactivation." }
+                { title: "Column Filters", content: "Click the filter icon next to the Work Model, Role, or Status column headers to filter users via multi-select checkboxes." }
               ]}
             />
           </CardTitle>
