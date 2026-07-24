@@ -637,6 +637,12 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     return matchesSearch && matchesWorkModel && matchesRole && matchesStatus;
   });
 
+  const resetFilters = () => {
+    setSelectedWorkModels(WORK_MODEL_OPTIONS.map(o => o.value));
+    setSelectedRoles(ROLE_OPTIONS.map(o => o.value));
+    setSelectedStatuses(STATUS_OPTIONS.map(o => o.value));
+  };
+
   return (
     <div className="space-y-6">
       {/* Admin Quick Start Guide */}
@@ -713,7 +719,14 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
           </div>
           {/* Mobile Card View */}
           <div className="md:hidden space-y-3">
-            {filteredUsers.map(user => (
+            {filteredUsers.length === 0 ? (
+              <Card className="border border-white/80 shadow-md bg-white/60 backdrop-blur-md rounded-2xl">
+                <CardContent className="py-10 flex flex-col items-center gap-3">
+                  <p className="text-sm text-slate-500">No users match your filter criteria.</p>
+                  <Button variant="outline" size="sm" onClick={resetFilters}>Reset Filters</Button>
+                </CardContent>
+              </Card>
+            ) : filteredUsers.map(user => (
               <Card key={user.uid} className="border border-white/80 shadow-md bg-white/60 backdrop-blur-md rounded-2xl hover:shadow-lg transition-all">
                 <CardContent className="pt-4 pb-4">
                   <div className="flex items-start justify-between mb-3">
@@ -740,7 +753,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
           </div>
 
           {/* Desktop Table View */}
-          <div className="hidden md:block border border-indigo-100 rounded-xl overflow-hidden bg-white/50 backdrop-blur-sm shadow-inner">
+          <div className="hidden md:block border border-indigo-100 rounded-xl min-h-[240px] bg-white/50 backdrop-blur-sm shadow-inner">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -759,7 +772,16 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredUsers.map(user => (
+                {filteredUsers.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-10">
+                      <div className="flex flex-col items-center gap-3">
+                        <p className="text-sm text-slate-500">No users match your filter criteria.</p>
+                        <Button variant="outline" size="sm" onClick={resetFilters}>Reset Filters</Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : filteredUsers.map(user => (
                   <TableRow key={user.uid} className="hover:bg-muted/50">
                     <TableCell>
                       <div className="flex items-center gap-3">
