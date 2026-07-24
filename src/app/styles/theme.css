@@ -141,6 +141,8 @@
   html {
     font-size: var(--font-size);
     font-family: var(--font-sans);
+    overflow-y: scroll;
+    scrollbar-gutter: stable;
   }
 
   h1,
