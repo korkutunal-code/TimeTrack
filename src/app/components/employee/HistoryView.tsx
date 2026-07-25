@@ -218,6 +218,41 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
     };
   };
 
+  // Compute the parent summary row's lunch break display across all segments.
+  // A "lunch break" is a segment with BOTH lunchOutManual and lunchInManual
+  // (a completed break). Segments with skipLunch or a missing half don't count.
+  // 3-way display:
+  //   - 0 breaks → show '-' (caller renders empty → '-' via formatTime)
+  //   - 1 break  → show that break's exact lunchOut / lunchIn
+  //   - 2+ breaks → show "Multiple" to signal more than one break period
+  const getDayLunchSummary = (entry: TimeEntry): {
+    lunchOut?: string;
+    lunchIn?: string;
+    isMultiple: boolean;
+  } => {
+    const segs = entry.segments;
+    if (!segs || segs.length === 0) {
+      const hasBreak = !!entry.lunchOutManual && !!entry.lunchInManual;
+      return {
+        lunchOut: hasBreak ? entry.lunchOutManual : undefined,
+        lunchIn: hasBreak ? entry.lunchInManual : undefined,
+        isMultiple: false,
+      };
+    }
+    // Collect completed lunch breaks, sorted by lunchOutManual (chronological).
+    const breaks = segs
+      .filter(s => !s.skipLunch && !!s.lunchOutManual && !!s.lunchInManual)
+      .sort((a, b) => (a.lunchOutManual || '').localeCompare(b.lunchOutManual || ''));
+
+    if (breaks.length === 0) {
+      return { isMultiple: false };
+    }
+    if (breaks.length === 1) {
+      return { lunchOut: breaks[0].lunchOutManual, lunchIn: breaks[0].lunchInManual, isMultiple: false };
+    }
+    return { isMultiple: true };
+  };
+
   // Calculate stats from currently-loaded entries
   const totalHours = entries.reduce((acc, e) => acc + (e.totalHours || 0), 0);
   const daysWorked = entries.filter(e => e.complete).length;
@@ -526,6 +561,7 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
           <div className="md:hidden space-y-3">
             {paginatedEntries.map((entry) => {
               const boundaries = getDayBoundaries(entry);
+              const lunch = getDayLunchSummary(entry);
               const hasWarning = boundaries.isOpen || !entry.clockOutManual;
               const hasFlags = entry.flags && entry.flags.length > 0;
 
@@ -563,7 +599,15 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
                       </div>
                       <div className="bg-muted/50 p-2.5 rounded border">
                         <p className="text-xs text-muted-foreground mb-1">Lunch</p>
-                        <p className="text-sm font-bold">{formatLunchDuration(entry)}</p>
+                        <p className="text-sm font-bold">
+                          {lunch.isMultiple ? (
+                            'Multiple breaks'
+                          ) : lunch.lunchOut && lunch.lunchIn ? (
+                            formatLunchDuration({ ...entry, lunchOutManual: lunch.lunchOut, lunchInManual: lunch.lunchIn } as TimeEntry)
+                          ) : (
+                            '-'
+                          )}
+                        </p>
                       </div>
                       <div className="bg-muted/50 p-2.5 rounded border">
                         <p className="text-xs text-muted-foreground mb-1">Status</p>
@@ -600,6 +644,7 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
                 <TableBody>
                   {paginatedEntries.map((entry) => {
                     const boundaries = getDayBoundaries(entry);
+                    const lunch = getDayLunchSummary(entry);
                     const hasWarning = boundaries.isOpen || !entry.clockOutManual;
                     const hasFlags = entry.flags && entry.flags.length > 0;
                     const segs = entry.segments || [];
@@ -617,10 +662,22 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
                         </TableCell>
                         <TableCell className="tabular-nums">{formatTime(boundaries.clockIn)}</TableCell>
                         <TableCell className="tabular-nums">
-                          {entry.skipLunch ? <span className="text-muted-foreground italic">skipped</span> : formatTime(entry.lunchOutManual)}
+                          {lunch.isMultiple ? (
+                            <span className="text-muted-foreground italic">Multiple</span>
+                          ) : lunch.lunchOut ? (
+                            formatTime(lunch.lunchOut)
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
                         </TableCell>
                         <TableCell className="tabular-nums">
-                          {entry.skipLunch ? <span className="text-muted-foreground italic">skipped</span> : formatTime(entry.lunchInManual)}
+                          {lunch.isMultiple ? (
+                            <span className="text-muted-foreground italic">Multiple</span>
+                          ) : lunch.lunchIn ? (
+                            formatTime(lunch.lunchIn)
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
                         </TableCell>
                         <TableCell className="tabular-nums">
                           {hasWarning ? (
