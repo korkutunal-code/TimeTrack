@@ -457,29 +457,6 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                 </CardContent>
               </Card>
             ))}
-
-            {/* Totals Card */}
-            <Card className="border-2 border-blue-600 bg-blue-50">
-              <CardContent className="p-4">
-                <div className="mb-2">
-                  <h3 className="font-bold text-blue-900">TOTALS</h3>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="bg-white p-2 rounded border border-blue-200">
-                    <p className="text-xs text-slate-600 mb-0.5">Regular</p>
-                    <p className="text-lg font-bold text-slate-900">{totalRegular.toFixed(1)}</p>
-                  </div>
-                  <div className="bg-white p-2 rounded border border-blue-200">
-                    <p className="text-xs text-orange-700 mb-0.5">OT 1.5x</p>
-                    <p className="text-lg font-bold text-orange-700">{totalOvertime.toFixed(1)}</p>
-                  </div>
-                  <div className="bg-white p-2 rounded border border-blue-200">
-                    <p className="text-xs text-red-700 mb-0.5">DT 2x</p>
-                    <p className="text-lg font-bold text-red-700">{totalDouble.toFixed(1)}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
           </div>
 
           {/* Info Card */}
