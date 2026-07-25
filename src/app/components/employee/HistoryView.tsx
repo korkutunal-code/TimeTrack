@@ -191,6 +191,33 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
   // Uses shared HH:MM formatter (e.g. 2.63 -> "2:38")
   const formatHoursMinutes = (hours: number) => formatHoursHMM(hours);
 
+  // Compute the day's CLOCK IN / CLOCK OUT boundaries from the segments[].
+  // For multi-shift days the parent summary row must show the EARLIEST clock-in
+  // and the LATEST clock-out across all shifts, not the entry-level fields
+  // (which may hold the wrong shift's value). Segments are sorted ascending by
+  // clockInManual (zero-padded "HH:MM" compares chronologically). If the
+  // latest segment is still open (no clockOut), isOpen is true so the caller
+  // shows the open-clock-out indicator.
+  const getDayBoundaries = (entry: TimeEntry): { clockIn?: string; clockOut?: string; isOpen: boolean } => {
+    const segs = entry.segments;
+    if (!segs || segs.length === 0) {
+      return { clockIn: entry.clockInManual, clockOut: entry.clockOutManual, isOpen: !entry.clockOutManual };
+    }
+    // Sort chronologically by clockIn (string compare works on "HH:MM").
+    const sorted = [...segs].sort((a, b) => (a.clockInManual || '').localeCompare(b.clockInManual || ''));
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const latestClockOut = sorted.reduce((max, s) => {
+      if (s.clockOutManual && (!max || s.clockOutManual > max)) return s.clockOutManual;
+      return max;
+    }, '' as string);
+    return {
+      clockIn: first?.clockInManual || entry.clockInManual,
+      clockOut: latestClockOut || undefined,
+      isOpen: !last?.clockOutManual,
+    };
+  };
+
   // Calculate stats from currently-loaded entries
   const totalHours = entries.reduce((acc, e) => acc + (e.totalHours || 0), 0);
   const daysWorked = entries.filter(e => e.complete).length;
@@ -498,7 +525,8 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
           {/* Mobile Card View */}
           <div className="md:hidden space-y-3">
             {paginatedEntries.map((entry) => {
-              const hasWarning = !entry.clockOutManual;
+              const boundaries = getDayBoundaries(entry);
+              const hasWarning = boundaries.isOpen || !entry.clockOutManual;
               const hasFlags = entry.flags && entry.flags.length > 0;
 
               return (
@@ -527,11 +555,11 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
                     <div className="grid grid-cols-2 gap-2 mb-2">
                       <div className="bg-muted/50 p-2.5 rounded border">
                         <p className="text-xs text-muted-foreground mb-1">Clock In</p>
-                        <p className="text-sm font-bold">{formatTime(entry.clockInManual)}</p>
+                        <p className="text-sm font-bold">{formatTime(boundaries.clockIn)}</p>
                       </div>
                       <div className="bg-muted/50 p-2.5 rounded border">
                         <p className="text-xs text-muted-foreground mb-1">Clock Out</p>
-                        <p className="text-sm font-bold">{formatTime(entry.clockOutManual) || '-'}</p>
+                        <p className="text-sm font-bold">{hasWarning ? '—' : (formatTime(boundaries.clockOut) || '-')}</p>
                       </div>
                       <div className="bg-muted/50 p-2.5 rounded border">
                         <p className="text-xs text-muted-foreground mb-1">Lunch</p>
@@ -571,7 +599,8 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
                 </TableHeader>
                 <TableBody>
                   {paginatedEntries.map((entry) => {
-                    const hasWarning = !entry.clockOutManual;
+                    const boundaries = getDayBoundaries(entry);
+                    const hasWarning = boundaries.isOpen || !entry.clockOutManual;
                     const hasFlags = entry.flags && entry.flags.length > 0;
                     const segs = entry.segments || [];
                     const isSplit = segs.length > 1;
@@ -586,7 +615,7 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
                             </Badge>
                           )}
                         </TableCell>
-                        <TableCell className="tabular-nums">{formatTime(entry.clockInManual)}</TableCell>
+                        <TableCell className="tabular-nums">{formatTime(boundaries.clockIn)}</TableCell>
                         <TableCell className="tabular-nums">
                           {entry.skipLunch ? <span className="text-muted-foreground italic">skipped</span> : formatTime(entry.lunchOutManual)}
                         </TableCell>
@@ -600,7 +629,7 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
                               <span className="font-medium">Missing</span>
                             </div>
                           ) : (
-                            formatTime(entry.clockOutManual)
+                            formatTime(boundaries.clockOut)
                           )}
                         </TableCell>
                         <TableCell>
