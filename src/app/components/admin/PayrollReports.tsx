@@ -10,7 +10,7 @@ import { Label } from '../ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
-import { FileText, Printer, Download, DollarSign, Clock, TrendingUp } from 'lucide-react';
+import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, ChevronDown, ChevronRight } from 'lucide-react';
 import { generateCSV, downloadCSV } from '../../../services/exportService';
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -39,6 +39,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
   const [report, setReport] = useState<PayrollSummary[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
+  const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
   const [payrollSettings, setPayrollSettings] = useState({
     payroll_cycle_type: 'biweekly',
     weekly_start_day: 1,
@@ -498,25 +499,73 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                           </tr>
                         </thead>
                         <tbody>
-                          {summary.dailyEntries.map((day: DocumentData) => {
+                          {summary.dailyEntries.flatMap((day: DocumentData) => {
                             const b = getDayBoundaries(day);
                             const lunch = getDayLunch(day);
-                            return (
-                            <tr key={day.workDate} className="border-b border-slate-100 hover:bg-slate-50/50">
-                              <td className="p-1.5 font-medium">{day.workDate.split('-').slice(1).join('/')}</td>
-                              <td className="p-1.5">{fmtTime(b.clockIn)}</td>
-                              <td className="p-1.5">
-                                {lunch.isMultiple ? <span className="italic text-slate-400">Multiple</span> : fmtTime(lunch.lunchOut)}
-                              </td>
-                              <td className="p-1.5">
-                                {lunch.isMultiple ? <span className="italic text-slate-400">Multiple</span> : fmtTime(lunch.lunchIn)}
-                              </td>
-                              <td className="p-1.5">{fmtTime(b.clockOut)}</td>
-                              <td className="p-1.5 text-right">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
-                              <td className="p-1.5 text-right">{(((day.otMinutes || 0) + (day.doubleTimeMinutes || 0)) / 60).toFixed(1)}</td>
-                              <td className="p-1.5 text-right font-semibold">{((day.totalWorkMinutes || 0) / 60).toFixed(1)}</td>
-                            </tr>
-                            );
+                            const segs = Array.isArray(day.segments) ? day.segments : [];
+                            const isMultiShift = segs.length > 1;
+                            const dateKey = `${summary.userId}|${day.workDate}`;
+                            const isDateExpanded = expandedDates.has(dateKey);
+                            const toggleDate = () => {
+                              setExpandedDates(prev => {
+                                const next = new Set(prev);
+                                if (next.has(dateKey)) next.delete(dateKey);
+                                else next.add(dateKey);
+                                return next;
+                              });
+                            };
+
+                            const rows: JSX.Element[] = [
+                              <tr key={day.workDate} className="border-b border-slate-100 hover:bg-slate-50/50">
+                                <td className="p-1.5 font-medium">
+                                  <span className={`inline-flex items-center gap-1 ${isMultiShift ? 'cursor-pointer' : ''}`} onClick={isMultiShift ? toggleDate : undefined}>
+                                    {isMultiShift && (
+                                      isDateExpanded
+                                        ? <ChevronDown className="size-3.5 text-slate-500" />
+                                        : <ChevronRight className="size-3.5 text-slate-500" />
+                                    )}
+                                    {day.workDate.split('-').slice(1).join('/')}
+                                    {isMultiShift && (
+                                      <span className="ml-1 text-[10px] font-normal text-slate-400">({segs.length} shifts)</span>
+                                    )}
+                                  </span>
+                                </td>
+                                <td className="p-1.5">{fmtTime(b.clockIn)}</td>
+                                <td className="p-1.5">
+                                  {lunch.isMultiple ? <span className="italic text-slate-400">Multiple</span> : fmtTime(lunch.lunchOut)}
+                                </td>
+                                <td className="p-1.5">
+                                  {lunch.isMultiple ? <span className="italic text-slate-400">Multiple</span> : fmtTime(lunch.lunchIn)}
+                                </td>
+                                <td className="p-1.5">{fmtTime(b.clockOut)}</td>
+                                <td className="p-1.5 text-right">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
+                                <td className="p-1.5 text-right">{(((day.otMinutes || 0) + (day.doubleTimeMinutes || 0)) / 60).toFixed(1)}</td>
+                                <td className="p-1.5 text-right font-semibold">{((day.totalWorkMinutes || 0) / 60).toFixed(1)}</td>
+                              </tr>
+                            ];
+
+                            if (isMultiShift && isDateExpanded) {
+                              segs.forEach((seg: DocumentData, i: number) => {
+                                rows.push(
+                                  <tr key={`${day.workDate}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
+                                    <td className="p-1.5 pl-6 text-purple-700 font-medium">↳ Shift {i + 1}</td>
+                                    <td className="p-1.5">{fmtTime(seg.clockInManual)}</td>
+                                    <td className="p-1.5">
+                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtTime(seg.lunchOutManual)}
+                                    </td>
+                                    <td className="p-1.5">
+                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtTime(seg.lunchInManual)}
+                                    </td>
+                                    <td className="p-1.5">{fmtTime(seg.clockOutManual)}</td>
+                                    <td className="p-1.5 text-right text-slate-400">--</td>
+                                    <td className="p-1.5 text-right text-slate-400">--</td>
+                                    <td className="p-1.5 text-right text-purple-700 font-semibold">{((seg.workMinutes || 0) / 60).toFixed(1)}</td>
+                                  </tr>
+                                );
+                              });
+                            }
+
+                            return rows;
                           })}
                         </tbody>
                       </table>
