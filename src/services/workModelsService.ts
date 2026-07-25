@@ -88,7 +88,11 @@ export async function createWorkModel(input: WorkModelInput): Promise<WorkModel>
 }
 
 export async function updateWorkModel(id: string, input: WorkModelInput): Promise<WorkModel> {
-  await updateDoc(doc(db, 'workModels', id), input);
+  // Re-assert status: 'active' on write so the persisted doc matches the
+  // returned object. This also gives "edit restores an active model" semantics
+  // for any direct API caller (the UI only edits already-active models since
+  // voided ones are excluded from the list).
+  await updateDoc(doc(db, 'workModels', id), { ...input, status: 'active' });
   return { id, ...input, status: 'active' };
 }
 
