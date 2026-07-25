@@ -391,8 +391,8 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
           <div className="space-y-2">
             {report.map(summary => (
               <Card key={summary.userId} className="border-2 border-slate-200">
-                <CardContent className="p-2">
-                  <div className="flex flex-row items-center justify-between gap-4 py-2.5 px-2">
+                <CardContent className="py-1 px-2 [&:last-child]:pb-1">
+                  <div className="flex flex-row items-center justify-between gap-4 py-1 px-2">
                     {/* Left — employee info */}
                     <div className="flex flex-col shrink-0 min-w-[150px]">
                       <h3 className="text-sm font-bold text-slate-900">{summary.userName}</h3>
