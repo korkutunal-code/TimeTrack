@@ -13,7 +13,11 @@ import { cn } from "./utils";
 function Select({
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Root>) {
-  return <SelectPrimitive.Root data-slot="select" {...props} />;
+  // modal={false} prevents Radix from locking body scroll / injecting
+  // padding-right when a select opens, which otherwise shifts centered page
+  // content. Selects here are non-modal selections (employee pickers, etc.),
+  // so disabling the modal scroll-lock is safe and removes the jitter.
+  return <SelectPrimitive.Root data-slot="select" modal={false} {...props} />;
 }
 
 function SelectGroup({
