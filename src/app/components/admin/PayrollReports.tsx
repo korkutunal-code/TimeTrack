@@ -233,6 +233,61 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
   const totalDouble = report?.reduce((acc, r) => acc + r.doubleTimeHours, 0) || 0;
   const grandTotal = report?.reduce((acc, r) => acc + r.totalHours, 0) || 0;
 
+  // Multi-shift aggregation for the Daily Breakdown table. A day's `segments[]`
+  // (if present) holds the individual shifts; the parent row must reflect the
+  // day's earliest clock-in, latest clock-out, and aggregated lunch breaks —
+  // not the entry-level fields, which may hold the wrong shift's value.
+  const getDayBoundaries = (day: DocumentData): { clockIn?: string; clockOut?: string } => {
+    const segs = day.segments;
+    if (!Array.isArray(segs) || segs.length === 0) {
+      return { clockIn: day.clockInManual, clockOut: day.clockOutManual };
+    }
+    const sorted = [...segs].sort((a: DocumentData, b: DocumentData) =>
+      String(a.clockInManual || '').localeCompare(String(b.clockInManual || ''))
+    );
+    const latestClockOut = sorted.reduce((max: string, s: DocumentData) => {
+      const out = s.clockOutManual;
+      return out && (!max || out > max) ? out : max;
+    }, '');
+    return {
+      clockIn: sorted[0]?.clockInManual || day.clockInManual,
+      clockOut: latestClockOut || day.clockOutManual,
+    };
+  };
+
+  // 3-way lunch summary: 0 breaks → none; 1 break → its times; 2+ → multiple.
+  const getDayLunch = (day: DocumentData): { lunchOut?: string; lunchIn?: string; isMultiple: boolean } => {
+    const segs = day.segments;
+    if (!Array.isArray(segs) || segs.length === 0) {
+      const hasBreak = !!day.lunchOutManual && !!day.lunchInManual;
+      return {
+        lunchOut: hasBreak ? day.lunchOutManual : undefined,
+        lunchIn: hasBreak ? day.lunchInManual : undefined,
+        isMultiple: false,
+      };
+    }
+    const breaks = segs
+      .filter((s: DocumentData) => !s.skipLunch && !!s.lunchOutManual && !!s.lunchInManual)
+      .sort((a: DocumentData, b: DocumentData) =>
+        String(a.lunchOutManual || '').localeCompare(String(b.lunchOutManual || ''))
+      );
+    if (breaks.length === 0) return { isMultiple: false };
+    if (breaks.length === 1) {
+      return { lunchOut: breaks[0].lunchOutManual, lunchIn: breaks[0].lunchInManual, isMultiple: false };
+    }
+    return { isMultiple: true };
+  };
+
+  const fmtTime = (t: string | undefined): string => {
+    if (!t) return '--';
+    const [h, m] = t.split(':');
+    const hour = parseInt(h, 10);
+    if (Number.isNaN(hour)) return '--';
+    const ampm = hour >= 12 ? 'PM' : 'AM';
+    const dh = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+    return `${dh}:${m} ${ampm}`;
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm mb-2">
@@ -443,18 +498,26 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                           </tr>
                         </thead>
                         <tbody>
-                          {summary.dailyEntries.map((day: DocumentData) => (
+                          {summary.dailyEntries.map((day: DocumentData) => {
+                            const b = getDayBoundaries(day);
+                            const lunch = getDayLunch(day);
+                            return (
                             <tr key={day.workDate} className="border-b border-slate-100 hover:bg-slate-50/50">
                               <td className="p-1.5 font-medium">{day.workDate.split('-').slice(1).join('/')}</td>
-                              <td className="p-1.5">{day.clockInManual || '--'}</td>
-                              <td className="p-1.5">{day.lunchOutManual || '--'}</td>
-                              <td className="p-1.5">{day.lunchInManual || '--'}</td>
-                              <td className="p-1.5">{day.clockOutManual || '--'}</td>
+                              <td className="p-1.5">{fmtTime(b.clockIn)}</td>
+                              <td className="p-1.5">
+                                {lunch.isMultiple ? <span className="italic text-slate-400">Multiple</span> : fmtTime(lunch.lunchOut)}
+                              </td>
+                              <td className="p-1.5">
+                                {lunch.isMultiple ? <span className="italic text-slate-400">Multiple</span> : fmtTime(lunch.lunchIn)}
+                              </td>
+                              <td className="p-1.5">{fmtTime(b.clockOut)}</td>
                               <td className="p-1.5 text-right">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
                               <td className="p-1.5 text-right">{(((day.otMinutes || 0) + (day.doubleTimeMinutes || 0)) / 60).toFixed(1)}</td>
                               <td className="p-1.5 text-right font-semibold">{((day.totalWorkMinutes || 0) / 60).toFixed(1)}</td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
