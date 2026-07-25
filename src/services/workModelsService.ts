@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, addDoc, updateDoc, deleteDoc, query, limit } from 'firebase/firestore';
+import { collection, doc, getDocs, addDoc, updateDoc, query, limit, where } from 'firebase/firestore';
 import { db } from '../app/lib/firebase';
 
 export interface WorkModel {
@@ -10,6 +10,7 @@ export interface WorkModel {
   doubleTimeLimit: number;
   doubleTimeMultiplier: number;
   weeklyOvertimeLimit: number;
+  status?: 'active' | 'voided';
 }
 
 export interface WorkModelInput {
@@ -53,37 +54,48 @@ function mapDoc(id: string, data: any): WorkModel {
     doubleTimeLimit: Number(data.doubleTimeLimit ?? 12),
     doubleTimeMultiplier: Number(data.doubleTimeMultiplier ?? 2.0),
     weeklyOvertimeLimit: Number(data.weeklyOvertimeLimit ?? 40),
+    status: data.status === 'voided' ? 'voided' : 'active',
   };
 }
 
 export async function listWorkModels(): Promise<WorkModel[]> {
-  const snap = await getDocs(query(collection(db, 'workModels'), limit(500)));
+  // Only active models are surfaced to Settings UI / pill resolver / dropdown.
+  // Voided docs remain in the collection for referential integrity (users may
+  // still reference a voided model via workModelId; the UI falls back gracefully).
+  const snap = await getDocs(query(collection(db, 'workModels'), where('status', '!=', 'voided'), limit(500)));
   if (snap.empty) {
     await ensureSeeded();
-    const reSnap = await getDocs(query(collection(db, 'workModels'), limit(500)));
+    const reSnap = await getDocs(query(collection(db, 'workModels'), where('status', '!=', 'voided'), limit(500)));
     return reSnap.docs.map(d => mapDoc(d.id, d.data()));
   }
   return snap.docs.map(d => mapDoc(d.id, d.data()));
 }
 
 export async function ensureSeeded(): Promise<void> {
-  const snap = await getDocs(query(collection(db, 'workModels'), limit(1)));
+  // Only seed if there are no ACTIVE models. A collection of only-voided docs
+  // (everything deleted) should still re-seed the defaults so the app isn't
+  // left with zero usable models.
+  const snap = await getDocs(query(collection(db, 'workModels'), where('status', '!=', 'voided'), limit(1)));
   if (!snap.empty) return;
   for (const model of DEFAULT_MODELS) {
-    await addDoc(collection(db, 'workModels'), model);
+    await addDoc(collection(db, 'workModels'), { ...model, status: 'active' });
   }
 }
 
 export async function createWorkModel(input: WorkModelInput): Promise<WorkModel> {
-  const ref = await addDoc(collection(db, 'workModels'), input);
-  return { id: ref.id, ...input };
+  const ref = await addDoc(collection(db, 'workModels'), { ...input, status: 'active' });
+  return { id: ref.id, ...input, status: 'active' };
 }
 
 export async function updateWorkModel(id: string, input: WorkModelInput): Promise<WorkModel> {
   await updateDoc(doc(db, 'workModels', id), input);
-  return { id, ...input };
+  return { id, ...input, status: 'active' };
 }
 
 export async function deleteWorkModel(id: string): Promise<void> {
-  await deleteDoc(doc(db, 'workModels', id));
+  // Soft delete only — never hard-delete. Sets status to 'voided' so the doc
+  // remains resolvable for any user whose workModelId still points at it,
+  // but is excluded from active model lists. (AGENTS.md soft-delete rule +
+  // referential integrity for users.workModelId.)
+  await updateDoc(doc(db, 'workModels', id), { status: 'voided' });
 }
