@@ -391,38 +391,43 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
           <div className="space-y-2">
             {report.map(summary => (
               <Card key={summary.userId} className="border-2 border-slate-200">
-                <CardContent className="p-4">
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <h3 className="font-semibold text-slate-900">{summary.userName}</h3>
-                      <p className="text-xs text-slate-500">Total: {summary.totalHours.toFixed(2)} hours</p>
+                <CardContent className="p-2">
+                  <div className="flex flex-row items-center justify-between gap-4 py-2.5 px-2">
+                    {/* Left — employee info */}
+                    <div className="flex flex-col shrink-0 min-w-[150px]">
+                      <h3 className="text-sm font-bold text-slate-900">{summary.userName}</h3>
+                      <p className="text-xs text-slate-400">Total: {summary.totalHours.toFixed(2)} hours</p>
                     </div>
+
+                    {/* Center — metric boxes */}
+                    <div className="flex-1 grid grid-cols-3 gap-3 items-center">
+                      <div className="bg-slate-50 py-1.5 px-3 rounded-lg border border-slate-200">
+                        <p className="text-xs text-slate-600 mb-0.5">Regular</p>
+                        <p className="text-lg font-bold text-slate-900">{summary.regularHours.toFixed(1)}</p>
+                      </div>
+                      <div className="bg-orange-50 py-1.5 px-3 rounded-lg border border-orange-200">
+                        <p className="text-xs text-orange-700 mb-0.5">OT 1.5x</p>
+                        <p className="text-lg font-bold text-orange-700">{summary.overtimeHours.toFixed(1)}</p>
+                      </div>
+                      <div className="bg-red-50 py-1.5 px-3 rounded-lg border border-red-200">
+                        <p className="text-xs text-red-700 mb-0.5">DT 2x</p>
+                        <p className="text-lg font-bold text-red-700">{summary.doubleTimeHours.toFixed(1)}</p>
+                      </div>
+                    </div>
+
+                    {/* Right — view details */}
                     <Button
-                      variant="ghost"
+                      variant="link"
                       size="sm"
                       onClick={() => setExpandedUserId(expandedUserId === summary.userId ? null : summary.userId)}
-                      className="h-8 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                      className="shrink-0 self-center text-xs font-semibold text-indigo-600 hover:underline p-0 h-auto"
                     >
                       {expandedUserId === summary.userId ? 'Hide Details' : 'View Details'}
                     </Button>
                   </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="bg-slate-50 p-2 rounded border border-slate-200">
-                      <p className="text-xs text-slate-600 mb-0.5">Regular</p>
-                      <p className="text-lg font-bold text-slate-900">{summary.regularHours.toFixed(1)}</p>
-                    </div>
-                    <div className="bg-orange-50 p-2 rounded border border-orange-200">
-                      <p className="text-xs text-orange-700 mb-0.5">OT 1.5x</p>
-                      <p className="text-lg font-bold text-orange-700">{summary.overtimeHours.toFixed(1)}</p>
-                    </div>
-                    <div className="bg-red-50 p-2 rounded border border-red-200">
-                      <p className="text-xs text-red-700 mb-0.5">DT 2x</p>
-                      <p className="text-lg font-bold text-red-700">{summary.doubleTimeHours.toFixed(1)}</p>
-                    </div>
-                  </div>
 
                   {expandedUserId === summary.userId && summary.dailyEntries && (
-                    <div className="mt-4 pt-3 border-t border-slate-200 overflow-x-auto">
+                    <div className="mt-2 pt-2 border-t border-slate-200 overflow-x-auto px-2">
                       <p className="text-xs font-semibold text-slate-700 mb-2">Daily Breakdown</p>
                       <table className="w-full text-xs text-left text-slate-600">
                         <thead className="bg-slate-50 text-slate-700 font-semibold">
