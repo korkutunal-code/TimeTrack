@@ -1,13 +1,24 @@
 /**
  * California Overtime Calculation Engine
  * 
- * Rules:
+ * Rules (defaults — can be overridden per-user via workModel/workModelOverride):
  * - Daily: 0-8h = Regular, 8-12h = OT (1.5×), >12h = Double Time (2×)
  * - Weekly: >40h regular = OT (don't double-count daily OT)
  * - Biweekly payroll: Sum across two workweeks
+ * 
+ * Rule resolution hierarchy (resolveOvertimeRules):
+ *   1. workModelOverride?.hasCustomRules === true  → use override values
+ *   2. workModel present                            → use work model values
+ *   3. fallback                                      → CA defaults (8/12/1.5/2.0/40)
+ * 
+ * When resolved `noOvertime` is true, all OT/DT buckets are zeroed and every
+ * worked minute is classified as regular (capped only by the weekly regular
+ * max, which itself becomes the resolved weeklyOvertimeLimit).
  */
 
 import { TimeEntry } from '../app/lib/database';
+import type { WorkModelOverride } from '../app/lib/auth';
+import type { WorkModel as WorkModelDef } from '../services/workModelsService';
 
 // Workweek configuration
 export const WORKWEEK_START_DAYS = {
@@ -30,10 +41,84 @@ export const WORKWEEK_START_DAYS = {
 // overtimeCalculations.test.ts that locks the two together.
 export const DEFAULT_WORKWEEK_START_DAY = WORKWEEK_START_DAYS.MONDAY;
 
-// Time thresholds in minutes
-const DAILY_REGULAR_MAX = 480;      // 8 hours
-const DAILY_OT_MAX = 720;           // 12 hours
-const WEEKLY_REGULAR_MAX = 2400;    // 40 hours
+// Default California rule values (in hours for clarity).
+export const DEFAULT_DAILY_REGULAR_HOURS = 8;
+export const DEFAULT_DAILY_OT_HOURS = 12;
+export const DEFAULT_WEEKLY_OT_HOURS = 40;
+export const DEFAULT_OT_MULTIPLIER = 1.5;
+export const DEFAULT_DT_MULTIPLIER = 2.0;
+
+// Resolved overtime rules, in MINUTES for the thresholds and unitless for the
+// multipliers. Produced by resolveOvertimeRules() from workModel / override.
+export interface OvertimeRules {
+    noOvertime: boolean;
+    dailyRegularMax: number;    // minutes (default 480)
+    dailyOtMax: number;         // minutes (default 720)
+    weeklyRegularMax: number;   // minutes (default 2400)
+    otMultiplier: number;       // default 1.5
+    dtMultiplier: number;       // default 2.0
+}
+
+const DEFAULT_RULES: OvertimeRules = {
+    noOvertime: false,
+    dailyRegularMax: DEFAULT_DAILY_REGULAR_HOURS * 60,
+    dailyOtMax: DEFAULT_DAILY_OT_HOURS * 60,
+    weeklyRegularMax: DEFAULT_WEEKLY_OT_HOURS * 60,
+    otMultiplier: DEFAULT_OT_MULTIPLIER,
+    dtMultiplier: DEFAULT_DT_MULTIPLIER,
+};
+
+/**
+ * Resolve the active overtime rules for a user.
+ * Priority: workModelOverride (if hasCustomRules) > workModel > CA defaults.
+ * All thresholds are normalized to minutes and clamped to safe minimums so a
+ * malformed stored value can never produce negative OT buckets.
+ */
+export function resolveOvertimeRules(
+    workModel?: WorkModelDef | null,
+    workModelOverride?: WorkModelOverride | null,
+): OvertimeRules {
+    const base: OvertimeRules = { ...DEFAULT_RULES };
+
+    if (workModel) {
+        base.dailyRegularMax = Math.max(0, Number(workModel.overtimeLimit ?? DEFAULT_DAILY_REGULAR_HOURS)) * 60;
+        base.dailyOtMax = Math.max(0, Number(workModel.doubleTimeLimit ?? DEFAULT_DAILY_OT_HOURS)) * 60;
+        base.weeklyRegularMax = Math.max(0, Number(workModel.weeklyOvertimeLimit ?? DEFAULT_WEEKLY_OT_HOURS)) * 60;
+        base.otMultiplier = Number(workModel.overtimeMultiplier ?? DEFAULT_OT_MULTIPLIER) || DEFAULT_OT_MULTIPLIER;
+        base.dtMultiplier = Number(workModel.doubleTimeMultiplier ?? DEFAULT_DT_MULTIPLIER) || DEFAULT_DT_MULTIPLIER;
+        base.noOvertime = workModel.noOvertime === true;
+    }
+
+    if (workModelOverride && workModelOverride.hasCustomRules === true) {
+        // Override wins per-field; an undefined override field falls back to
+        // the workModel-or-default value already in `base`.
+        if (typeof workModelOverride.overtimeLimit === 'number') {
+            base.dailyRegularMax = Math.max(0, workModelOverride.overtimeLimit) * 60;
+        }
+        if (typeof workModelOverride.doubleTimeLimit === 'number') {
+            base.dailyOtMax = Math.max(0, workModelOverride.doubleTimeLimit) * 60;
+        }
+        if (typeof workModelOverride.weeklyOvertimeLimit === 'number') {
+            base.weeklyRegularMax = Math.max(0, workModelOverride.weeklyOvertimeLimit) * 60;
+        }
+        if (typeof workModelOverride.overtimeMultiplier === 'number') {
+            base.otMultiplier = workModelOverride.overtimeMultiplier || DEFAULT_OT_MULTIPLIER;
+        }
+        if (typeof workModelOverride.doubleTimeMultiplier === 'number') {
+            base.dtMultiplier = workModelOverride.doubleTimeMultiplier || DEFAULT_DT_MULTIPLIER;
+        }
+        if (typeof workModelOverride.noOvertime === 'boolean') {
+            base.noOvertime = workModelOverride.noOvertime;
+        }
+    }
+
+    // Guarantee dailyOtMax >= dailyRegularMax so the OT band is never negative.
+    if (base.dailyOtMax < base.dailyRegularMax) {
+        base.dailyOtMax = base.dailyRegularMax;
+    }
+
+    return base;
+}
 
 /**
  * Calculate workweek start date for a given date
@@ -73,28 +158,42 @@ interface DailyOvertimeBreakdown {
 
 /**
  * Calculate daily overtime breakdown
- * California Rule: 0-8h regular, 8-12h OT, >12h double time
+ * California Rule: 0-8h regular, 8-12h OT, >12h double time (defaults overridable)
  * 
  * @param totalWorkMinutes - Total work minutes for the day
+ * @param workModel - Optional work model (overrides CA defaults)
+ * @param workModelOverride - Optional per-user override (wins over workModel)
  * @returns { regularMinutes, otMinutes, doubleTimeMinutes }
  */
-export function calculateDailyOvertimeBreakdown(totalWorkMinutes: number): DailyOvertimeBreakdown {
+export function calculateDailyOvertimeBreakdown(
+    totalWorkMinutes: number,
+    workModel?: WorkModelDef | null,
+    workModelOverride?: WorkModelOverride | null,
+): DailyOvertimeBreakdown {
+    const rules = resolveOvertimeRules(workModel, workModelOverride);
     let regularMinutes = 0;
     let otMinutes = 0;
     let doubleTimeMinutes = 0;
 
-    if (totalWorkMinutes <= DAILY_REGULAR_MAX) {
-        // All regular time (0-8 hours)
+    if (rules.noOvertime) {
+        // No OT/DT for this rule set: everything is regular (still bounded by
+        // the weekly regular cap applied later in calculateWeeklyOvertimeAdjustments).
+        regularMinutes = Math.max(0, totalWorkMinutes);
+        return { regularMinutes, otMinutes: 0, doubleTimeMinutes: 0 };
+    }
+
+    if (totalWorkMinutes <= rules.dailyRegularMax) {
+        // All regular time (0-8 hours by default)
         regularMinutes = totalWorkMinutes;
-    } else if (totalWorkMinutes <= DAILY_OT_MAX) {
-        // Regular + OT (8-12 hours)
-        regularMinutes = DAILY_REGULAR_MAX;
-        otMinutes = totalWorkMinutes - DAILY_REGULAR_MAX;
+    } else if (totalWorkMinutes <= rules.dailyOtMax) {
+        // Regular + OT (8-12 hours by default)
+        regularMinutes = rules.dailyRegularMax;
+        otMinutes = totalWorkMinutes - rules.dailyRegularMax;
     } else {
-        // Regular + OT + Double Time (>12 hours)
-        regularMinutes = DAILY_REGULAR_MAX;
-        otMinutes = DAILY_OT_MAX - DAILY_REGULAR_MAX; // 240 minutes (4 hours)
-        doubleTimeMinutes = totalWorkMinutes - DAILY_OT_MAX;
+        // Regular + OT + Double Time (>12 hours by default)
+        regularMinutes = rules.dailyRegularMax;
+        otMinutes = rules.dailyOtMax - rules.dailyRegularMax; // 240 minutes (4 hours) by default
+        doubleTimeMinutes = totalWorkMinutes - rules.dailyOtMax;
     }
 
     return {
@@ -119,27 +218,41 @@ type OvertimeEntry = Partial<TimeEntry> & {
  * California Rule: >40h/week regular time becomes OT (don't double-count daily OT)
  * 
  * @param weekEntries - All entries for a workweek
+ * @param workModel - Optional work model (overrides CA defaults)
+ * @param workModelOverride - Optional per-user override (wins over workModel)
  * @returns Updated entries with weekly OT adjustments
  */
-export function calculateWeeklyOvertimeAdjustments(weekEntries: OvertimeEntry[]): OvertimeEntry[] {
+export function calculateWeeklyOvertimeAdjustments(
+    weekEntries: OvertimeEntry[],
+    workModel?: WorkModelDef | null,
+    workModelOverride?: WorkModelOverride | null,
+): OvertimeEntry[] {
+    const rules = resolveOvertimeRules(workModel, workModelOverride);
+
     // First, ensure all entries have daily OT calculated
     const entriesWithDaily = weekEntries.map(entry => {
         if (!entry.regularMinutes && entry.totalWorkMinutes !== undefined) {
             // Calculate daily OT if not already done
-            const dailyBreakdown = calculateDailyOvertimeBreakdown(entry.totalWorkMinutes);
+            const dailyBreakdown = calculateDailyOvertimeBreakdown(entry.totalWorkMinutes, workModel, workModelOverride);
             return { ...entry, ...dailyBreakdown };
         }
         return entry;
     });
+
+    // When noOvertime is set, daily breakdown already zeroed OT/DT; the weekly
+    // >regularMax conversion is also skipped so nothing becomes OT.
+    if (rules.noOvertime) {
+        return entriesWithDaily;
+    }
 
     // Sum up regular minutes for the week
     const totalRegularMinutes = entriesWithDaily.reduce((sum, entry) => {
         return sum + (entry.regularMinutes || 0);
     }, 0);
 
-    // If weekly regular time exceeds 40 hours, convert excess to OT
-    if (totalRegularMinutes > WEEKLY_REGULAR_MAX) {
-        const weeklyExcess = totalRegularMinutes - WEEKLY_REGULAR_MAX;
+    // If weekly regular time exceeds the resolved cap, convert excess to OT
+    if (totalRegularMinutes > rules.weeklyRegularMax) {
+        const weeklyExcess = totalRegularMinutes - rules.weeklyRegularMax;
 
         // Reduce regular minutes and add to OT
         // Strategy: Take from the latest day first (LIFO approach)
@@ -224,9 +337,16 @@ interface BiweeklyTotals {
  * Calculate OT for a date range (biweekly payroll)
  * @param entries - All entries in date range
  * @param workweekStartDay - Day workweek starts
+ * @param workModel - Optional work model (overrides CA defaults)
+ * @param workModelOverride - Optional per-user override (wins over workModel)
  * @returns Totals and per-workweek breakdown
  */
-export function calculateBiweeklyOvertimeTotals(entries: OvertimeEntry[], workweekStartDay: number = DEFAULT_WORKWEEK_START_DAY): BiweeklyTotals {
+export function calculateBiweeklyOvertimeTotals(
+    entries: OvertimeEntry[],
+    workweekStartDay: number = DEFAULT_WORKWEEK_START_DAY,
+    workModel?: WorkModelDef | null,
+    workModelOverride?: WorkModelOverride | null,
+): BiweeklyTotals {
     // Group entries by workweek
     const entriesByWorkweek: Record<string, OvertimeEntry[]> = {};
 
@@ -244,7 +364,7 @@ export function calculateBiweeklyOvertimeTotals(entries: OvertimeEntry[], workwe
 
     Object.keys(entriesByWorkweek).forEach(weekStart => {
         const weekEntries = entriesByWorkweek[weekStart];
-        const adjustedEntries = calculateWeeklyOvertimeAdjustments(weekEntries);
+        const adjustedEntries = calculateWeeklyOvertimeAdjustments(weekEntries, workModel, workModelOverride);
 
         allAdjustedEntries.push(...adjustedEntries);
 

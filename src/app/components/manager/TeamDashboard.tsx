@@ -19,6 +19,7 @@ import { Textarea } from '../ui/textarea';
 import { Checkbox } from '../ui/checkbox';
 import { calculateLunchMinutes, validateTimeEntry } from '../../../utils/timeCalculations';
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
+import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,6 +49,11 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
   const [editingEntry, setEditingEntry] = useState<Partial<TimeEntry> | null>(null);
   const [originalEditingEntry, setOriginalEditingEntry] = useState<TimeEntry | null>(null);
   const [adminNotes, setAdminNotes] = useState('');
+  const [workModels, setWorkModels] = useState<WorkModelDef[]>([]);
+
+  useEffect(() => {
+    listWorkModels().then(setWorkModels).catch(e => console.error('Failed to load work models', e));
+  }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/immutability
@@ -237,7 +243,9 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
         mode: 'replace',
       });
       const totalWorkMinutes = closePatch.totalWorkMinutes;
-      const ot = calculateDailyOvertimeBreakdown(totalWorkMinutes);
+      const editedUser = allUsers.find(u => u.uid === originalEditingEntry.userId);
+      const editedWorkModel = editedUser?.workModelId ? workModels.find(m => m.id === editedUser.workModelId) ?? null : null;
+      const ot = calculateDailyOvertimeBreakdown(totalWorkMinutes, editedWorkModel, editedUser?.workModelOverride ?? null);
       // originalEditingEntry is definitely defined here so we can guarantee we have a date
       const workWeekStartDate = getWorkWeekStartDate(originalEditingEntry.date, DEFAULT_WORKWEEK_START_DAY);
 

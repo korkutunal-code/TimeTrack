@@ -497,7 +497,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         mode: 'replace',
       });
       const totalWorkMinutes = closePatch.totalWorkMinutes;
-      const ot = calculateDailyOvertimeBreakdown(totalWorkMinutes);
+      const correctedUser = allUsers.find(u => u.uid === correctionUserId);
+      const correctedWorkModel = correctedUser?.workModelId ? workModels.find(m => m.id === correctedUser.workModelId) ?? null : null;
+      const ot = calculateDailyOvertimeBreakdown(totalWorkMinutes, correctedWorkModel, correctedUser?.workModelOverride ?? null);
       const workWeekStartDate = getWorkWeekStartDate(correctionEntry.date, DEFAULT_WORKWEEK_START_DAY);
 
       // === IMMUTABLE AUDIT TRAIL (Phase 1 requirement) ===

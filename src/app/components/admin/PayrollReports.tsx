@@ -16,6 +16,7 @@ import { generateCSV, downloadCSV } from '../../../services/exportService';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
 import { calculateBiweeklyOvertimeTotals } from '../../../utils/overtimeCalculations.js';
+import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 
 interface PayrollReportsProps {
   allUsers: User[];
@@ -148,6 +149,11 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
 
     setLoading(true);
     try {
+      // Load work models once for per-user OT rule resolution.
+      // (List is small; safe to fetch in full each report run.)
+      const workModelList = await listWorkModels();
+      const workModelById = new Map<string, WorkModelDef>(workModelList.map(m => [m.id, m]));
+
       // Pull entries from Firestore (same query pattern as the old app)
       const base = collection(db, 'timeEntries');
       const q =
@@ -176,7 +182,10 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
 
       const summaries: PayrollSummary[] = [];
       for (const [userId, entries] of byUser.entries()) {
-        const ot = calculateBiweeklyOvertimeTotals(entries, payrollSettings.weekly_start_day);
+        const userObj = allUsers.find(u => u.uid === userId);
+        const userWorkModel = userObj?.workModelId ? workModelById.get(userObj.workModelId) ?? null : null;
+        const userOverride = userObj?.workModelOverride ?? null;
+        const ot = calculateBiweeklyOvertimeTotals(entries, payrollSettings.weekly_start_day, userWorkModel, userOverride);
         summaries.push({
           userId,
           userName: allUsers.find(u => u.uid === userId)?.name || 'Unknown',
