@@ -520,6 +520,8 @@ class DatabaseService {
         sms_opt_in: !!data.sms_opt_in,
         timezone: data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
         workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
+        workModelId: data.workModelId as string | undefined,
+        workModelOverride: (data.workModelOverride as User['workModelOverride']) ?? null,
       };
     });
   }
@@ -531,7 +533,7 @@ class DatabaseService {
     });
     const snap = await getDoc(doc(db, 'users', uid));
     if (!snap.exists()) throw new Error('User not found');
-    const data = snap.data();
+    const data = snap.data() as any;
     return {
       uid: snap.id,
       email: String(data.email || ''),
@@ -543,6 +545,8 @@ class DatabaseService {
       sms_opt_in: !!data.sms_opt_in,
       timezone: data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
       workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
+      workModelId: data.workModelId as string | undefined,
+      workModelOverride: (data.workModelOverride as User['workModelOverride']) ?? null,
     };
   }
 
@@ -557,7 +561,7 @@ class DatabaseService {
     const snap = await getDocs(q);
     if (snap.empty) return null;
     const d = snap.docs[0];
-    const data = d.data();
+    const data = d.data() as any;
     return {
       uid: d.id,
       email: String(data.email || ''),
@@ -569,6 +573,8 @@ class DatabaseService {
       sms_opt_in: !!data.sms_opt_in,
       timezone: data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
       workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
+      workModelId: data.workModelId as string | undefined,
+      workModelOverride: (data.workModelOverride as User['workModelOverride']) ?? null,
     };
   }
 

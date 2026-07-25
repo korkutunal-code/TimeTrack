@@ -15,14 +15,16 @@ import { Checkbox } from '../ui/checkbox';
 import { Textarea } from '../ui/textarea';
 import { UserAvatar } from '../ui/user-avatar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
+import { WorkModelOverrideModal } from './WorkModelOverrideModal';
 import { toast } from 'sonner';
-import { UserPlus, Upload, Download, Edit, Trash2, CheckCircle2, HelpCircle, ChevronDown, Loader2, UserCheck, UserX, Building2, Laptop, Shield, Filter } from 'lucide-react';
+import { UserPlus, Upload, Download, Edit, Trash2, CheckCircle2, HelpCircle, ChevronDown, Loader2, UserCheck, UserX, Building2, Laptop, Shield, Filter, Sliders, Briefcase } from 'lucide-react';
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
 import { calculateLunchMinutes, validateTimeEntry } from '../../../utils/timeCalculations';
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import { auditLogService } from '../../../services/auditLogService';
+import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 
 interface AdminPanelProps {
   currentUser: User;
@@ -137,11 +139,17 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const [userToToggleWorkModel, setUserToToggleWorkModel] = useState<{ user: User; targetWorkModel: 'On-site' | 'Remote' } | null>(null);
   const [updatingWorkModel, setUpdatingWorkModel] = useState(false);
   const [workModelError, setWorkModelError] = useState<string | null>(null);
+  const [workModelOverrideUser, setWorkModelOverrideUser] = useState<User | null>(null);
   const [userToEditRole, setUserToEditRole] = useState<User | null>(null);
   const [selectedRole, setSelectedRole] = useState<User['role'] | null>(null);
   const [updatingRole, setUpdatingRole] = useState(false);
   const [roleError, setRoleError] = useState<string | null>(null);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [workModels, setWorkModels] = useState<WorkModelDef[]>([]);
+
+  useEffect(() => {
+    listWorkModels().then(setWorkModels).catch(e => console.error('Failed to load work models', e));
+  }, []);
 
   const [newUser, setNewUser] = useState({
     name: '',
@@ -318,21 +326,28 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   };
 
   const renderWorkModelPill = (user: User) => {
-    const remote = user.workModel === 'Remote';
+    const workModel = workModels.find(m => m.id === user.workModelId);
+    const label = workModel?.name || user.workModel || 'Select Model';
+    const remote = label === 'Remote';
+    const hasCustom = !!user.workModelOverride?.hasCustomRules;
     return (
       <button
         type="button"
-        title="Click to change work model"
-        onClick={() => setUserToToggleWorkModel({ user, targetWorkModel: remote ? 'On-site' : 'Remote' })}
-        aria-label={`Set ${user.name} work model to ${remote ? 'On-site' : 'Remote'}`}
+        title="Edit work model & overtime settings"
+        onClick={() => setWorkModelOverrideUser(user)}
+        aria-label={`Edit ${user.name} work model and overtime settings`}
         className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold cursor-pointer transition-all duration-150 hover:shadow-xs hover:scale-[1.02] active:scale-95 ${
           remote
             ? 'bg-purple-50 border-purple-300 text-purple-800 hover:bg-purple-100 hover:border-purple-400'
             : 'bg-blue-50 border-blue-300 text-blue-800 hover:bg-blue-100 hover:border-blue-400'
         }`}
       >
-        <span className={`size-2 rounded-full ${remote ? 'bg-purple-500' : 'bg-blue-500'}`} />
-        {remote ? 'Remote' : 'On-site'}
+        {hasCustom ? (
+          <Sliders className="size-3.5 text-amber-500" />
+        ) : (
+          <Briefcase className={`size-3.5 ${remote ? 'text-purple-500' : 'text-blue-500'}`} />
+        )}
+        {label}
       </button>
     );
   };
@@ -1249,6 +1264,14 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Work Model & Overtime Override Modal */}
+      <WorkModelOverrideModal
+        user={workModelOverrideUser}
+        open={!!workModelOverrideUser}
+        onOpenChange={(o) => { if (!o) setWorkModelOverrideUser(null); }}
+        onUserUpdated={(updated) => onUsersChange(allUsers.map(u => u.uid === updated.uid ? updated : u))}
+      />
 
       {/* Role Change Confirmation */}
       <AlertDialog

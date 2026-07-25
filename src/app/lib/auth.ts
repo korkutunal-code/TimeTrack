@@ -5,6 +5,16 @@ import { auth, db } from './firebase';
 export type UserRole = 'employee' | 'manager' | 'admin';
 export type WorkModel = 'On-site' | 'Remote';
 
+export interface WorkModelOverride {
+  hasCustomRules: boolean;
+  noOvertime?: boolean;
+  overtimeLimit?: number;
+  overtimeMultiplier?: number;
+  doubleTimeLimit?: number;
+  doubleTimeMultiplier?: number;
+  weeklyOvertimeLimit?: number;
+}
+
 export interface User {
   uid: string;
   email: string;
@@ -16,6 +26,8 @@ export interface User {
   sms_opt_in?: boolean;
   timezone?: string;
   workModel: WorkModel;
+  workModelId?: string;
+  workModelOverride?: WorkModelOverride | null;
 }
 
 async function loadUserProfile(uid: string): Promise<User> {
@@ -35,6 +47,8 @@ async function loadUserProfile(uid: string): Promise<User> {
     sms_opt_in: !!data.sms_opt_in,
     timezone: data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
     workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
+    workModelId: data.workModelId as string | undefined,
+    workModelOverride: (data.workModelOverride as WorkModelOverride | null | undefined) ?? null,
   };
 }
 
@@ -63,6 +77,7 @@ class AuthService {
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       sms_opt_in: false,
       workModel: 'On-site' as WorkModel,
+      workModelOverride: null,
     };
 
     // Create the profile document in Firestore
