@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Checkbox } from '../ui/checkbox';
 import { toast } from 'sonner';
 import { Save, Loader2, ChevronDown } from 'lucide-react';
+import { WorkModelsCard } from './WorkModelsCard';
 
 interface SystemSettingsViewProps {
   currentUser: User;
@@ -283,6 +284,8 @@ export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
           </div>
         </CardContent>
       </Card>
+
+      <WorkModelsCard />
 
       <div className="flex justify-end">
         <Button onClick={handleSaveSettings} disabled={saving}>

@@ -99,6 +99,14 @@ service cloud.firestore {
       allow read: if isAuthenticated() && document == 'payroll';
     }
 
+    // workModels collection — per-work-model overtime configuration
+    // (On-site, Remote, custom). Read by managers/admins for payroll;
+    // write is admin-only since it affects pay math.
+    match /workModels/{modelId} {
+      allow read: if hasRole('manager') || hasRole('admin');
+      allow write: if hasRole('admin');
+    }
+
     // auditLogs collection — immutable append-only audit trail
     // Created by Phase 1 admin correction hardening
     match /auditLogs/{logId} {
