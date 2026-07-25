@@ -7,7 +7,7 @@ import { Checkbox } from '../ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 import { toast } from 'sonner';
-import { Plus, Edit, Trash2, Loader2 } from 'lucide-react';
+import { Plus, Edit, Trash2, Loader2, ChevronDown } from 'lucide-react';
 import {
   listWorkModels,
   createWorkModel,
@@ -34,6 +34,7 @@ export function WorkModelsCard() {
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<WorkModel | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [isWorkModelSettingsOpen, setIsWorkModelSettingsOpen] = useState(true);
 
   const load = async () => {
     setLoading(true);
@@ -100,55 +101,67 @@ export function WorkModelsCard() {
   };
 
   return (
-    <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl">
+    <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
       <CardHeader className="bg-white/40 pb-2">
-        <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setIsWorkModelSettingsOpen((open) => !open)}
+          aria-expanded={isWorkModelSettingsOpen}
+          className="w-full flex items-center justify-between text-left"
+        >
           <CardTitle className="text-slate-800 font-bold">Work Model Settings</CardTitle>
-          <Button size="sm" onClick={() => setEditing({ id: null, input: { ...EMPTY_INPUT } })}>
-            <Plus className="size-4 mr-2" />
-            Add Work Model
-          </Button>
-        </div>
+          <ChevronDown
+            className={`size-5 text-slate-500 transition-transform duration-200 ${isWorkModelSettingsOpen ? 'rotate-180' : 'rotate-0'}`}
+          />
+        </button>
       </CardHeader>
-      <CardContent className="pt-4">
-        {loading ? (
-          <div className="py-8 text-center text-sm text-slate-500">Loading work models...</div>
-        ) : models.length === 0 ? (
-          <div className="py-8 text-center text-sm text-slate-500">No work models configured.</div>
-        ) : (
-          <div className="space-y-3">
-            {models.map(m => (
-              <div key={m.id} className="flex items-center justify-between gap-4 border border-slate-200 rounded-xl p-4 bg-slate-50/50">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-slate-800">{m.name}</span>
-                    {m.noOvertime && (
-                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-                        No Overtime
-                      </span>
+      {isWorkModelSettingsOpen && (
+        <CardContent className="pt-2">
+          {loading ? (
+            <div className="py-8 text-center text-sm text-slate-500">Loading work models...</div>
+          ) : models.length === 0 ? (
+            <div className="py-8 text-center text-sm text-slate-500">No work models configured.</div>
+          ) : (
+            <div className="space-y-3">
+              {models.map(m => (
+                <div key={m.id} className="flex items-center justify-between gap-4 border border-slate-200 rounded-xl p-4 bg-slate-50/50">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-800">{m.name}</span>
+                      {m.noOvertime && (
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                          No Overtime
+                        </span>
+                      )}
+                    </div>
+                    {m.noOvertime ? (
+                      <p className="text-xs text-slate-500 mt-1">Overtime disabled for this work model.</p>
+                    ) : (
+                      <p className="text-xs text-slate-500 mt-1">
+                        OT after {m.overtimeLimit}h ({m.overtimeMultiplier}×) · DT after {m.doubleTimeLimit}h ({m.doubleTimeMultiplier}×) · Weekly OT cap {m.weeklyOvertimeLimit}h
+                      </p>
                     )}
                   </div>
-                  {m.noOvertime ? (
-                    <p className="text-xs text-slate-500 mt-1">Overtime disabled for this work model.</p>
-                  ) : (
-                    <p className="text-xs text-slate-500 mt-1">
-                      OT after {m.overtimeLimit}h ({m.overtimeMultiplier}×) · DT after {m.doubleTimeLimit}h ({m.doubleTimeMultiplier}×) · Weekly OT cap {m.weeklyOvertimeLimit}h
-                    </p>
-                  )}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0 hover:bg-muted/80 text-muted-foreground hover:text-foreground" onClick={() => setEditing({ id: m.id, input: { ...m } })}>
+                      <Edit className="size-4" />
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => setDeleteTarget(m)}>
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0 hover:bg-muted/80 text-muted-foreground hover:text-foreground" onClick={() => setEditing({ id: m.id, input: { ...m } })}>
-                    <Edit className="size-4" />
-                  </Button>
-                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50" onClick={() => setDeleteTarget(m)}>
-                    <Trash2 className="size-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          )}
+          <div className="mt-3">
+            <Button variant="outline" onClick={() => setEditing({ id: null, input: { ...EMPTY_INPUT } })}>
+              <Plus className="size-4 mr-2" />
+              Add Work Model
+            </Button>
           </div>
-        )}
-      </CardContent>
+        </CardContent>
+      )}
 
       {/* Add / Edit Dialog */}
       <Dialog open={!!editing} onOpenChange={(open) => { if (!open && !saving) setEditing(null); }}>
