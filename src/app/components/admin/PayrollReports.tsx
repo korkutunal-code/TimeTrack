@@ -291,27 +291,22 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm mb-2">
-        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-          Payroll Reports
-        </h2>
-        <SectionHelp 
-          title="Payroll Reports"
-          description="Generates summary reports regarding accumulated aggregates across cycle nodes."
-          sections={[
-            { title: "Setup View", content: "Filter by User and Period thresholds to accumulate total intervals." },
-            { title: "Details Breakdowns", content: "Click 'View Details' on card objects to expand precise timestamp rows grids." },
-            { title: "Cycle Configuration", content: "Admin adjusts defaults cycle types in global System Settings." }
-          ]}
-        />
-      </div>
       {/* Report Setup Card */}
-      <Card className="border-2 border-slate-200">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <FileText className="size-4" />
+      <Card className="border-2 border-slate-200 gap-3">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-xl font-bold flex items-center gap-2">
+            <FileText className="size-5" />
             Payroll Report Setup
           </CardTitle>
+          <SectionHelp
+            title="Payroll Reports"
+            description="Generates summary reports regarding accumulated aggregates across cycle nodes."
+            sections={[
+              { title: "Setup View", content: "Filter by User and Period thresholds to accumulate total intervals." },
+              { title: "Details Breakdowns", content: "Click 'View Details' on card objects to expand precise timestamp rows grids." },
+              { title: "Cycle Configuration", content: "Admin adjusts defaults cycle types in global System Settings." }
+            ]}
+          />
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
