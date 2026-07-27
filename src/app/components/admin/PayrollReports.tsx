@@ -314,7 +314,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
             <div className="space-y-1">
               <Label className="text-xs">Employee</Label>
               <Select value={selectedUserId} onValueChange={setSelectedUserId}>
@@ -347,6 +347,12 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                 className="h-10"
               />
             </div>
+            <div className="space-y-1">
+              <Button onClick={generateReport} disabled={loading} className="w-full h-10 bg-blue-600 hover:bg-blue-700">
+                <FileText className="size-4 mr-2" />
+                {loading ? 'Generating...' : 'Generate Report'}
+              </Button>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-1.5">
@@ -357,11 +363,6 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
               Last Cycle
             </Button>
           </div>
-
-          <Button onClick={generateReport} disabled={loading} className="w-full h-10 bg-blue-600 hover:bg-blue-700">
-            <FileText className="size-4 mr-2" />
-            {loading ? 'Generating...' : 'Generate Report'}
-          </Button>
         </CardContent>
       </Card>
 
