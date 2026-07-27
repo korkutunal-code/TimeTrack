@@ -364,80 +364,77 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
       {/* Report Results */}
       {report && (
         <>
-          {/* Summary Stats */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <Card className="border-2 border-blue-100 bg-gradient-to-br from-white to-blue-50">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="bg-blue-100 p-2.5 rounded-lg">
-                    <Clock className="size-5 text-blue-600" />
+          {/* Summary Stats + Actions */}
+          <div className="flex flex-row items-center gap-4 w-full">
+            <div className="flex-1 grid grid-cols-4 gap-3">
+              <Card className="border-2 border-blue-100 bg-gradient-to-br from-white to-blue-50">
+                <CardContent className="py-2 px-3.5 [&:last-child]:pb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-blue-100 p-2.5 rounded-lg">
+                      <Clock className="size-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-600">Regular</p>
+                      <p className="text-2xl font-bold text-slate-900">{totalRegular.toFixed(1)}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-xs text-slate-600">Regular</p>
-                    <p className="text-2xl font-bold text-slate-900">{totalRegular.toFixed(1)}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
 
-            <Card className="border-2 border-orange-100 bg-gradient-to-br from-white to-orange-50">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="bg-orange-100 p-2.5 rounded-lg">
-                    <TrendingUp className="size-5 text-orange-600" />
+              <Card className="border-2 border-orange-100 bg-gradient-to-br from-white to-orange-50">
+                <CardContent className="py-2 px-3.5 [&:last-child]:pb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-orange-100 p-2.5 rounded-lg">
+                      <TrendingUp className="size-5 text-orange-600" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-600">OT (1.5x)</p>
+                      <p className="text-2xl font-bold text-slate-900">{totalOvertime.toFixed(1)}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-xs text-slate-600">OT (1.5x)</p>
-                    <p className="text-2xl font-bold text-slate-900">{totalOvertime.toFixed(1)}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
 
-            <Card className="border-2 border-red-100 bg-gradient-to-br from-white to-red-50">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="bg-red-100 p-2.5 rounded-lg">
-                    <TrendingUp className="size-5 text-red-600" />
+              <Card className="border-2 border-red-100 bg-gradient-to-br from-white to-red-50">
+                <CardContent className="py-2 px-3.5 [&:last-child]:pb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-red-100 p-2.5 rounded-lg">
+                      <TrendingUp className="size-5 text-red-600" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-600">DT (2x)</p>
+                      <p className="text-2xl font-bold text-slate-900">{totalDouble.toFixed(1)}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-xs text-slate-600">DT (2x)</p>
-                    <p className="text-2xl font-bold text-slate-900">{totalDouble.toFixed(1)}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
 
-            <Card className="border-2 border-green-100 bg-gradient-to-br from-white to-green-50">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className="bg-green-100 p-2.5 rounded-lg">
-                    <DollarSign className="size-5 text-green-600" />
+              <Card className="border-2 border-green-100 bg-gradient-to-br from-white to-green-50">
+                <CardContent className="py-2 px-3.5 [&:last-child]:pb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-green-100 p-2.5 rounded-lg">
+                      <DollarSign className="size-5 text-green-600" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-600">Total</p>
+                      <p className="text-2xl font-bold text-slate-900">{grandTotal.toFixed(1)}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-xs text-slate-600">Total</p>
-                    <p className="text-2xl font-bold text-slate-900">{grandTotal.toFixed(1)}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="shrink-0 flex items-center gap-2">
+              <Button variant="outline" onClick={printReport} className="h-10">
+                <Printer className="size-4 mr-2" />
+                Print
+              </Button>
+              <Button variant="outline" onClick={exportCSV} className="h-10">
+                <Download className="size-4 mr-2" />
+                Export CSV
+              </Button>
+            </div>
           </div>
-
-          {/* Actions */}
-          <Card className="border-2 border-slate-200">
-            <CardContent className="p-4">
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={printReport} className="h-10">
-                  <Printer className="size-4 mr-2" />
-                  Print
-                </Button>
-                <Button variant="outline" onClick={exportCSV} className="h-10">
-                  <Download className="size-4 mr-2" />
-                  Export CSV
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
 
           {/* Employee Cards - Mobile Friendly */}
           <div className="space-y-2">
