@@ -39,12 +39,88 @@ export function createInitialSegment(clockInManual: string, clockInSystem: numbe
   return seg;
 }
 
-function timeToMinutes(time: string): number {
-  const [h, m] = time.split(':').map(Number);
+function timeToMinutes(time: string | undefined | null): number {
+  if (!time) return NaN;
+  const [h, m] = String(time).split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return NaN;
   return h * 60 + m;
 }
 
-/** Close an open segment with clock-out + compute its workMinutes (lunch-aware, simple). */
+/** Lunch duration (minutes) from system lunch timestamps, else 0. */
+function lunchMinutesFromSystem(seg: TimeSegment): number {
+  const lo = typeof seg.lunchOutSystem === 'number' ? seg.lunchOutSystem : undefined;
+  const li = typeof seg.lunchInSystem === 'number' ? seg.lunchInSystem : undefined;
+  if (lo === undefined || li === undefined || li < lo) return 0;
+  return Math.max(0, Math.round((li - lo) / (1000 * 60)));
+}
+
+/** Lunch duration (minutes) from manual lunch strings, single-day wrap aware. */
+function lunchMinutesFromManual(seg: TimeSegment, inM: number): number {
+  if (!seg.lunchOutManual || !seg.lunchInManual) return 0;
+  const lo = timeToMinutes(seg.lunchOutManual);
+  const li = timeToMinutes(seg.lunchInManual);
+  if (Number.isNaN(lo) || Number.isNaN(li) || Number.isNaN(inM)) return 0;
+  const effLo = lo < inM ? lo + 24 * 60 : lo;
+  const effLi = li < inM ? li + 24 * 60 : li;
+  return Math.max(0, effLi - effLo);
+}
+
+/**
+ * Compute worked minutes for a (closed) segment from its timestamps.
+ *
+ * Primary source: the `clockInSystem` / `clockOutSystem` epoch-ms fields, which
+ * capture the true wall-clock span and correctly handle multi-day shifts (a
+ * 48-72h span, a forgotten clock-out closed days later, etc.). The legacy
+ * "HH:MM" manual-string heuristic capped at a single +1440 wrap and silently
+ * under-reported any shift longer than 24h.
+ *
+ * Lunch is subtracted from the gross system span: system lunch timestamps when
+ * present, otherwise the manual lunch times (single-day heuristic).
+ *
+ * For manual-only segments (no system timestamps) the single-day wrap is the
+ * best achievable without a calendar date — multi-day spans cannot be detected
+ * from "HH:MM" strings alone, and the stored workMinutes is the final fallback.
+ *
+ * Used by closeActiveSegment (on close) and by report-time normalization of
+ * already-persisted segments whose stored workMinutes may predate this fix.
+ *
+ * @param seg                  the segment (complete or about to be closed)
+ * @param clockOutSystemOverride  when closing, the fresh clock-out epoch-ms not yet on seg
+ */
+export function computeSegmentWorkMinutes(
+  seg: TimeSegment,
+  clockOutSystemOverride?: number,
+): number {
+  const skipLunch = seg.skipLunch === true;
+  const inSys = typeof seg.clockInSystem === 'number' ? seg.clockInSystem : undefined;
+  const outSys = typeof clockOutSystemOverride === 'number'
+    ? clockOutSystemOverride
+    : (typeof seg.clockOutSystem === 'number' ? seg.clockOutSystem : undefined);
+
+  if (inSys !== undefined && outSys !== undefined && outSys >= inSys) {
+    const grossMin = Math.round((outSys - inSys) / (1000 * 60));
+    let lunch = 0;
+    if (!skipLunch) {
+      lunch = lunchMinutesFromSystem(seg);
+      if (lunch === 0 && (seg.lunchOutManual || seg.lunchInManual)) {
+        const inM = timeToMinutes(seg.clockInManual);
+        if (!Number.isNaN(inM)) lunch = lunchMinutesFromManual(seg, inM);
+      }
+    }
+    return Math.max(0, grossMin - lunch);
+  }
+
+  // Manual-only fallback: single-day wrap heuristic (legacy behavior).
+  const inM = timeToMinutes(seg.clockInManual || '00:00');
+  const outM = timeToMinutes(seg.clockOutManual || '');
+  if (Number.isNaN(inM) || Number.isNaN(outM)) return seg.workMinutes ?? 0;
+  const effOutM = outM < inM ? outM + 24 * 60 : outM;
+  let workMin = Math.max(0, effOutM - inM);
+  if (!skipLunch) workMin = Math.max(0, workMin - lunchMinutesFromManual(seg, inM));
+  return workMin;
+}
+
+/** Close an open segment with clock-out + compute its workMinutes (lunch-aware). */
 export function closeActiveSegment(
   seg: TimeSegment,
   clockOutManual: string,
@@ -53,25 +129,15 @@ export function closeActiveSegment(
 ): TimeSegment {
   if (seg.complete) return seg; // idempotent
 
-  const inM = timeToMinutes(seg.clockInManual || '00:00');
-  const outM = timeToMinutes(clockOutManual);
-  // S6: cross-midnight wrap. If clock-out is before clock-in, the shift
-  // crosses midnight (e.g. 23:00 -> 02:00). Normalize to minutes-since-
-  // clock-in by adding 24h. Assumes a single shift is < 24h, which matches
-  // the domain (CA double-time threshold is 12h; AGENTS.md §2). All lunch
-  // times are normalized against the same clock-in anchor so a lunch that
-  // straddles midnight (23:30 -> 00:30) or sits fully after midnight is
-  // subtracted correctly.
-  const effOutM = outM < inM ? outM + 24 * 60 : outM;
-  let workM = Math.max(0, effOutM - inM);
-
-  if (!skipLunch && seg.lunchOutManual && seg.lunchInManual) {
-    const lo = timeToMinutes(seg.lunchOutManual);
-    const li = timeToMinutes(seg.lunchInManual);
-    const effLo = lo < inM ? lo + 24 * 60 : lo;
-    const effLi = li < inM ? li + 24 * 60 : li;
-    workM -= Math.max(0, effLi - effLo);
-  }
+  const effectiveSkipLunch = skipLunch || seg.skipLunch === true;
+  // Delegate to computeSegmentWorkMinutes so the close path and the report-time
+  // normalization share identical duration logic (S6 cross-midnight + multi-day
+  // via system timestamps). The fresh clock-out timestamp is passed as the
+  // override since it is not yet on `seg`.
+  const workM = computeSegmentWorkMinutes(
+    { ...seg, clockOutManual, clockOutSystem, skipLunch: effectiveSkipLunch },
+    clockOutSystem,
+  );
 
   const out: TimeSegment = {
     ...seg,
@@ -79,7 +145,7 @@ export function closeActiveSegment(
     clockOutSystem,
     workMinutes: workM,
     complete: true,
-    skipLunch: skipLunch || seg.skipLunch,
+    skipLunch: effectiveSkipLunch,
   };
   return out;
 }

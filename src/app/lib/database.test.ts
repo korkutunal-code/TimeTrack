@@ -122,32 +122,40 @@ describe('closeActiveSegment', () => {
   // S6: cross-midnight shift duration must wrap past 24:00 instead of
   // collapsing to 0 (the old `outM - inM` gave -1260 -> 0 for 23:00->02:00).
   it('S6: wraps a cross-midnight shift (23:00 -> 02:00 = 180 min)', () => {
-    const seg = createInitialSegment('23:00', 1000);
-    const closed = closeActiveSegment(seg, '02:00', 8000 * 60 * 60 * 1000 + 1000, false);
+    const T0 = 1_000_000_000_000;
+    const MIN = 60_000;
+    const seg = createInitialSegment('23:00', T0);
+    const closed = closeActiveSegment(seg, '02:00', T0 + 180 * MIN, false);
     expect(closed.workMinutes).toBe(180);
   });
 
   it('S6: subtracts a lunch that straddles midnight (22:00 / 23:30-00:30 / 02:00 = 180 min)', () => {
-    let seg = createInitialSegment('22:00', 1000);
-    seg = applyLunchToSegment(seg, 'start', '23:30', 2000);
-    seg = applyLunchToSegment(seg, 'end', '00:30', 3000);
-    const closed = closeActiveSegment(seg, '02:00', 8000 * 60 * 60 * 1000 + 1000, false);
+    const T0 = 1_000_000_000_000;
+    const MIN = 60_000;
+    let seg = createInitialSegment('22:00', T0);
+    seg = applyLunchToSegment(seg, 'start', '23:30', T0 + 90 * MIN);
+    seg = applyLunchToSegment(seg, 'end', '00:30', T0 + 150 * MIN);
+    const closed = closeActiveSegment(seg, '02:00', T0 + 240 * MIN, false);
     // 4h shift (22:00->02:00 = 240) - 60min lunch = 180
     expect(closed.workMinutes).toBe(180);
   });
 
   it('S6: subtracts a lunch fully after midnight (22:00 / 00:30-01:00 / 02:00 = 210 min)', () => {
-    let seg = createInitialSegment('22:00', 1000);
-    seg = applyLunchToSegment(seg, 'start', '00:30', 2000);
-    seg = applyLunchToSegment(seg, 'end', '01:00', 3000);
-    const closed = closeActiveSegment(seg, '02:00', 8000 * 60 * 60 * 1000 + 1000, false);
+    const T0 = 1_000_000_000_000;
+    const MIN = 60_000;
+    let seg = createInitialSegment('22:00', T0);
+    seg = applyLunchToSegment(seg, 'start', '00:30', T0 + 150 * MIN);
+    seg = applyLunchToSegment(seg, 'end', '01:00', T0 + 180 * MIN);
+    const closed = closeActiveSegment(seg, '02:00', T0 + 240 * MIN, false);
     // 4h shift (240) - 30min lunch = 210
     expect(closed.workMinutes).toBe(210);
   });
 
   it('S6: same-day shift is unchanged (08:00 -> 17:00 = 540 min)', () => {
-    const seg = createInitialSegment('08:00', 1000);
-    const closed = closeActiveSegment(seg, '17:00', 8000 * 60 * 60 * 1000 + 1000, false);
+    const T0 = 1_000_000_000_000;
+    const MIN = 60_000;
+    const seg = createInitialSegment('08:00', T0);
+    const closed = closeActiveSegment(seg, '17:00', T0 + 540 * MIN, false);
     expect(closed.workMinutes).toBe(540);
   });
 

@@ -16,6 +16,8 @@ import { generateCSV, downloadCSV } from '../../../services/exportService';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
 import { calculateBiweeklyOvertimeTotals } from '../../../utils/overtimeCalculations.js';
+import { computeSegmentWorkMinutes } from '../../lib/segmentOps';
+import type { TimeSegment } from '../../lib/database';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 
 interface PayrollReportsProps {
@@ -178,15 +180,24 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
           // minutes in the root totalWorkMinutes field (e.g. 353 for shift 2,
           // not 1090+353=1443 for the full day). Feeding the stale root value
           // into calculateWeeklyOvertimeAdjustments understated daily OT/DT.
-          // Summing workMinutes across segments and dropping any stale
-          // per-bucket fields forces the engine to recompute daily OT from
-          // the correct full-day total.
+          //
+          // Per-segment workMinutes is also recomputed from the system
+          // timestamp delta (clockInSystem/clockOutSystem) so multi-day spans
+          // — whose stored workMinutes were capped by the old single-day
+          // heuristic — feed accurate durations into the day total and the
+          // overtime engine. Manual-only segments keep their stored value via
+          // the computeSegmentWorkMinutes fallback.
           const segs = Array.isArray(e.segments) ? e.segments : [];
           if (segs.length === 0) return e;
-          const segTotal = segs.reduce((sum, s) => sum + (Number(s.workMinutes) || 0), 0);
+          const rebuiltSegs = segs.map((s: DocumentData) => ({
+            ...s,
+            workMinutes: computeSegmentWorkMinutes(s as TimeSegment),
+          }));
+          const segTotal = rebuiltSegs.reduce((sum, s) => sum + (Number(s.workMinutes) || 0), 0);
           if (segs.length > 1) {
             return {
               ...e,
+              segments: rebuiltSegs,
               totalWorkMinutes: segTotal,
               totalHours: segTotal / 60,
               regularMinutes: undefined,
@@ -196,7 +207,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
           }
           // Single-segment docs keep root fields in sync with segments[0]
           // (S7 invariant); rebuild defensively but trust any stored buckets.
-          return { ...e, totalWorkMinutes: segTotal, totalHours: segTotal / 60 };
+          return { ...e, segments: rebuiltSegs, totalWorkMinutes: segTotal, totalHours: segTotal / 60 };
         });
 
       // Group by employee and calculate biweekly overtime totals (California rules)
@@ -265,16 +276,17 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
   // day's earliest clock-in, latest clock-out, and aggregated lunch breaks —
   // not the entry-level fields, which may hold the wrong shift's value.
   //
-  // Cross-midnight handling: segment times are stored as "HH:MM" strings with
-  // no date. To compare across segments we convert each to absolute
-  // minutes-since-workDate-midnight, adding 1440 when a clock-out/lunch time
-  // precedes that segment's clock-in (i.e. the shift wrapped past midnight).
-  // This replaces the old lexical string comparison, which sorted "05:28"
-  // before "23:35" and lost the genuine latest clock-out for split shifts
-  // spanning midnight (e.g. seg 23:35→05:28 next day).
+  // Multi-day / cross-midnight handling: segment manual times are stored as
+  // "HH:MM" strings with no date. To order them across midnight AND across
+  // multiple calendar days we prefer the epoch-ms `clockInSystem` /
+  // `clockOutSystem` fields (the true wall-clock instants). The calendar-day
+  // offset of each timestamp relative to the shift's clock-in is rendered as a
+  // dynamic "+Nd" badge (e.g. +2d for a 48-72h span). Manual-only segments
+  // (no system timestamps) fall back to the single-day wrap heuristic and can
+  // only detect a +1d boundary.
   interface TimeBoundary {
     time?: string;
-    nextDay: boolean;
+    dayOffset: number; // calendar days after the anchor (0 = same day, 1 = next, 2 = +2d, …)
   }
 
   const toMinutes = (t: string | undefined | null): number => {
@@ -284,66 +296,129 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
     return parts[0] * 60 + parts[1];
   };
 
+  // PT (America/Los_Angeles) YYYY-MM-DD for an epoch-ms instant. Per AGENTS.md
+  // the canonical timezone for all payroll date math is PT.
+  const ptDateStr = (ms: number): string =>
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Los_Angeles',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(ms));
+
+  // Calendar-day difference (PT) between two epoch-ms instants. Used to label
+  // how many days a clock-out/lunch falls after the shift's clock-in.
+  const dayOffsetFromSystem = (anchorMs: number, targetMs: number): number => {
+    const a = ptDateStr(anchorMs);
+    const b = ptDateStr(targetMs);
+    const [ay, am, ad] = a.split('-').map(Number);
+    const [by, bm, bd] = b.split('-').map(Number);
+    if (!ay || !by) return 0;
+    const dayA = Date.UTC(ay, am - 1, ad);
+    const dayB = Date.UTC(by, bm - 1, bd);
+    return Math.round((dayB - dayA) / (1000 * 60 * 60 * 24));
+  };
+
   const getDayBoundaries = (day: DocumentData): { clockIn?: TimeBoundary; clockOut?: TimeBoundary } => {
     const segs = day.segments;
     if (!Array.isArray(segs) || segs.length === 0) {
-      // Legacy single-shift doc: infer next-day on clock-out when it precedes
-      // clock-in (cross-midnight single shift).
-      const inM = toMinutes(day.clockInManual);
-      const outM = toMinutes(day.clockOutManual);
-      const outNextDay = !Number.isNaN(inM) && !Number.isNaN(outM) && outM < inM;
+      // Legacy single-shift doc.
+      const inMs = typeof day.clockInSystem === 'number' ? day.clockInSystem : undefined;
+      const outMs = typeof day.clockOutSystem === 'number' ? day.clockOutSystem : undefined;
+      let outOffset = 0;
+      if (inMs !== undefined && outMs !== undefined) {
+        outOffset = dayOffsetFromSystem(inMs, outMs);
+      } else {
+        const inM = toMinutes(day.clockInManual);
+        const outM = toMinutes(day.clockOutManual);
+        outOffset = !Number.isNaN(inM) && !Number.isNaN(outM) && outM < inM ? 1 : 0;
+      }
       return {
-        clockIn: { time: day.clockInManual, nextDay: false },
-        clockOut: { time: day.clockOutManual, nextDay: outNextDay },
+        clockIn: { time: day.clockInManual, dayOffset: 0 },
+        clockOut: { time: day.clockOutManual, dayOffset: outOffset },
       };
     }
-    // Earliest clock-in = smallest absolute start; latest clock-out = largest
-    // absolute end (with per-segment +1440 wrap applied).
-    let earliest: { time: string; abs: number } | null = null;
-    let latest: { time: string; abs: number } | null = null;
+    // Earliest clock-in and latest clock-out across all segments, using system
+    // timestamps for true chronology (falls back to manual minutes).
+    let earliest: { time: string; ms?: number; abs: number } | null = null;
+    let latest: { time: string; ms?: number; abs: number; manualWrapped: boolean } | null = null;
     for (const s of segs) {
+      const inMs = typeof s.clockInSystem === 'number' ? s.clockInSystem : undefined;
       const inM = toMinutes(s.clockInManual);
-      if (!Number.isNaN(inM)) {
-        if (!earliest || inM < earliest.abs) earliest = { time: s.clockInManual, abs: inM };
+      const inAbs = inMs ?? (Number.isNaN(inM) ? NaN : inM);
+      if (!Number.isNaN(inAbs) && (!earliest || inAbs < earliest.abs)) {
+        earliest = { time: s.clockInManual, ms: inMs, abs: inAbs };
       }
+      const outMs = typeof s.clockOutSystem === 'number' ? s.clockOutSystem : undefined;
       const outM = toMinutes(s.clockOutManual);
-      if (!Number.isNaN(outM) && !Number.isNaN(inM)) {
-        const abs = outM < inM ? outM + 1440 : outM;
-        if (!latest || abs > latest.abs) latest = { time: s.clockOutManual, abs };
+      let outAbs: number;
+      const wrapped = !Number.isNaN(inM) && !Number.isNaN(outM) && outM < inM;
+      if (outMs !== undefined) {
+        outAbs = outMs;
+      } else if (!Number.isNaN(inM) && !Number.isNaN(outM)) {
+        outAbs = wrapped ? outM + 1440 : outM;
+      } else {
+        outAbs = NaN;
+      }
+      if (!Number.isNaN(outAbs) && (!latest || outAbs > latest.abs)) {
+        latest = { time: s.clockOutManual, ms: outMs, abs: outAbs, manualWrapped: wrapped };
       }
     }
+    // Day offset for the latest clock-out, relative to the earliest clock-in.
+    let outOffset = 0;
+    if (earliest?.ms !== undefined && latest?.ms !== undefined) {
+      outOffset = dayOffsetFromSystem(earliest.ms, latest.ms);
+    } else if (earliest && latest && earliest.ms === undefined && latest.ms === undefined) {
+      // All-manual: infer from absolute-minute gap.
+      const gap = latest.abs - earliest.abs;
+      outOffset = gap >= 1440 ? Math.floor(gap / 1440) : (latest.manualWrapped ? 1 : 0);
+    } else if (latest) {
+      // Mixed system/manual: fall back to the latest segment's own wrap.
+      outOffset = latest.manualWrapped ? 1 : 0;
+    }
     return {
-      clockIn: earliest ? { time: earliest.time, nextDay: false } : undefined,
-      clockOut: latest ? { time: latest.time, nextDay: latest.abs >= 1440 } : undefined,
+      clockIn: earliest ? { time: earliest.time, dayOffset: 0 } : undefined,
+      clockOut: latest ? { time: latest.time, dayOffset: outOffset } : undefined,
     };
   };
 
   // 3-way lunch summary: 0 breaks → none; 1 break → its times; 2+ → multiple.
-  // nextDay for a break time is inferred relative to the owning segment's
-  // clock-in (any time before clock-in minutes rolled past midnight).
+  // dayOffset for a break is relative to the owning segment's clock-in.
   const getDayLunch = (day: DocumentData): { lunchOut?: TimeBoundary; lunchIn?: TimeBoundary; isMultiple: boolean } => {
     const segs = day.segments;
     if (!Array.isArray(segs) || segs.length === 0) {
       const hasBreak = !!day.lunchOutManual && !!day.lunchInManual;
       if (!hasBreak) return { isMultiple: false };
+      const inMs = typeof day.clockInSystem === 'number' ? day.clockInSystem : undefined;
+      const loMs = typeof day.lunchOutSystem === 'number' ? day.lunchOutSystem : undefined;
+      const liMs = typeof day.lunchInSystem === 'number' ? day.lunchInSystem : undefined;
       const inM = toMinutes(day.clockInManual);
       const loM = toMinutes(day.lunchOutManual);
       const liM = toMinutes(day.lunchInManual);
+      const loOffset = inMs !== undefined && loMs !== undefined ? dayOffsetFromSystem(inMs, loMs)
+        : (!Number.isNaN(inM) && !Number.isNaN(loM) && loM < inM ? 1 : 0);
+      const liOffset = inMs !== undefined && liMs !== undefined ? dayOffsetFromSystem(inMs, liMs)
+        : (!Number.isNaN(inM) && !Number.isNaN(liM) && liM < inM ? 1 : 0);
       return {
-        lunchOut: { time: day.lunchOutManual, nextDay: !Number.isNaN(inM) && !Number.isNaN(loM) && loM < inM },
-        lunchIn: { time: day.lunchInManual, nextDay: !Number.isNaN(inM) && !Number.isNaN(liM) && liM < inM },
+        lunchOut: { time: day.lunchOutManual, dayOffset: loOffset },
+        lunchIn: { time: day.lunchInManual, dayOffset: liOffset },
         isMultiple: false,
       };
     }
     const breaks: { lunchOut: TimeBoundary; lunchIn: TimeBoundary }[] = [];
     for (const s of segs) {
       if (s.skipLunch || !s.lunchOutManual || !s.lunchInManual) continue;
+      const inMs = typeof s.clockInSystem === 'number' ? s.clockInSystem : undefined;
+      const loMs = typeof s.lunchOutSystem === 'number' ? s.lunchOutSystem : undefined;
+      const liMs = typeof s.lunchInSystem === 'number' ? s.lunchInSystem : undefined;
       const inM = toMinutes(s.clockInManual);
       const loM = toMinutes(s.lunchOutManual);
       const liM = toMinutes(s.lunchInManual);
+      const loOffset = inMs !== undefined && loMs !== undefined ? dayOffsetFromSystem(inMs, loMs)
+        : (!Number.isNaN(inM) && !Number.isNaN(loM) && loM < inM ? 1 : 0);
+      const liOffset = inMs !== undefined && liMs !== undefined ? dayOffsetFromSystem(inMs, liMs)
+        : (!Number.isNaN(inM) && !Number.isNaN(liM) && liM < inM ? 1 : 0);
       breaks.push({
-        lunchOut: { time: s.lunchOutManual, nextDay: !Number.isNaN(inM) && !Number.isNaN(loM) && loM < inM },
-        lunchIn: { time: s.lunchInManual, nextDay: !Number.isNaN(inM) && !Number.isNaN(liM) && liM < inM },
+        lunchOut: { time: s.lunchOutManual, dayOffset: loOffset },
+        lunchIn: { time: s.lunchInManual, dayOffset: liOffset },
       });
     }
     if (breaks.length === 0) return { isMultiple: false };
@@ -353,16 +428,25 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
     return { isMultiple: true };
   };
 
-  // nextDay for a single segment field, inferred against that segment's
-  // clock-in (any time before clock-in minutes rolled past midnight).
-  const segFieldNextDay = (
+  // Calendar-day offset for a single segment field, relative to that segment's
+  // clock-in. Uses system timestamps when present (handles +Nd), else the
+  // single-day manual heuristic (0 or 1).
+  const segFieldDayOffset = (
     seg: DocumentData,
     field: 'clockOutManual' | 'lunchOutManual' | 'lunchInManual',
-  ): boolean => {
+  ): number => {
+    const inMs = typeof seg.clockInSystem === 'number' ? seg.clockInSystem : undefined;
+    const sysField = field === 'clockOutManual' ? 'clockOutSystem'
+      : field === 'lunchOutManual' ? 'lunchOutSystem'
+      : 'lunchInSystem';
+    const tMs = typeof seg[sysField] === 'number' ? seg[sysField] : undefined;
+    if (inMs !== undefined && tMs !== undefined) {
+      return Math.max(0, dayOffsetFromSystem(inMs, tMs));
+    }
     const inM = toMinutes(seg.clockInManual);
     const t = toMinutes(seg[field]);
-    if (Number.isNaN(inM) || Number.isNaN(t)) return false;
-    return t < inM;
+    if (Number.isNaN(inM) || Number.isNaN(t)) return 0;
+    return t < inM ? 1 : 0;
   };
 
   const fmtTime = (t: string | undefined): string => {
@@ -375,12 +459,12 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
     return `${dh}:${m} ${ampm}`;
   };
 
-  // Render a time boundary (or raw segment time) with a subtle "+1d" badge
-  // when the timestamp falls on the next calendar day relative to its shift's
-  // clock-in. Used in both the parent summary row and the per-shift sub-rows.
-  const NextDayBadge = () => (
+  // Dynamic day-offset badge: "+1d", "+2d", "+3d" … rendered when a timestamp
+  // falls on a later calendar day than its shift's clock-in. Used in both the
+  // parent summary row and the per-shift sub-rows.
+  const DayOffsetBadge = ({ offset }: { offset: number }) => (
     <span className="ml-1 inline-flex items-center rounded bg-purple-100 px-1 text-[9px] font-medium text-purple-700 align-middle">
-      +1d
+      +{offset}d
     </span>
   );
   const fmtBoundary = (b: TimeBoundary | undefined): JSX.Element => {
@@ -388,7 +472,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
     return (
       <span>
         {fmtTime(b.time)}
-        {b.nextDay && <NextDayBadge />}
+        {b.dayOffset > 0 && <DayOffsetBadge offset={b.dayOffset} />}
       </span>
     );
   };
@@ -646,14 +730,14 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                                 rows.push(
                                   <tr key={`${day.workDate}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
                                     <td className="p-1.5 pl-6 text-purple-700 font-medium">↳ Shift {i + 1}</td>
-                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockInManual, nextDay: false })}</td>
+                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockInManual, dayOffset: 0 })}</td>
                                     <td className="p-1.5">
-                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, nextDay: segFieldNextDay(seg, 'lunchOutManual') })}
+                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, dayOffset: segFieldDayOffset(seg, 'lunchOutManual') })}
                                     </td>
                                     <td className="p-1.5">
-                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, nextDay: segFieldNextDay(seg, 'lunchInManual') })}
+                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, dayOffset: segFieldDayOffset(seg, 'lunchInManual') })}
                                     </td>
-                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockOutManual, nextDay: segFieldNextDay(seg, 'clockOutManual') })}</td>
+                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockOutManual, dayOffset: segFieldDayOffset(seg, 'clockOutManual') })}</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
                                     <td className="p-1.5 text-right text-purple-700 font-semibold">{((seg.workMinutes || 0) / 60).toFixed(1)}</td>

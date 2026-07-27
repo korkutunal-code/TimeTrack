@@ -583,10 +583,12 @@ describe('Edge Case 10 — getPunchStatus live estimate with lunchOut', () => {
   it('totalWorkMinutes from closed segments DOES correctly subtract lunch', () => {
     // When a segment is closed (lunchOut + lunchIn both set), workMinutes
     // is computed correctly in closeActiveSegment.
-    const seg = createInitialSegment('08:00', 1000);
-    const withLunchOut = applyLunchToSegment(seg, 'start', '12:00', 2000);
-    const withLunchIn = applyLunchToSegment(withLunchOut, 'end', '12:30', 3000);
-    const closed = closeActiveSegment(withLunchIn, '17:00', 4000);
+    const T0 = 1_000_000_000_000;
+    const MIN = 60_000;
+    const seg = createInitialSegment('08:00', T0);
+    const withLunchOut = applyLunchToSegment(seg, 'start', '12:00', T0 + 240 * MIN);
+    const withLunchIn = applyLunchToSegment(withLunchOut, 'end', '12:30', T0 + 270 * MIN);
+    const closed = closeActiveSegment(withLunchIn, '17:00', T0 + 540 * MIN);
 
     // 08:00-17:00 = 540 min, minus lunch 12:00-12:30 = 30 min, = 510 min
     expect(closed.workMinutes).toBe(510);
