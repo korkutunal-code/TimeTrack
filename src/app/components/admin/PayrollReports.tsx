@@ -171,7 +171,33 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
       const snap = await getDocs(q);
       const rawEntries = snap.docs
         .map(d => d.data())
-        .filter(e => e.dayComplete === true);
+        .filter(e => e.dayComplete === true)
+        .map(e => {
+          // Rebuild the day's total from the canonical segments[] sum.
+          // Split-shift (multi-segment) docs persist only the final shift's
+          // minutes in the root totalWorkMinutes field (e.g. 353 for shift 2,
+          // not 1090+353=1443 for the full day). Feeding the stale root value
+          // into calculateWeeklyOvertimeAdjustments understated daily OT/DT.
+          // Summing workMinutes across segments and dropping any stale
+          // per-bucket fields forces the engine to recompute daily OT from
+          // the correct full-day total.
+          const segs = Array.isArray(e.segments) ? e.segments : [];
+          if (segs.length === 0) return e;
+          const segTotal = segs.reduce((sum, s) => sum + (Number(s.workMinutes) || 0), 0);
+          if (segs.length > 1) {
+            return {
+              ...e,
+              totalWorkMinutes: segTotal,
+              totalHours: segTotal / 60,
+              regularMinutes: undefined,
+              otMinutes: undefined,
+              doubleTimeMinutes: undefined,
+            };
+          }
+          // Single-segment docs keep root fields in sync with segments[0]
+          // (S7 invariant); rebuild defensively but trust any stored buckets.
+          return { ...e, totalWorkMinutes: segTotal, totalHours: segTotal / 60 };
+        });
 
       // Group by employee and calculate biweekly overtime totals (California rules)
       const byUser = new Map<string, DocumentData[]>();
@@ -238,45 +264,105 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
   // (if present) holds the individual shifts; the parent row must reflect the
   // day's earliest clock-in, latest clock-out, and aggregated lunch breaks —
   // not the entry-level fields, which may hold the wrong shift's value.
-  const getDayBoundaries = (day: DocumentData): { clockIn?: string; clockOut?: string } => {
+  //
+  // Cross-midnight handling: segment times are stored as "HH:MM" strings with
+  // no date. To compare across segments we convert each to absolute
+  // minutes-since-workDate-midnight, adding 1440 when a clock-out/lunch time
+  // precedes that segment's clock-in (i.e. the shift wrapped past midnight).
+  // This replaces the old lexical string comparison, which sorted "05:28"
+  // before "23:35" and lost the genuine latest clock-out for split shifts
+  // spanning midnight (e.g. seg 23:35→05:28 next day).
+  interface TimeBoundary {
+    time?: string;
+    nextDay: boolean;
+  }
+
+  const toMinutes = (t: string | undefined | null): number => {
+    if (!t) return NaN;
+    const parts = String(t).split(':').map(Number);
+    if (parts.length !== 2 || Number.isNaN(parts[0]) || Number.isNaN(parts[1])) return NaN;
+    return parts[0] * 60 + parts[1];
+  };
+
+  const getDayBoundaries = (day: DocumentData): { clockIn?: TimeBoundary; clockOut?: TimeBoundary } => {
     const segs = day.segments;
     if (!Array.isArray(segs) || segs.length === 0) {
-      return { clockIn: day.clockInManual, clockOut: day.clockOutManual };
+      // Legacy single-shift doc: infer next-day on clock-out when it precedes
+      // clock-in (cross-midnight single shift).
+      const inM = toMinutes(day.clockInManual);
+      const outM = toMinutes(day.clockOutManual);
+      const outNextDay = !Number.isNaN(inM) && !Number.isNaN(outM) && outM < inM;
+      return {
+        clockIn: { time: day.clockInManual, nextDay: false },
+        clockOut: { time: day.clockOutManual, nextDay: outNextDay },
+      };
     }
-    const sorted = [...segs].sort((a: DocumentData, b: DocumentData) =>
-      String(a.clockInManual || '').localeCompare(String(b.clockInManual || ''))
-    );
-    const latestClockOut = sorted.reduce((max: string, s: DocumentData) => {
-      const out = s.clockOutManual;
-      return out && (!max || out > max) ? out : max;
-    }, '');
+    // Earliest clock-in = smallest absolute start; latest clock-out = largest
+    // absolute end (with per-segment +1440 wrap applied).
+    let earliest: { time: string; abs: number } | null = null;
+    let latest: { time: string; abs: number } | null = null;
+    for (const s of segs) {
+      const inM = toMinutes(s.clockInManual);
+      if (!Number.isNaN(inM)) {
+        if (!earliest || inM < earliest.abs) earliest = { time: s.clockInManual, abs: inM };
+      }
+      const outM = toMinutes(s.clockOutManual);
+      if (!Number.isNaN(outM) && !Number.isNaN(inM)) {
+        const abs = outM < inM ? outM + 1440 : outM;
+        if (!latest || abs > latest.abs) latest = { time: s.clockOutManual, abs };
+      }
+    }
     return {
-      clockIn: sorted[0]?.clockInManual || day.clockInManual,
-      clockOut: latestClockOut || day.clockOutManual,
+      clockIn: earliest ? { time: earliest.time, nextDay: false } : undefined,
+      clockOut: latest ? { time: latest.time, nextDay: latest.abs >= 1440 } : undefined,
     };
   };
 
   // 3-way lunch summary: 0 breaks → none; 1 break → its times; 2+ → multiple.
-  const getDayLunch = (day: DocumentData): { lunchOut?: string; lunchIn?: string; isMultiple: boolean } => {
+  // nextDay for a break time is inferred relative to the owning segment's
+  // clock-in (any time before clock-in minutes rolled past midnight).
+  const getDayLunch = (day: DocumentData): { lunchOut?: TimeBoundary; lunchIn?: TimeBoundary; isMultiple: boolean } => {
     const segs = day.segments;
     if (!Array.isArray(segs) || segs.length === 0) {
       const hasBreak = !!day.lunchOutManual && !!day.lunchInManual;
+      if (!hasBreak) return { isMultiple: false };
+      const inM = toMinutes(day.clockInManual);
+      const loM = toMinutes(day.lunchOutManual);
+      const liM = toMinutes(day.lunchInManual);
       return {
-        lunchOut: hasBreak ? day.lunchOutManual : undefined,
-        lunchIn: hasBreak ? day.lunchInManual : undefined,
+        lunchOut: { time: day.lunchOutManual, nextDay: !Number.isNaN(inM) && !Number.isNaN(loM) && loM < inM },
+        lunchIn: { time: day.lunchInManual, nextDay: !Number.isNaN(inM) && !Number.isNaN(liM) && liM < inM },
         isMultiple: false,
       };
     }
-    const breaks = segs
-      .filter((s: DocumentData) => !s.skipLunch && !!s.lunchOutManual && !!s.lunchInManual)
-      .sort((a: DocumentData, b: DocumentData) =>
-        String(a.lunchOutManual || '').localeCompare(String(b.lunchOutManual || ''))
-      );
+    const breaks: { lunchOut: TimeBoundary; lunchIn: TimeBoundary }[] = [];
+    for (const s of segs) {
+      if (s.skipLunch || !s.lunchOutManual || !s.lunchInManual) continue;
+      const inM = toMinutes(s.clockInManual);
+      const loM = toMinutes(s.lunchOutManual);
+      const liM = toMinutes(s.lunchInManual);
+      breaks.push({
+        lunchOut: { time: s.lunchOutManual, nextDay: !Number.isNaN(inM) && !Number.isNaN(loM) && loM < inM },
+        lunchIn: { time: s.lunchInManual, nextDay: !Number.isNaN(inM) && !Number.isNaN(liM) && liM < inM },
+      });
+    }
     if (breaks.length === 0) return { isMultiple: false };
     if (breaks.length === 1) {
-      return { lunchOut: breaks[0].lunchOutManual, lunchIn: breaks[0].lunchInManual, isMultiple: false };
+      return { lunchOut: breaks[0].lunchOut, lunchIn: breaks[0].lunchIn, isMultiple: false };
     }
     return { isMultiple: true };
+  };
+
+  // nextDay for a single segment field, inferred against that segment's
+  // clock-in (any time before clock-in minutes rolled past midnight).
+  const segFieldNextDay = (
+    seg: DocumentData,
+    field: 'clockOutManual' | 'lunchOutManual' | 'lunchInManual',
+  ): boolean => {
+    const inM = toMinutes(seg.clockInManual);
+    const t = toMinutes(seg[field]);
+    if (Number.isNaN(inM) || Number.isNaN(t)) return false;
+    return t < inM;
   };
 
   const fmtTime = (t: string | undefined): string => {
@@ -287,6 +373,24 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
     const ampm = hour >= 12 ? 'PM' : 'AM';
     const dh = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
     return `${dh}:${m} ${ampm}`;
+  };
+
+  // Render a time boundary (or raw segment time) with a subtle "+1d" badge
+  // when the timestamp falls on the next calendar day relative to its shift's
+  // clock-in. Used in both the parent summary row and the per-shift sub-rows.
+  const NextDayBadge = () => (
+    <span className="ml-1 inline-flex items-center rounded bg-purple-100 px-1 text-[9px] font-medium text-purple-700 align-middle">
+      +1d
+    </span>
+  );
+  const fmtBoundary = (b: TimeBoundary | undefined): JSX.Element => {
+    if (!b || !b.time) return <span>--</span>;
+    return (
+      <span>
+        {fmtTime(b.time)}
+        {b.nextDay && <NextDayBadge />}
+      </span>
+    );
   };
 
   return (
@@ -523,14 +627,14 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                                     )}
                                   </span>
                                 </td>
-                                <td className="p-1.5">{fmtTime(b.clockIn)}</td>
+                                <td className="p-1.5">{fmtBoundary(b.clockIn)}</td>
                                 <td className="p-1.5">
-                                  {lunch.isMultiple ? <span className="italic text-slate-400">Multiple</span> : fmtTime(lunch.lunchOut)}
+                                  {lunch.isMultiple ? <span className="italic text-slate-400">Multiple</span> : fmtBoundary(lunch.lunchOut)}
                                 </td>
                                 <td className="p-1.5">
-                                  {lunch.isMultiple ? <span className="italic text-slate-400">Multiple</span> : fmtTime(lunch.lunchIn)}
+                                  {lunch.isMultiple ? <span className="italic text-slate-400">Multiple</span> : fmtBoundary(lunch.lunchIn)}
                                 </td>
-                                <td className="p-1.5">{fmtTime(b.clockOut)}</td>
+                                <td className="p-1.5">{fmtBoundary(b.clockOut)}</td>
                                 <td className="p-1.5 text-right">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
                                 <td className="p-1.5 text-right">{(((day.otMinutes || 0) + (day.doubleTimeMinutes || 0)) / 60).toFixed(1)}</td>
                                 <td className="p-1.5 text-right font-semibold">{((day.totalWorkMinutes || 0) / 60).toFixed(1)}</td>
@@ -542,14 +646,14 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                                 rows.push(
                                   <tr key={`${day.workDate}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
                                     <td className="p-1.5 pl-6 text-purple-700 font-medium">↳ Shift {i + 1}</td>
-                                    <td className="p-1.5">{fmtTime(seg.clockInManual)}</td>
+                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockInManual, nextDay: false })}</td>
                                     <td className="p-1.5">
-                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtTime(seg.lunchOutManual)}
+                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, nextDay: segFieldNextDay(seg, 'lunchOutManual') })}
                                     </td>
                                     <td className="p-1.5">
-                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtTime(seg.lunchInManual)}
+                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, nextDay: segFieldNextDay(seg, 'lunchInManual') })}
                                     </td>
-                                    <td className="p-1.5">{fmtTime(seg.clockOutManual)}</td>
+                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockOutManual, nextDay: segFieldNextDay(seg, 'clockOutManual') })}</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
                                     <td className="p-1.5 text-right text-purple-700 font-semibold">{((seg.workMinutes || 0) / 60).toFixed(1)}</td>
