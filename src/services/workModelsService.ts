@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, addDoc, updateDoc, query, limit, where } from 'firebase/firestore';
+import { collection, doc, getDocs, addDoc, updateDoc, query, limit } from 'firebase/firestore';
 import { db } from '../app/lib/firebase';
 
 export interface WorkModel {
@@ -58,25 +58,47 @@ function mapDoc(id: string, data: any): WorkModel {
   };
 }
 
+/**
+ * Read all non-voided work models, surfaced to the Settings UI / pill resolver /
+ * dropdown.
+ *
+ * IMPORTANT: this queries the collection WITHOUT a Firestore `status != 'voided'`
+ * inequality filter and instead filters client-side. Firestore inequality
+ * queries silently EXCLUDE documents that lack the filtered field entirely, so
+ * the old `where('status', '!=', 'voided')` made legacy workModel docs (created
+ * before the `status` field existed) invisible to both this list AND to
+ * `ensureSeeded`'s emptiness check — which caused `ensureSeeded` to think the
+ * collection was empty and double-seed the defaults (4 docs: 2 active + 2
+ * orphaned status-less). Querying directly and filtering `status !== 'voided'`
+ * in JS recognizes active AND status-less docs, so the legacy orphans become
+ * visible/manageable and re-seeding no longer fires while they exist.
+ */
+async function fetchActiveWorkModels(): Promise<WorkModel[]> {
+  const snap = await getDocs(query(collection(db, 'workModels'), limit(500)));
+  return snap.docs
+    .filter(d => d.get('status') !== 'voided')
+    .map(d => mapDoc(d.id, d.data()));
+}
+
 export async function listWorkModels(): Promise<WorkModel[]> {
-  // Only active models are surfaced to Settings UI / pill resolver / dropdown.
   // Voided docs remain in the collection for referential integrity (users may
   // still reference a voided model via workModelId; the UI falls back gracefully).
-  const snap = await getDocs(query(collection(db, 'workModels'), where('status', '!=', 'voided'), limit(500)));
-  if (snap.empty) {
+  const models = await fetchActiveWorkModels();
+  if (models.length === 0) {
     await ensureSeeded();
-    const reSnap = await getDocs(query(collection(db, 'workModels'), where('status', '!=', 'voided'), limit(500)));
-    return reSnap.docs.map(d => mapDoc(d.id, d.data()));
+    return fetchActiveWorkModels();
   }
-  return snap.docs.map(d => mapDoc(d.id, d.data()));
+  return models;
 }
 
 export async function ensureSeeded(): Promise<void> {
-  // Only seed if there are no ACTIVE models. A collection of only-voided docs
-  // (everything deleted) should still re-seed the defaults so the app isn't
-  // left with zero usable models.
-  const snap = await getDocs(query(collection(db, 'workModels'), where('status', '!=', 'voided'), limit(1)));
-  if (!snap.empty) return;
+  // Seed only if there are zero usable (non-voided) models — including legacy
+  // status-less docs, which count as usable so we never re-seed over them.
+  // See fetchActiveWorkModels for why we avoid the status inequality filter.
+  // A collection of only-voided docs (everything deleted) still re-seeds the
+  // defaults so the app isn't left with zero usable models.
+  const models = await fetchActiveWorkModels();
+  if (models.length > 0) return;
   for (const model of DEFAULT_MODELS) {
     await addDoc(collection(db, 'workModels'), { ...model, status: 'active' });
   }
