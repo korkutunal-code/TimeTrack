@@ -8,6 +8,9 @@ import { db } from '../app/lib/firebase';
 export interface GlobalSettings {
   enable_email_reminders: boolean;
   enable_sms_reminders: boolean;
+  enable_lunch_reminder: boolean;
+  enable_clockout_reminder: boolean;
+  enable_longshift_reminder: boolean;
   lunch_reminder_time: string;
   clockout_reminder_time: string;
   longshift_threshold_hours: number;
@@ -21,6 +24,9 @@ export interface GlobalSettings {
 export const DEFAULT_SETTINGS: GlobalSettings = {
   enable_email_reminders: true,
   enable_sms_reminders: false,
+  enable_lunch_reminder: true,
+  enable_clockout_reminder: true,
+  enable_longshift_reminder: true,
   lunch_reminder_time: '15:00',
   clockout_reminder_time: '18:00',
   longshift_threshold_hours: 10,
@@ -70,6 +76,11 @@ function mapSettings(data: Record<string, unknown>): GlobalSettings {
   return {
     enable_email_reminders: data.enable_email_reminders !== false,
     enable_sms_reminders: data.enable_sms_reminders === true,
+    // Per-reminder enable flags default to true (missing field = enabled) so
+    // legacy docs that predate these fields keep reminders on.
+    enable_lunch_reminder: data.enable_lunch_reminder !== false,
+    enable_clockout_reminder: data.enable_clockout_reminder !== false,
+    enable_longshift_reminder: data.enable_longshift_reminder !== false,
     lunch_reminder_time: (data.lunch_reminder_time as string) || DEFAULT_SETTINGS.lunch_reminder_time,
     clockout_reminder_time: (data.clockout_reminder_time as string) || DEFAULT_SETTINGS.clockout_reminder_time,
     longshift_threshold_hours: (data.longshift_threshold_hours as number) ?? DEFAULT_SETTINGS.longshift_threshold_hours,

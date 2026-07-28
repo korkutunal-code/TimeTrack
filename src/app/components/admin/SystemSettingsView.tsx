@@ -65,9 +65,12 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
       // Single consolidated write: all 9 settings fields + audit metadata in
       // one document (systemSettings/global). { merge: true } preserves any
       // extra fields other services may have added.
-      await setDoc(doc(db, 'systemSettings', 'global'), {
+      const payload: Record<string, unknown> = {
         enable_email_reminders: systemSettings.enable_email_reminders,
         enable_sms_reminders: systemSettings.enable_sms_reminders,
+        enable_lunch_reminder: systemSettings.enable_lunch_reminder,
+        enable_clockout_reminder: systemSettings.enable_clockout_reminder,
+        enable_longshift_reminder: systemSettings.enable_longshift_reminder,
         lunch_reminder_time: systemSettings.lunch_reminder_time,
         clockout_reminder_time: systemSettings.clockout_reminder_time,
         longshift_threshold_hours: systemSettings.longshift_threshold_hours,
@@ -76,11 +79,18 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
         biweekly_start_date: systemSettings.biweekly_start_date,
         monthly_start_day: systemSettings.monthly_start_day,
         locked_up_to_date: systemSettings.locked_up_to_date,
-        locked_at: Timestamp.now(),
-        locked_by: currentUser.uid,
         updatedAt: Timestamp.now(),
         updatedBy: currentUser.uid,
-      }, { merge: true });
+      };
+      // Accuracy guard: only stamp the payroll-lock audit fields when the lock
+      // date actually changed in this save. Previously these were stamped on
+      // every save (even a reminder-time-only edit), which misrecorded who/when
+      // "locked" the period. The field names are explicit about their meaning.
+      if (systemSettings.locked_up_to_date !== initialSettings.locked_up_to_date) {
+        payload.payroll_entries_locked_at = Timestamp.now();
+        payload.payroll_entries_locked_by = currentUser.uid;
+      }
+      await setDoc(doc(db, 'systemSettings', 'global'), payload, { merge: true });
 
       setInitialSettings({ ...systemSettings });
       setShowHighlight(false);
@@ -93,7 +103,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
     } finally {
       setSaving(false);
     }
-  }, [systemSettings, currentUser.uid]);
+  }, [systemSettings, currentUser.uid, initialSettings.locked_up_to_date]);
 
   const discardInternal = useCallback(() => {
     setSystemSettings({ ...stateRef.current.initialSettings });
@@ -202,11 +212,11 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                 </label>
               </div>
 
-              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('lunch_reminder_time')}`}>
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('enable_lunch_reminder')}`}>
                 <label className="flex items-center gap-2">
                   <Checkbox
-                    checked={!!systemSettings.lunch_reminder_time}
-                    onCheckedChange={(checked) => update('lunch_reminder_time', checked ? (systemSettings.lunch_reminder_time || '15:00') : '')}
+                    checked={systemSettings.enable_lunch_reminder}
+                    onCheckedChange={(checked) => update('enable_lunch_reminder', !!checked)}
                   />
                   <Label>Lunch Reminder</Label>
                 </label>
@@ -219,11 +229,11 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                 <p className="text-xs text-slate-400">If they haven't logged lunch out. Pacific time.</p>
               </div>
 
-              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('clockout_reminder_time')}`}>
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('enable_clockout_reminder')}`}>
                 <label className="flex items-center gap-2">
                   <Checkbox
-                    checked={!!systemSettings.clockout_reminder_time}
-                    onCheckedChange={(checked) => update('clockout_reminder_time', checked ? (systemSettings.clockout_reminder_time || '18:00') : '')}
+                    checked={systemSettings.enable_clockout_reminder}
+                    onCheckedChange={(checked) => update('enable_clockout_reminder', !!checked)}
                   />
                   <Label>Clock Out Reminder</Label>
                 </label>
@@ -236,11 +246,11 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                 <p className="text-xs text-slate-400">If still clocked in. Pacific time.</p>
               </div>
 
-              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('longshift_threshold_hours')}`}>
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('enable_longshift_reminder')}`}>
                 <label className="flex items-center gap-2">
                   <Checkbox
-                    checked={!!systemSettings.longshift_threshold_hours}
-                    onCheckedChange={(checked) => update('longshift_threshold_hours', checked ? (systemSettings.longshift_threshold_hours || 10) : 0)}
+                    checked={systemSettings.enable_longshift_reminder}
+                    onCheckedChange={(checked) => update('enable_longshift_reminder', !!checked)}
                   />
                   <Label>Long Shift Threshold (Hours)</Label>
                 </label>

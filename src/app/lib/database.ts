@@ -1371,8 +1371,8 @@ class DatabaseService {
   async setPayrollLock(dateStr: string, adminId: string): Promise<void> {
     await setDoc(doc(db, 'systemSettings', 'global'), {
       locked_up_to_date: dateStr,
-      locked_at: Timestamp.now(),
-      locked_by: adminId,
+      payroll_entries_locked_at: Timestamp.now(),
+      payroll_entries_locked_by: adminId,
       updatedAt: Timestamp.now(),
       updatedBy: adminId,
     }, { merge: true });
