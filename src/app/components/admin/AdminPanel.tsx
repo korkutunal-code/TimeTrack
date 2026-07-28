@@ -50,17 +50,19 @@ const STATUS_OPTIONS = [
 ];
 
 // Customizable columns in the Manage Users table. "User" is intentionally
-// excluded — it is always visible. Widths are percentages of the table width
-// used under `table-fixed`; the User column absorbs whatever remains so the
-// visible columns always sum to 100%.
+// excluded — it is always visible and has no explicit width so it auto-fills
+// all remaining horizontal space under `table-fixed`. Badge/action columns use
+// fixed widths set directly on their <th>; when a column is hidden it is
+// removed from the DOM, so its width no longer counts and the User column
+// gracefully absorbs the freed space.
 type UserColumn = 'workModel' | 'role' | 'status' | 'edit' | 'delete';
 
-const CUSTOMIZABLE_COLUMNS: { key: UserColumn; label: string; width: number }[] = [
-  { key: 'workModel', label: 'Work Model', width: 18 },
-  { key: 'role', label: 'Role', width: 18 },
-  { key: 'status', label: 'Status', width: 18 },
-  { key: 'edit', label: 'Edit', width: 7 },
-  { key: 'delete', label: 'Delete', width: 7 },
+const CUSTOMIZABLE_COLUMNS: { key: UserColumn; label: string }[] = [
+  { key: 'workModel', label: 'Work Model' },
+  { key: 'role', label: 'Role' },
+  { key: 'status', label: 'Status' },
+  { key: 'edit', label: 'Edit' },
+  { key: 'delete', label: 'Delete' },
 ];
 
 const DEFAULT_VISIBLE_COLUMNS: Record<UserColumn, boolean> = {
@@ -82,6 +84,35 @@ function loadVisibleColumns(uid: string | undefined): Record<UserColumn, boolean
     // Corrupt or unavailable localStorage — fall back to defaults.
   }
   return DEFAULT_VISIBLE_COLUMNS;
+}
+
+// Per-admin active header filter selections (Work Model / Role / Status).
+// Falls back to "all selected" when no saved key exists or storage is blocked.
+function loadActiveFilters(uid: string | undefined): {
+  workModels: string[];
+  roles: string[];
+  statuses: string[];
+} {
+  const defaults = {
+    workModels: WORK_MODEL_OPTIONS.map(o => o.value),
+    roles: ROLE_OPTIONS.map(o => o.value),
+    statuses: STATUS_OPTIONS.map(o => o.value),
+  };
+  if (!uid) return defaults;
+  try {
+    const saved = localStorage.getItem(`manage_users_active_filters_${uid}`);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        workModels: Array.isArray(parsed.workModels) ? parsed.workModels : defaults.workModels,
+        roles: Array.isArray(parsed.roles) ? parsed.roles : defaults.roles,
+        statuses: Array.isArray(parsed.statuses) ? parsed.statuses : defaults.statuses,
+      };
+    }
+  } catch {
+    // Corrupt or unavailable localStorage — fall back to all selected.
+  }
+  return defaults;
 }
 
 function FilterHeader({
@@ -183,9 +214,11 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   });
 
   const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [selectedWorkModels, setSelectedWorkModels] = useState<string[]>(WORK_MODEL_OPTIONS.map(o => o.value));
-  const [selectedRoles, setSelectedRoles] = useState<string[]>(ROLE_OPTIONS.map(o => o.value));
-  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(STATUS_OPTIONS.map(o => o.value));
+  // Header filter selections, restored per-admin from localStorage on mount.
+  const [initialFilters] = useState(() => loadActiveFilters(currentUser.uid));
+  const [selectedWorkModels, setSelectedWorkModels] = useState<string[]>(initialFilters.workModels);
+  const [selectedRoles, setSelectedRoles] = useState<string[]>(initialFilters.roles);
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(initialFilters.statuses);
   const [openFilterMenu, setOpenFilterMenu] = useState<FilterColumn | null>(null);
   const [openMobileFilterMenu, setOpenMobileFilterMenu] = useState<FilterColumn | null>(null);
 
@@ -210,10 +243,22 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const toggleColumn = (col: UserColumn) =>
     setVisibleColumns(prev => ({ ...prev, [col]: !prev[col] }));
 
-  // User column width absorbs the remainder so visible columns sum to 100%.
-  const userColWidth = 100 - CUSTOMIZABLE_COLUMNS
-    .filter(c => visibleColumns[c.key])
-    .reduce((sum, c) => sum + c.width, 0);
+  // Persist active filter selections per-admin so they survive refresh/relogin.
+  useEffect(() => {
+    if (!currentUser.uid) return;
+    try {
+      localStorage.setItem(
+        `manage_users_active_filters_${currentUser.uid}`,
+        JSON.stringify({
+          workModels: selectedWorkModels,
+          roles: selectedRoles,
+          statuses: selectedStatuses,
+        }),
+      );
+    } catch {
+      // Storage unavailable (private mode / quota) — filters stay in-memory only.
+    }
+  }, [selectedWorkModels, selectedRoles, selectedStatuses, currentUser.uid]);
 
   const [correctionEntry, setCorrectionEntry] = useState<TimeEntry | null>(null);
   const [originalCorrectionEntry, setOriginalCorrectionEntry] = useState<TimeEntry | null>(null);
@@ -741,27 +786,27 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             <Table className="table-fixed w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="text-left" style={{ width: `${userColWidth}%` }}>User</TableHead>
+                  <TableHead className="text-left">User</TableHead>
                   {visibleColumns.workModel && (
-                    <TableHead className="w-[18%] text-center">
+                    <TableHead className="w-36 whitespace-nowrap text-center">
                       <FilterHeader column="workModel" title="Work Model" options={WORK_MODEL_OPTIONS} selected={selectedWorkModels} setSelected={setSelectedWorkModels} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
                     </TableHead>
                   )}
                   {visibleColumns.role && (
-                    <TableHead className="w-[18%] text-center">
+                    <TableHead className="w-36 whitespace-nowrap text-center">
                       <FilterHeader column="role" title="Role" options={ROLE_OPTIONS} selected={selectedRoles} setSelected={setSelectedRoles} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
                     </TableHead>
                   )}
                   {visibleColumns.status && (
-                    <TableHead className="w-[18%] text-center">
+                    <TableHead className="w-36 whitespace-nowrap text-center">
                       <FilterHeader column="status" title="Status" options={STATUS_OPTIONS} selected={selectedStatuses} setSelected={setSelectedStatuses} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
                     </TableHead>
                   )}
                   {visibleColumns.edit && (
-                    <TableHead className="w-[7%] text-center">Edit</TableHead>
+                    <TableHead className="w-16 text-center">Edit</TableHead>
                   )}
                   {visibleColumns.delete && (
-                    <TableHead className="w-[7%] text-center">Delete</TableHead>
+                    <TableHead className="w-16 text-center">Delete</TableHead>
                   )}
                 </TableRow>
               </TableHeader>
