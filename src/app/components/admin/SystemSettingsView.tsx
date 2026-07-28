@@ -166,7 +166,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
 
   if (loadingSettings) {
     return (
-      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl">
+      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
         <CardContent className="py-12 text-center text-sm text-slate-500">
           Loading settings...
         </CardContent>
@@ -176,7 +176,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
 
   return (
     <div className="space-y-6">
-      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl">
+      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
         <CardHeader className="bg-white/40 pb-2">
           <button
             type="button"
@@ -191,7 +191,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
           </button>
         </CardHeader>
         {isReminderSettingsOpen && (
-          <CardContent className="pt-4">
+          <CardContent className="pt-2">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
               <div className="space-y-4">
                 <label className="flex items-center gap-2">
@@ -269,7 +269,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
         )}
       </Card>
 
-      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl">
+      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
         <CardHeader className="bg-white/40 pb-2">
           <button
             type="button"
@@ -284,7 +284,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
           </button>
         </CardHeader>
         {isPayrollSettingsOpen && (
-        <CardContent className="space-y-4 pt-4">
+        <CardContent className="space-y-4 pt-2">
           <div className={`rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('payroll_cycle_type')}`}>
             <Label>Payroll Cycle Type</Label>
             <Select
@@ -356,7 +356,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
       </Card>
 
       {/* Lock Payroll Period — destyled to match the other cards (no red). */}
-      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl">
+      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
         <CardHeader className="bg-white/40 pb-2">
           <button
             type="button"
@@ -371,7 +371,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
           </button>
         </CardHeader>
         {isLockPeriodOpen && (
-        <CardContent className="space-y-3 pt-4">
+        <CardContent className="space-y-3 pt-2">
           <div className={`space-y-3 bg-white p-4 border border-slate-200 rounded-lg transition-colors ${fieldHighlight('locked_up_to_date')}`}>
             <div>
               <Label className="text-slate-900">Lock Entries Up To (Inclusive)</Label>
