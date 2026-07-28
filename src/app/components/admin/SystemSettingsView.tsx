@@ -31,7 +31,7 @@ export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
   });
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [isReminderSettingsOpen, setIsReminderSettingsOpen] = useState(true);
+  const [isReminderSettingsOpen, setIsReminderSettingsOpen] = useState(false);
 
   const loadSettings = async () => {
     setLoadingSettings(true);
@@ -117,7 +117,7 @@ export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
             aria-expanded={isReminderSettingsOpen}
             className="w-full flex items-center justify-between text-left"
           >
-            <CardTitle className="text-slate-800 font-bold">Reminder Settings</CardTitle>
+            <CardTitle className="text-slate-800 font-bold">Reminder Settings <span className="text-slate-400 font-normal">- Coming Soon</span></CardTitle>
             <ChevronDown
               className={`size-5 text-slate-500 transition-transform duration-200 ${isReminderSettingsOpen ? 'rotate-180' : 'rotate-0'}`}
             />
