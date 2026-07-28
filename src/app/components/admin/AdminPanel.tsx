@@ -18,7 +18,7 @@ import { UserAvatar } from '../ui/user-avatar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 import { WorkModelOverrideModal } from './WorkModelOverrideModal';
 import { toast } from 'sonner';
-import { UserPlus, Upload, Download, Edit, Trash2, CheckCircle2, HelpCircle, ChevronDown, Loader2, UserCheck, UserX, Building2, Laptop, Shield, Filter, Sliders, Briefcase } from 'lucide-react';
+import { UserPlus, Upload, Download, Edit, Trash2, CheckCircle2, Loader2, UserCheck, UserX, Building2, Laptop, Shield, Filter, Sliders, Briefcase } from 'lucide-react';
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
@@ -128,7 +128,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const [selectedRole, setSelectedRole] = useState<User['role'] | null>(null);
   const [updatingRole, setUpdatingRole] = useState(false);
   const [roleError, setRoleError] = useState<string | null>(null);
-  const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [workModels, setWorkModels] = useState<WorkModelDef[]>([]);
 
   useEffect(() => {
@@ -570,34 +569,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
 
   return (
     <div className="space-y-6">
-      {/* Admin Quick Start Guide */}
-      <Card className="border border-indigo-200 shadow-xl bg-gradient-to-br from-indigo-50 to-white/80 backdrop-blur-xl rounded-2xl overflow-hidden">
-        <CardHeader className="bg-white/40 border-b border-indigo-50 pb-3">
-          <button
-            type="button"
-            onClick={() => setIsGuideOpen((open) => !open)}
-            aria-expanded={isGuideOpen}
-            aria-controls="admin-quick-start-guide-body"
-            className="w-full flex items-center justify-between text-left group"
-          >
-            <CardTitle className="text-indigo-800 font-bold flex items-center gap-2 text-base">
-              <HelpCircle className="size-5 text-indigo-500" />
-              Admin Quick Start Guide
-            </CardTitle>
-            <ChevronDown
-              className={`size-5 text-indigo-500 shrink-0 transition-transform duration-200 group-hover:text-indigo-700 ${isGuideOpen ? 'rotate-180' : 'rotate-0'}`}
-            />
-          </button>
-        </CardHeader>
-        {isGuideOpen && (
-          <CardContent id="admin-quick-start-guide-body" className="pt-4 text-sm text-slate-700 space-y-3">
-            <p><strong>1. Adding Users:</strong> Use "Create New User" to add individuals, or "Bulk Import" to upload a batch via CSV.</p>
-            <p><strong>2. Fixing Mistakes:</strong> If an employee forgets to clock out, their day is marked incomplete. Click "Correct Entry" below to manually input their times and unblock them for the next day.</p>
-            <p><strong>3. Deactivation:</strong> When an employee leaves, use "Deactivate" rather than "Delete" to preserve their historical time records.</p>
-          </CardContent>
-        )}
-      </Card>
-
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl overflow-hidden">
         <CardContent className="flex flex-row items-center gap-4 flex-wrap py-4">
           <CardTitle className="text-slate-800 font-bold whitespace-nowrap">Quick Actions</CardTitle>
@@ -613,6 +584,18 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             <Edit className="size-4 mr-2" />
             Correct Entry
           </Button>
+          <div className="ml-auto">
+            <SectionHelp
+              title="Admin Quick Start Guide"
+              description="This panel lets you view, edit, and manage users and time entries within the system."
+              sections={[
+                { title: "Adding Users", content: 'Use "Create New User" to add individuals, or "Bulk Import" to upload a batch via CSV template.' },
+                { title: "Fixing Mistakes", content: 'If an employee forgets to clock out, click "Correct Entry" to manually input their times and unblock them.' },
+                { title: "Deactivation", content: "Deactivate users instead of deleting them to preserve historical time records and aggregates." },
+                { title: "Column Filters", content: "Click the filter icon next to the Work Model, Role, or Status column headers to filter users via multi-select checkboxes." },
+              ]}
+            />
+          </div>
         </CardContent>
       </Card>
 
@@ -620,15 +603,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         <CardHeader className="bg-white/40 pb-2">
           <CardTitle className="text-slate-800 font-bold flex items-center justify-between">
             <span>Manage Users</span>
-            <SectionHelp 
-              title="User Management"
-              description="This panel lets you view, edit, and create employees within the system."
-              sections={[
-                { title: "Adding Users", content: "Create a new profile or bulk import via CSV template." },
-                { title: "Status Toggle", content: "Deactivate users instead of deleting them to preserve historical aggregates." },
-                { title: "Column Filters", content: "Click the filter icon next to the Work Model, Role, or Status column headers to filter users via multi-select checkboxes." }
-              ]}
-            />
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
