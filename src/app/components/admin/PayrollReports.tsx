@@ -31,6 +31,7 @@ interface PayrollReportsProps {
 interface PayrollSummary {
   userId: string;
   userName: string;
+  workModel: string;
   regularHours: number;
   overtimeHours: number;
   doubleTimeHours: number;
@@ -262,6 +263,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
         summaries.push({
           userId,
           userName: allUsers.find(u => u.uid === userId)?.name || 'Unknown',
+          workModel: userWorkModel?.name || userObj?.workModel || 'On-site',
           regularHours: (ot.grandTotals.regularMinutes || 0) / 60,
           overtimeHours: (ot.grandTotals.otMinutes || 0) / 60,
           doubleTimeHours: (ot.grandTotals.doubleTimeMinutes || 0) / 60,
@@ -733,6 +735,24 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                             };
                             const dayTotalHours = (day.totalWorkMinutes || 0) / 60;
 
+                            // Missing-lunch flag for the daily aggregate row.
+                            // Applies ONLY to On-site employees. Lunch is
+                            // "missing" when no break was recorded anywhere in
+                            // the day — i.e. getDayLunch returned no lunchOut/
+                            // lunchIn and isMultiple is false (0 breaks total
+                            // across all shifts). If any shift took a lunch,
+                            // getDayLunch returns either the single break's
+                            // times or isMultiple:true, so the row is not
+                            // flagged. Sub-shift rows are intentionally exempt.
+                            const isOnsite = summary.workModel === 'On-site';
+                            const lunchMissing = isOnsite && !lunch.isMultiple && !lunch.lunchOut && !lunch.lunchIn;
+
+                            const renderLunchCell = (boundary: TimeBoundary | undefined): JSX.Element => {
+                              if (lunch.isMultiple) return <span className="italic text-slate-400">Multiple</span>;
+                              if (lunchMissing) return <span className="inline-block bg-red-50 text-red-600 rounded px-1.5 py-0.5">--</span>;
+                              return fmtBoundary(boundary);
+                            };
+
                             const rows: JSX.Element[] = [
                               <tr key={day.workDate} className="border-b border-slate-100 hover:bg-slate-50/50">
                                 <td className="p-1.5 font-medium">
@@ -750,10 +770,10 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                                 </td>
                                 <td className="p-1.5">{fmtBoundary(b.clockIn)}</td>
                                 <td className="p-1.5">
-                                  {lunch.isMultiple ? <span className="italic text-slate-400">Multiple</span> : fmtBoundary(lunch.lunchOut)}
+                                  {renderLunchCell(lunch.lunchOut)}
                                 </td>
                                 <td className="p-1.5">
-                                  {lunch.isMultiple ? <span className="italic text-slate-400">Multiple</span> : fmtBoundary(lunch.lunchIn)}
+                                  {renderLunchCell(lunch.lunchIn)}
                                 </td>
                                 <td className="p-1.5">{fmtBoundary(b.clockOut)}</td>
                                 <td className="p-1.5 text-right">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
