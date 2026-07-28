@@ -84,21 +84,23 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
   const saveInternal = useCallback(async (): Promise<boolean> => {
     setSaving(true);
     try {
-      await setDoc(doc(db, 'systemSettings', 'reminders'), {
+      // Single consolidated write: all 9 settings fields + audit metadata in
+      // one document (systemSettings/global). { merge: true } preserves any
+      // extra fields other services may have added.
+      await setDoc(doc(db, 'systemSettings', 'global'), {
         enable_email_reminders: systemSettings.enable_email_reminders,
         enable_sms_reminders: systemSettings.enable_sms_reminders,
         lunch_reminder_time: systemSettings.lunch_reminder_time,
         clockout_reminder_time: systemSettings.clockout_reminder_time,
         longshift_threshold_hours: systemSettings.longshift_threshold_hours,
-      }, { merge: true });
-
-      await setDoc(doc(db, 'systemSettings', 'payroll'), {
         payroll_cycle_type: systemSettings.payroll_cycle_type,
         weekly_start_day: systemSettings.weekly_start_day,
         biweekly_start_date: systemSettings.biweekly_start_date,
         locked_up_to_date: systemSettings.locked_up_to_date,
         locked_at: Timestamp.now(),
         locked_by: currentUser.uid,
+        updatedAt: Timestamp.now(),
+        updatedBy: currentUser.uid,
       }, { merge: true });
 
       setInitialSettings({ ...systemSettings });
@@ -131,25 +133,22 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
   const loadSettings = async () => {
     setLoadingSettings(true);
     try {
-      const remindersSnap = await getDoc(doc(db, 'systemSettings', 'reminders'));
-      const payrollSnap = await getDoc(doc(db, 'systemSettings', 'payroll'));
-
-      let rData: DocumentData = {};
-      let pData: DocumentData = {};
-
-      if (remindersSnap.exists()) rData = remindersSnap.data();
-      if (payrollSnap.exists()) pData = payrollSnap.data();
+      // Single consolidated read: all 9 settings fields + audit metadata live
+      // in one document (systemSettings/global). Previously split across
+      // systemSettings/reminders + systemSettings/payroll.
+      const snap = await getDoc(doc(db, 'systemSettings', 'global'));
+      const data: DocumentData = snap.exists() ? snap.data() : {};
 
       const next: SystemSettings = {
-        enable_email_reminders: rData.enable_email_reminders !== false,
-        enable_sms_reminders: rData.enable_sms_reminders === true,
-        lunch_reminder_time: rData.lunch_reminder_time || '15:00',
-        clockout_reminder_time: rData.clockout_reminder_time || '18:00',
-        longshift_threshold_hours: rData.longshift_threshold_hours || 10,
-        payroll_cycle_type: pData.payroll_cycle_type || 'biweekly',
-        weekly_start_day: pData.weekly_start_day ?? 1,
-        biweekly_start_date: pData.biweekly_start_date || '2024-01-01',
-        locked_up_to_date: pData.locked_up_to_date || '',
+        enable_email_reminders: data.enable_email_reminders !== false,
+        enable_sms_reminders: data.enable_sms_reminders === true,
+        lunch_reminder_time: data.lunch_reminder_time || '15:00',
+        clockout_reminder_time: data.clockout_reminder_time || '18:00',
+        longshift_threshold_hours: data.longshift_threshold_hours || 10,
+        payroll_cycle_type: data.payroll_cycle_type || 'biweekly',
+        weekly_start_day: data.weekly_start_day ?? 1,
+        biweekly_start_date: data.biweekly_start_date || '2024-01-01',
+        locked_up_to_date: data.locked_up_to_date || '',
       };
       setSystemSettings(next);
       setInitialSettings(next);

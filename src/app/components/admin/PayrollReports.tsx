@@ -51,7 +51,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
   useEffect(() => {
     const loadSettings = async () => {
       try {
-        const snap = await getDoc(doc(db, 'systemSettings', 'payroll'));
+        const snap = await getDoc(doc(db, 'systemSettings', 'global'));
         if (snap.exists()) {
           const data = snap.data();
           setPayrollSettings({

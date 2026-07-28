@@ -14,10 +14,10 @@ export const processReminders = functions.pubsub.schedule('every 5 minutes').onR
     functions.logger.info("Starting reminder evaluations...");
 
     try {
-        // 1. Fetch Global Settings
-        const settingsDoc = await db.collection('systemSettings').doc('reminders').get();
+        // 1. Fetch Global Settings (all system settings live in one doc)
+        const settingsDoc = await db.collection('systemSettings').doc('global').get();
         if (!settingsDoc.exists) {
-            functions.logger.warn("systemSettings/reminders doc missing. Proceeding with defaults.");
+            functions.logger.warn("systemSettings/global doc missing. Proceeding with defaults.");
         }
 
         const settings = settingsDoc.data() || {};
