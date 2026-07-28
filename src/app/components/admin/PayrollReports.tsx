@@ -500,7 +500,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
   // falls on a later calendar day than its shift's clock-in. Used in both the
   // parent summary row and the per-shift sub-rows.
   const DayOffsetBadge = ({ offset }: { offset: number }) => (
-    <span className="ml-1 inline-flex items-center rounded bg-purple-100 px-1 text-[9px] font-medium text-purple-700 align-middle">
+    <span className="ml-1 inline-flex items-center rounded bg-purple-100 px-1 text-sm font-medium text-purple-700 align-middle">
       +{offset}d
     </span>
   );
@@ -749,7 +749,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
 
                             const renderLunchCell = (boundary: TimeBoundary | undefined): JSX.Element => {
                               if (lunch.isMultiple) return <span className="italic text-slate-400">Multiple</span>;
-                              if (lunchMissing) return <span className="inline-block bg-red-50 text-red-600 rounded px-1.5 py-0.5">--</span>;
+                              if (lunchMissing) return <span className="inline-block bg-red-100 text-red-700 font-semibold border border-red-200 px-2 py-0.5 rounded">--</span>;
                               return fmtBoundary(boundary);
                             };
 
@@ -764,7 +764,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                                     )}
                                     {formatDateShortWithWeekday(day.workDate)}
                                     {isMultiShift && (
-                                      <span className="ml-1 text-[10px] font-normal text-slate-400">({segs.length} shifts)</span>
+                                      <span className="ml-1 text-sm font-normal text-slate-400">({segs.length} shifts)</span>
                                     )}
                                   </span>
                                 </td>
