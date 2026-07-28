@@ -5,6 +5,7 @@ import type { User } from './auth';
 import { stripUndefined, buildConsistentClosePatch, closeActiveSegment } from './segmentOps';
 import { deriveSegmentWorkMinutes } from '../../utils/timeCalculations';
 import { auditLogService } from '../../services/auditLogService';
+import { fetchGlobalSettings } from '../../services/systemSettingsService';
 
 /**
  * A single continuous work session ("shift"). A day may contain multiple
@@ -1361,11 +1362,10 @@ class DatabaseService {
   }
 
   async getPayrollSettings(): Promise<DocumentData | null> {
-    const snap = await getDoc(doc(db, 'systemSettings', 'global'));
-    if (snap.exists()) {
-      return snap.data();
-    }
-    return null;
+    // Read-through fallback: honors systemSettings/global, falling back to the
+    // legacy reminders/payroll docs when global isn't migrated yet, so the
+    // payroll lock date keeps taking effect during the migration window.
+    return fetchGlobalSettings();
   }
 
   async setPayrollLock(dateStr: string, adminId: string): Promise<void> {

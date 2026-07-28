@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
-import type { DocumentData } from 'firebase/firestore';
-import { doc, getDoc, setDoc, Timestamp } from 'firebase/firestore';
+import { doc, setDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { fetchGlobalSettings, DEFAULT_SETTINGS, type GlobalSettings } from '../../../services/systemSettingsService';
 import { User } from '../../lib/auth';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -17,18 +17,7 @@ interface SystemSettingsViewProps {
   currentUser: User;
 }
 
-interface SystemSettings {
-  enable_email_reminders: boolean;
-  enable_sms_reminders: boolean;
-  lunch_reminder_time: string;
-  clockout_reminder_time: string;
-  longshift_threshold_hours: number;
-  payroll_cycle_type: string;
-  weekly_start_day: number;
-  biweekly_start_date: string;
-  monthly_start_day: number;
-  locked_up_to_date: string;
-}
+type SystemSettings = GlobalSettings;
 
 /**
  * Imperative handle exposed to the parent (App.tsx) so it can drive the
@@ -44,19 +33,6 @@ export interface SettingsGuard {
    *  user picks "get back to the settings"). Cleared on save/discard. */
   highlightDirty: () => void;
 }
-
-const DEFAULT_SETTINGS: SystemSettings = {
-  enable_email_reminders: true,
-  enable_sms_reminders: false,
-  lunch_reminder_time: '15:00',
-  clockout_reminder_time: '18:00',
-  longshift_threshold_hours: 10,
-  payroll_cycle_type: 'biweekly',
-  weekly_start_day: 1,
-  biweekly_start_date: '2024-01-01',
-  monthly_start_day: 1,
-  locked_up_to_date: '',
-};
 
 const settingsEqual = (a: SystemSettings, b: SystemSettings): boolean =>
   JSON.stringify(a) === JSON.stringify(b);
@@ -136,26 +112,16 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
   const loadSettings = async () => {
     setLoadingSettings(true);
     try {
-      // Single consolidated read: all 9 settings fields + audit metadata live
-      // in one document (systemSettings/global). Previously split across
-      // systemSettings/reminders + systemSettings/payroll.
-      const snap = await getDoc(doc(db, 'systemSettings', 'global'));
-      const data: DocumentData = snap.exists() ? snap.data() : {};
-
-      const next: SystemSettings = {
-        enable_email_reminders: data.enable_email_reminders !== false,
-        enable_sms_reminders: data.enable_sms_reminders === true,
-        lunch_reminder_time: data.lunch_reminder_time || '15:00',
-        clockout_reminder_time: data.clockout_reminder_time || '18:00',
-        longshift_threshold_hours: data.longshift_threshold_hours || 10,
-        payroll_cycle_type: data.payroll_cycle_type || 'biweekly',
-        weekly_start_day: data.weekly_start_day ?? 1,
-        biweekly_start_date: data.biweekly_start_date || '2024-01-01',
-        monthly_start_day: data.monthly_start_day ?? 1,
-        locked_up_to_date: data.locked_up_to_date || '',
-      };
-      setSystemSettings(next);
-      setInitialSettings(next);
+      // Single consolidated read with read-through fallback: reads
+      // systemSettings/global; falls back to the legacy reminders/payroll
+      // docs (merged) when global doesn't exist yet, so a not-yet-migrated
+      // deployment keeps honoring configured values instead of reverting to
+      // hardcoded defaults.
+      const next = await fetchGlobalSettings();
+      if (next) {
+        setSystemSettings(next);
+        setInitialSettings(next);
+      }
     } catch (e) {
       console.error(e);
       toast.error("Failed to load settings");

@@ -1,0 +1,82 @@
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../app/lib/firebase';
+
+/**
+ * All system settings fields (reminders + payroll) consolidated into the
+ * single `systemSettings/global` document.
+ */
+export interface GlobalSettings {
+  enable_email_reminders: boolean;
+  enable_sms_reminders: boolean;
+  lunch_reminder_time: string;
+  clockout_reminder_time: string;
+  longshift_threshold_hours: number;
+  payroll_cycle_type: string;
+  weekly_start_day: number;
+  biweekly_start_date: string;
+  monthly_start_day: number;
+  locked_up_to_date: string;
+}
+
+export const DEFAULT_SETTINGS: GlobalSettings = {
+  enable_email_reminders: true,
+  enable_sms_reminders: false,
+  lunch_reminder_time: '15:00',
+  clockout_reminder_time: '18:00',
+  longshift_threshold_hours: 10,
+  payroll_cycle_type: 'biweekly',
+  weekly_start_day: 1,
+  biweekly_start_date: '2024-01-01',
+  monthly_start_day: 1,
+  locked_up_to_date: '',
+};
+
+/**
+ * Read consolidated system settings from `systemSettings/global`.
+ *
+ * Read-through fallback for the single-document migration: if `global` does
+ * not yet exist (i.e. the migration to the consolidated doc has not run and
+ * no admin has saved since), fall back to the legacy split documents
+ * `systemSettings/reminders` + `systemSettings/payroll` and merge their
+ * fields. This prevents a silent reversion to hardcoded defaults during the
+ * deployment window — configured reminder times / SMS opt-in / long-shift
+ * threshold / payroll cycle / lock date keep working until the first save
+ * writes `global`, at which point this fallback becomes dead code.
+ *
+ * Returns null only when NO settings doc exists anywhere (fresh install).
+ */
+export async function fetchGlobalSettings(): Promise<GlobalSettings | null> {
+  const globalSnap = await getDoc(doc(db, 'systemSettings', 'global'));
+  if (globalSnap.exists()) {
+    return mapSettings(globalSnap.data());
+  }
+
+  // Legacy read-through: global not yet present. Merge the old split docs.
+  const [remindersSnap, payrollSnap] = await Promise.all([
+    getDoc(doc(db, 'systemSettings', 'reminders')),
+    getDoc(doc(db, 'systemSettings', 'payroll')),
+  ]);
+  if (!remindersSnap.exists() && !payrollSnap.exists()) {
+    return null;
+  }
+  const merged = {
+    ...(remindersSnap.data() || {}),
+    ...(payrollSnap.data() || {}),
+  };
+  return mapSettings(merged);
+}
+
+function mapSettings(data: Record<string, unknown>): GlobalSettings {
+  return {
+    enable_email_reminders: data.enable_email_reminders !== false,
+    enable_sms_reminders: data.enable_sms_reminders === true,
+    lunch_reminder_time: (data.lunch_reminder_time as string) || DEFAULT_SETTINGS.lunch_reminder_time,
+    clockout_reminder_time: (data.clockout_reminder_time as string) || DEFAULT_SETTINGS.clockout_reminder_time,
+    longshift_threshold_hours: (data.longshift_threshold_hours as number) ?? DEFAULT_SETTINGS.longshift_threshold_hours,
+    payroll_cycle_type: (data.payroll_cycle_type as string) || DEFAULT_SETTINGS.payroll_cycle_type,
+    weekly_start_day: (data.weekly_start_day as number) ?? DEFAULT_SETTINGS.weekly_start_day,
+    biweekly_start_date: (data.biweekly_start_date as string) || DEFAULT_SETTINGS.biweekly_start_date,
+    monthly_start_day: (data.monthly_start_day as number) ?? DEFAULT_SETTINGS.monthly_start_day,
+    locked_up_to_date: (data.locked_up_to_date as string) || DEFAULT_SETTINGS.locked_up_to_date,
+  };
+}

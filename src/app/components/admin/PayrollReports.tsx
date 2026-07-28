@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
-import { collection, getDocs, orderBy, query, where, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import type { DocumentData } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { fetchGlobalSettings } from '../../../services/systemSettingsService';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -52,14 +53,15 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
   useEffect(() => {
     const loadSettings = async () => {
       try {
-        const snap = await getDoc(doc(db, 'systemSettings', 'global'));
-        if (snap.exists()) {
-          const data = snap.data();
+        // Read-through fallback: honors systemSettings/global, falling back to
+        // the legacy reminders/payroll docs when global isn't migrated yet.
+        const s = await fetchGlobalSettings();
+        if (s) {
           setPayrollSettings({
-            payroll_cycle_type: data.payroll_cycle_type || 'biweekly',
-            weekly_start_day: data.weekly_start_day ?? 1,
-            biweekly_start_date: data.biweekly_start_date || '2024-01-01',
-            monthly_start_day: data.monthly_start_day ?? 1,
+            payroll_cycle_type: s.payroll_cycle_type,
+            weekly_start_day: s.weekly_start_day,
+            biweekly_start_date: s.biweekly_start_date,
+            monthly_start_day: s.monthly_start_day,
           });
         }
       } catch (err) {
