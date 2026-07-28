@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { authService, User } from './lib/auth';
 import { dbService } from './lib/database';
 import { LoginPage } from './components/LoginPage';
@@ -11,12 +11,22 @@ import { PayrollReports } from './components/admin/PayrollReports';
 import { AuditViewer } from './components/admin/AuditViewer';
 import { PatternMetrics } from './components/admin/PatternMetrics';
 import { CorrectionRequests } from './components/admin/CorrectionRequests';
-import { SystemSettingsView } from './components/admin/SystemSettingsView';
+import { SystemSettingsView, type SettingsGuard } from './components/admin/SystemSettingsView';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './components/ui/dialog';
 import { Badge } from './components/ui/badge';
+import { Button } from './components/ui/button';
 import { UserAvatar } from './components/ui/user-avatar';
 import { TimeZoneSelector } from './components/ui/time-zone-selector';
 import { DEFAULT_DISPLAY_TIMEZONE } from './lib/timezones';
+import { Save, RotateCcw, ArrowLeft } from 'lucide-react';
 
 /** localStorage key for the persisted display-timezone choice ('auto' or IANA id). */
 const DISPLAY_TIMEZONE_STORAGE_KEY = 'timetrack.displayTimezone';
@@ -74,6 +84,29 @@ export default function App() {
   // View state
   const [employeeView, setEmployeeView] = useState<EmployeeView>('today');
   const [adminView, setAdminView] = useState<AdminView>('panel');
+
+  // Unsaved-changes navigation guard for the Settings tab.
+  // settingsGuardRef lets SystemSettingsView expose its dirty state +
+  // save/discard/highlight handlers to us without prop-drilling.
+  // pendingTab holds the admin tab the user tried to switch to while dirty;
+  // when set, the Unsaved Changes modal is shown.
+  const settingsGuardRef = useRef<SettingsGuard>(null);
+  const [pendingTab, setPendingTab] = useState<AdminView | null>(null);
+  const [guardBusy, setGuardBusy] = useState(false);
+
+  // Browser unload guard: if the Settings form is dirty, prompt before the
+  // page is closed/refreshed. beforeunload requires a string return (ignored
+  // by modern browsers but necessary to trigger the native prompt).
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (settingsGuardRef.current?.isDirty()) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
 
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
@@ -288,7 +321,20 @@ export default function App() {
 
   const renderAdminView = () => (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-      <Tabs value={adminView} onValueChange={(v) => setAdminView(v as AdminView)} className="space-y-4">
+      <Tabs
+        value={adminView}
+        onValueChange={(v) => {
+          const next = v as AdminView;
+          // Intercept tab switches away from Settings when there are unsaved
+          // edits: show the Unsaved Changes modal instead of navigating.
+          if (adminView === 'settings' && next !== 'settings' && settingsGuardRef.current?.isDirty()) {
+            setPendingTab(next);
+            return;
+          }
+          setAdminView(next);
+        }}
+        className="space-y-4"
+      >
         <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
           <TabsList className="grid grid-cols-3 sm:grid-cols-7 w-full gap-1">
             <TabsTrigger value="panel" className="text-xs sm:text-sm">
@@ -356,9 +402,65 @@ export default function App() {
         </TabsContent>
 
         <TabsContent value="settings">
-          <SystemSettingsView currentUser={currentUser} />
+          <SystemSettingsView ref={settingsGuardRef} currentUser={currentUser} />
         </TabsContent>
       </Tabs>
+
+      {/* Unsaved Changes navigation guard (Settings tab only). */}
+      <Dialog open={pendingTab !== null} onOpenChange={(open) => { if (!open) setPendingTab(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Unsaved changes</DialogTitle>
+            <DialogDescription>
+              You have unsaved settings changes. What would you like to do before leaving?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex flex-col gap-2 sm:flex-col sm:justify-stretch">
+            <Button
+              className="w-full"
+              disabled={guardBusy}
+              onClick={async () => {
+                setGuardBusy(true);
+                const ok = await settingsGuardRef.current?.save();
+                setGuardBusy(false);
+                if (ok) {
+                  const next = pendingTab;
+                  setPendingTab(null);
+                  if (next) setAdminView(next);
+                }
+              }}
+            >
+              <Save className="size-4 mr-2" />
+              Save settings
+            </Button>
+            <Button
+              variant="outline"
+              className="w-full"
+              disabled={guardBusy}
+              onClick={() => {
+                settingsGuardRef.current?.discard();
+                const next = pendingTab;
+                setPendingTab(null);
+                if (next) setAdminView(next);
+              }}
+            >
+              <RotateCcw className="size-4 mr-2" />
+              Discard changes
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full"
+              onClick={() => {
+                settingsGuardRef.current?.highlightDirty();
+                setPendingTab(null);
+              }}
+            >
+              <ArrowLeft className="size-4 mr-2" />
+              Get back to the settings
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 

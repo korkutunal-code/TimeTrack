@@ -34,7 +34,7 @@ export function WorkModelsCard() {
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<WorkModel | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [isWorkModelSettingsOpen, setIsWorkModelSettingsOpen] = useState(true);
+  const [isWorkModelSettingsOpen, setIsWorkModelSettingsOpen] = useState(false);
 
   const load = async () => {
     setLoading(true);

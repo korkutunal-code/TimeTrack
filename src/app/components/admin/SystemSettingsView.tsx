@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import type { DocumentData } from 'firebase/firestore';
 import { doc, getDoc, setDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
@@ -10,65 +10,78 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Checkbox } from '../ui/checkbox';
 import { toast } from 'sonner';
-import { Save, Loader2, ChevronDown } from 'lucide-react';
+import { Save, Loader2, ChevronDown, RotateCcw, X as XIcon } from 'lucide-react';
 import { WorkModelsCard } from './WorkModelsCard';
 
 interface SystemSettingsViewProps {
   currentUser: User;
 }
 
-export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
-  const [systemSettings, setSystemSettings] = useState({
-    enable_email_reminders: true,
-    enable_sms_reminders: false,
-    lunch_reminder_time: '15:00',
-    clockout_reminder_time: '18:00',
-    longshift_threshold_hours: 10,
-    payroll_cycle_type: 'biweekly',
-    weekly_start_day: 1,
-    biweekly_start_date: '2024-01-01',
-    locked_up_to_date: '',
-  });
+interface SystemSettings {
+  enable_email_reminders: boolean;
+  enable_sms_reminders: boolean;
+  lunch_reminder_time: string;
+  clockout_reminder_time: string;
+  longshift_threshold_hours: number;
+  payroll_cycle_type: string;
+  weekly_start_day: number;
+  biweekly_start_date: string;
+  locked_up_to_date: string;
+}
+
+/**
+ * Imperative handle exposed to the parent (App.tsx) so it can drive the
+ * unsaved-changes navigation guard without coupling to the internal form
+ * state. App.tsx calls `isDirty()` to decide whether to intercept a tab
+ * switch, and `save()` / `discard()` from the Unsaved Changes modal.
+ */
+export interface SettingsGuard {
+  isDirty: () => boolean;
+  save: () => Promise<boolean>;
+  discard: () => void;
+  /** Highlight every field that differs from initialSettings (used when the
+   *  user picks "get back to the settings"). Cleared on save/discard. */
+  highlightDirty: () => void;
+}
+
+const DEFAULT_SETTINGS: SystemSettings = {
+  enable_email_reminders: true,
+  enable_sms_reminders: false,
+  lunch_reminder_time: '15:00',
+  clockout_reminder_time: '18:00',
+  longshift_threshold_hours: 10,
+  payroll_cycle_type: 'biweekly',
+  weekly_start_day: 1,
+  biweekly_start_date: '2024-01-01',
+  locked_up_to_date: '',
+};
+
+const settingsEqual = (a: SystemSettings, b: SystemSettings): boolean =>
+  JSON.stringify(a) === JSON.stringify(b);
+
+export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewProps>(
+  function SystemSettingsView({ currentUser }, ref) {
+  const [systemSettings, setSystemSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
+  const [initialSettings, setInitialSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isReminderSettingsOpen, setIsReminderSettingsOpen] = useState(false);
+  const [isPayrollSettingsOpen, setIsPayrollSettingsOpen] = useState(false);
+  const [isLockPeriodOpen, setIsLockPeriodOpen] = useState(false);
+  const [showHighlight, setShowHighlight] = useState(false);
 
-  const loadSettings = async () => {
-    setLoadingSettings(true);
-    try {
-      const remindersSnap = await getDoc(doc(db, 'systemSettings', 'reminders'));
-      const payrollSnap = await getDoc(doc(db, 'systemSettings', 'payroll'));
+  const isDirty = !settingsEqual(systemSettings, initialSettings);
 
-      let rData: DocumentData = {};
-      let pData: DocumentData = {};
+  // Keep a live ref of dirty state + handlers so the parent's guard can call
+  // them imperatively (App.tsx holds a ref to this component).
+  const stateRef = useRef({
+    systemSettings,
+    initialSettings,
+    isDirty,
+  });
+  stateRef.current = { systemSettings, initialSettings, isDirty };
 
-      if (remindersSnap.exists()) rData = remindersSnap.data();
-      if (payrollSnap.exists()) pData = payrollSnap.data();
-
-      setSystemSettings({
-        enable_email_reminders: rData.enable_email_reminders !== false,
-        enable_sms_reminders: rData.enable_sms_reminders === true,
-        lunch_reminder_time: rData.lunch_reminder_time || '15:00',
-        clockout_reminder_time: rData.clockout_reminder_time || '18:00',
-        longshift_threshold_hours: rData.longshift_threshold_hours || 10,
-        payroll_cycle_type: pData.payroll_cycle_type || 'biweekly',
-        weekly_start_day: pData.weekly_start_day ?? 1,
-        biweekly_start_date: pData.biweekly_start_date || '2024-01-01',
-        locked_up_to_date: pData.locked_up_to_date || '',
-      });
-    } catch (e) {
-      console.error(e);
-      toast.error("Failed to load settings");
-    } finally {
-      setLoadingSettings(false);
-    }
-  };
-
-  useEffect(() => {
-    loadSettings();
-  }, []);
-
-  const handleSaveSettings = async () => {
+  const saveInternal = useCallback(async (): Promise<boolean> => {
     setSaving(true);
     try {
       await setDoc(doc(db, 'systemSettings', 'reminders'), {
@@ -88,14 +101,89 @@ export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
         locked_by: currentUser.uid,
       }, { merge: true });
 
+      setInitialSettings({ ...systemSettings });
+      setShowHighlight(false);
       toast.success("Settings saved successfully");
+      return true;
     } catch (e) {
       console.error(e);
       toast.error("Failed to save settings");
+      return false;
     } finally {
       setSaving(false);
     }
+  }, [systemSettings, currentUser.uid]);
+
+  const discardInternal = useCallback(() => {
+    setSystemSettings({ ...stateRef.current.initialSettings });
+    setShowHighlight(false);
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    isDirty: () => stateRef.current.isDirty,
+    save: saveInternal,
+    discard: discardInternal,
+    highlightDirty: () => {
+      setShowHighlight(true);
+    },
+  }), [saveInternal, discardInternal]);
+
+  const loadSettings = async () => {
+    setLoadingSettings(true);
+    try {
+      const remindersSnap = await getDoc(doc(db, 'systemSettings', 'reminders'));
+      const payrollSnap = await getDoc(doc(db, 'systemSettings', 'payroll'));
+
+      let rData: DocumentData = {};
+      let pData: DocumentData = {};
+
+      if (remindersSnap.exists()) rData = remindersSnap.data();
+      if (payrollSnap.exists()) pData = payrollSnap.data();
+
+      const next: SystemSettings = {
+        enable_email_reminders: rData.enable_email_reminders !== false,
+        enable_sms_reminders: rData.enable_sms_reminders === true,
+        lunch_reminder_time: rData.lunch_reminder_time || '15:00',
+        clockout_reminder_time: rData.clockout_reminder_time || '18:00',
+        longshift_threshold_hours: rData.longshift_threshold_hours || 10,
+        payroll_cycle_type: pData.payroll_cycle_type || 'biweekly',
+        weekly_start_day: pData.weekly_start_day ?? 1,
+        biweekly_start_date: pData.biweekly_start_date || '2024-01-01',
+        locked_up_to_date: pData.locked_up_to_date || '',
+      };
+      setSystemSettings(next);
+      setInitialSettings(next);
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to load settings");
+    } finally {
+      setLoadingSettings(false);
+    }
   };
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  // Field updater.
+  const update = <K extends keyof SystemSettings>(key: K, value: SystemSettings[K]) => {
+    setSystemSettings((prev) => ({ ...prev, [key]: value }));
+  };
+
+  // Compute the set of dirty field keys for highlight mode.
+  const dirtyFields = new Set<keyof SystemSettings>();
+  if (showHighlight) {
+    (Object.keys(systemSettings) as (keyof SystemSettings)[]).forEach((key) => {
+      if (JSON.stringify(systemSettings[key]) !== JSON.stringify(initialSettings[key])) {
+        dirtyFields.add(key);
+      }
+    });
+  }
+
+  // Reusable highlight class for a given field. Amber was chosen because it is
+  // not otherwise used on the Settings screen (brand/slate/red are in use).
+  const fieldHighlight = (key: keyof SystemSettings): string =>
+    dirtyFields.has(key) ? 'ring-2 ring-amber-400 bg-amber-50/20' : '';
 
   if (loadingSettings) {
     return (
@@ -131,7 +219,7 @@ export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
                   <Checkbox
                     id="globalEmail"
                     checked={systemSettings.enable_email_reminders}
-                    onCheckedChange={(checked) => setSystemSettings({ ...systemSettings, enable_email_reminders: !!checked })}
+                    onCheckedChange={(checked) => update('enable_email_reminders', !!checked)}
                   />
                   <Label htmlFor="globalEmail">Enable Email Reminders Globally</Label>
                 </label>
@@ -139,51 +227,51 @@ export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
                   <Checkbox
                     id="globalSMS"
                     checked={systemSettings.enable_sms_reminders}
-                    onCheckedChange={(checked) => setSystemSettings({ ...systemSettings, enable_sms_reminders: !!checked })}
+                    onCheckedChange={(checked) => update('enable_sms_reminders', !!checked)}
                   />
                   <Label htmlFor="globalSMS">Enable SMS Reminders Globally</Label>
                 </label>
               </div>
 
-              <div className="space-y-1.5">
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('lunch_reminder_time')}`}>
                 <label className="flex items-center gap-2">
                   <Checkbox
                     checked={!!systemSettings.lunch_reminder_time}
-                    onCheckedChange={(checked) => setSystemSettings({ ...systemSettings, lunch_reminder_time: checked ? (systemSettings.lunch_reminder_time || '15:00') : '' })}
+                    onCheckedChange={(checked) => update('lunch_reminder_time', checked ? (systemSettings.lunch_reminder_time || '15:00') : '')}
                   />
                   <Label>Lunch Reminder Time</Label>
                 </label>
                 <Input
                   type="time"
                   value={systemSettings.lunch_reminder_time}
-                  onChange={(e) => setSystemSettings({ ...systemSettings, lunch_reminder_time: e.target.value })}
+                  onChange={(e) => update('lunch_reminder_time', e.target.value)}
                   className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
                 />
                 <p className="text-xs text-slate-400">If they haven't logged lunch out. Based on employee timezone.</p>
               </div>
 
-              <div className="space-y-1.5">
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('clockout_reminder_time')}`}>
                 <label className="flex items-center gap-2">
                   <Checkbox
                     checked={!!systemSettings.clockout_reminder_time}
-                    onCheckedChange={(checked) => setSystemSettings({ ...systemSettings, clockout_reminder_time: checked ? (systemSettings.clockout_reminder_time || '18:00') : '' })}
+                    onCheckedChange={(checked) => update('clockout_reminder_time', checked ? (systemSettings.clockout_reminder_time || '18:00') : '')}
                   />
                   <Label>Clock Out Reminder</Label>
                 </label>
                 <Input
                   type="time"
                   value={systemSettings.clockout_reminder_time}
-                  onChange={(e) => setSystemSettings({ ...systemSettings, clockout_reminder_time: e.target.value })}
+                  onChange={(e) => update('clockout_reminder_time', e.target.value)}
                   className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
                 />
                 <p className="text-xs text-slate-400">If still clocked in. Based on employee timezone.</p>
               </div>
 
-              <div className="space-y-1.5">
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('longshift_threshold_hours')}`}>
                 <label className="flex items-center gap-2">
                   <Checkbox
                     checked={!!systemSettings.longshift_threshold_hours}
-                    onCheckedChange={(checked) => setSystemSettings({ ...systemSettings, longshift_threshold_hours: checked ? (systemSettings.longshift_threshold_hours || 10) : 0 })}
+                    onCheckedChange={(checked) => update('longshift_threshold_hours', checked ? (systemSettings.longshift_threshold_hours || 10) : 0)}
                   />
                   <Label>Long Shift Threshold (Hours)</Label>
                 </label>
@@ -192,7 +280,7 @@ export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
                   min="1"
                   max="24"
                   value={systemSettings.longshift_threshold_hours}
-                  onChange={(e) => setSystemSettings({ ...systemSettings, longshift_threshold_hours: parseFloat(e.target.value) || 10 })}
+                  onChange={(e) => update('longshift_threshold_hours', parseFloat(e.target.value) || 10)}
                   className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
                 />
                 <p className="text-xs text-slate-400">Warn if continuously clocked in over this amount of hours.</p>
@@ -204,14 +292,25 @@ export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
 
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl">
         <CardHeader className="bg-white/40 pb-2">
-          <CardTitle className="text-slate-800 font-bold">Payroll Settings</CardTitle>
+          <button
+            type="button"
+            onClick={() => setIsPayrollSettingsOpen((open) => !open)}
+            aria-expanded={isPayrollSettingsOpen}
+            className="w-full flex items-center justify-between text-left"
+          >
+            <CardTitle className="text-slate-800 font-bold">Payroll Settings</CardTitle>
+            <ChevronDown
+              className={`size-5 text-slate-500 transition-transform duration-200 ${isPayrollSettingsOpen ? 'rotate-180' : 'rotate-0'}`}
+            />
+          </button>
         </CardHeader>
+        {isPayrollSettingsOpen && (
         <CardContent className="space-y-4 pt-4">
-          <div>
+          <div className={`rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('payroll_cycle_type')}`}>
             <Label>Payroll Cycle Type</Label>
             <Select
               value={systemSettings.payroll_cycle_type}
-              onValueChange={(val) => setSystemSettings({ ...systemSettings, payroll_cycle_type: val })}
+              onValueChange={(val) => update('payroll_cycle_type', val)}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -225,11 +324,11 @@ export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
           </div>
 
           {systemSettings.payroll_cycle_type === 'weekly' && (
-            <div>
+            <div className={`rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('weekly_start_day')}`}>
               <Label>Week Start Day</Label>
               <Select
                 value={systemSettings.weekly_start_day.toString()}
-                onValueChange={(val) => setSystemSettings({ ...systemSettings, weekly_start_day: parseInt(val, 10) })}
+                onValueChange={(val) => update('weekly_start_day', parseInt(val, 10))}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -248,51 +347,88 @@ export function SystemSettingsView({ currentUser }: SystemSettingsViewProps) {
           )}
 
           {systemSettings.payroll_cycle_type === 'biweekly' && (
-            <div>
+            <div className={`rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('biweekly_start_date')}`}>
               <Label>Cycle Anchor Date</Label>
               <Input
                 type="date"
                 value={systemSettings.biweekly_start_date}
-                onChange={(e) => setSystemSettings({ ...systemSettings, biweekly_start_date: e.target.value })}
+                onChange={(e) => update('biweekly_start_date', e.target.value)}
               />
               <p className="text-xs text-slate-400 mt-1">Select any date that marks the start of a bi-weekly cycle.</p>
             </div>
           )}
         </CardContent>
+        )}
       </Card>
 
-      <Card className="border border-red-100 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl">
+      {/* Lock Payroll Period — destyled to match the other cards (no red). */}
+      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl">
         <CardHeader className="bg-white/40 pb-2">
-          <CardTitle className="text-red-600 font-bold">Lock Payroll Period</CardTitle>
+          <button
+            type="button"
+            onClick={() => setIsLockPeriodOpen((open) => !open)}
+            aria-expanded={isLockPeriodOpen}
+            className="w-full flex items-center justify-between text-left"
+          >
+            <CardTitle className="text-slate-800 font-bold">Lock Payroll Period</CardTitle>
+            <ChevronDown
+              className={`size-5 text-slate-500 transition-transform duration-200 ${isLockPeriodOpen ? 'rotate-180' : 'rotate-0'}`}
+            />
+          </button>
         </CardHeader>
+        {isLockPeriodOpen && (
         <CardContent className="space-y-3 pt-4">
-          <div className="space-y-3 bg-red-50 p-4 border border-red-100 rounded-lg">
+          <div className={`space-y-3 bg-white p-4 border border-slate-200 rounded-lg transition-colors ${fieldHighlight('locked_up_to_date')}`}>
             <div>
-              <Label className="text-red-900">Lock Entries Up To (Inclusive)</Label>
+              <Label className="text-slate-900">Lock Entries Up To (Inclusive)</Label>
               <div className="flex gap-2 mt-1">
                 <Input
                   type="date"
                   value={systemSettings.locked_up_to_date}
-                  onChange={(e) => setSystemSettings({ ...systemSettings, locked_up_to_date: e.target.value })}
-                  className="border-red-200"
+                  onChange={(e) => update('locked_up_to_date', e.target.value)}
+                  className="border-slate-200"
                 />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => update('locked_up_to_date', '')}
+                  disabled={!systemSettings.locked_up_to_date}
+                  className="h-9 shrink-0"
+                  title="Clear lock date"
+                >
+                  <XIcon className="size-4" />
+                  Clear
+                </Button>
               </div>
-              <p className="text-xs text-red-800 mt-2">
+              <p className="text-xs text-slate-500 mt-2">
                 Setting a date here will prevent any edits or corrections for time entries on or before this date. Clear the date to unlock all periods.
               </p>
             </div>
           </div>
         </CardContent>
+        )}
       </Card>
 
       <WorkModelsCard />
 
-      <div className="flex justify-end">
-        <Button onClick={handleSaveSettings} disabled={saving}>
+      <div className="flex justify-end gap-2">
+        <Button
+          variant="outline"
+          onClick={discardInternal}
+          disabled={!isDirty || saving}
+        >
+          <RotateCcw className="size-4 mr-2" />
+          Discard changes
+        </Button>
+        <Button
+          onClick={saveInternal}
+          disabled={!isDirty || saving}
+        >
           {saving ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Save className="size-4 mr-2" />}
           Save Settings
         </Button>
       </div>
     </div>
   );
-}
+});
