@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
+import { useState, useEffect, type Dispatch, type SetStateAction } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
 import { dbService, TimeEntry, buildConsistentClosePatch } from '../../lib/database';
@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
+import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
 import { Checkbox } from '../ui/checkbox';
 import { Textarea } from '../ui/textarea';
 import { UserAvatar } from '../ui/user-avatar';
@@ -65,63 +66,50 @@ function FilterHeader({
   openColumn: FilterColumn | null;
   setOpenColumn: Dispatch<SetStateAction<FilterColumn | null>>;
 }) {
-  const wrapperRef = useRef<HTMLDivElement>(null);
   const isOpen = openColumn === column;
   const active = selected.length < options.length;
   const allSelected = selected.length === options.length;
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setOpenColumn(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isOpen, setOpenColumn]);
-
   return (
-    <div ref={wrapperRef} className="relative inline-flex items-center gap-1">
-      <span>{title}</span>
-      <button
-        type="button"
-        aria-label={`Filter ${title}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpenColumn(isOpen ? null : column);
-        }}
-        className={`cursor-pointer p-0 transition-colors ${
-          active
-            ? 'text-indigo-600 fill-indigo-50 font-bold'
-            : 'text-slate-400 hover:text-slate-600'
-        }`}
-      >
-        <Filter className="size-3.5" />
-      </button>
-      {isOpen && (
-        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 bg-white rounded-lg shadow-xl border border-slate-200 p-3 min-w-[140px] text-left">
-          <button
-            type="button"
-            onClick={() => setSelected(allSelected ? [] : options.map(o => o.value))}
-            className="text-xs font-medium text-indigo-600 hover:text-indigo-800 mb-2"
-          >
-            {allSelected ? 'Clear' : 'Select All'}
-          </button>
-          <div className="flex flex-col">
-            {options.map((o) => {
-              const checked = selected.includes(o.value);
-              return (
-                <label key={o.value} className="flex items-center gap-2 cursor-pointer py-1 text-sm text-slate-700">
-                  <Checkbox checked={checked} onCheckedChange={(c) => setSelected(c ? [...selected, o.value] : selected.filter(v => v !== o.value))} />
-                  {o.label}
-                </label>
-              );
-            })}
-          </div>
+    <Popover open={isOpen} onOpenChange={(open) => setOpenColumn(open ? column : null)}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Filter ${title}`}
+          className={`inline-flex items-center gap-1 cursor-pointer transition-colors ${
+            active
+              ? 'text-indigo-600 fill-indigo-50 font-bold'
+              : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <span>{title}</span>
+          <Filter className="size-3.5" />
+        </button>
+      </PopoverTrigger>
+      {/* PopoverContent is portaled to document.body via Radix Portal, so it
+          floats above the table/card regardless of ancestor overflow-hidden
+          (no clipping) and never forces scrollbars on the table container. */}
+      <PopoverContent align="center" className="w-48 p-3">
+        <button
+          type="button"
+          onClick={() => setSelected(allSelected ? [] : options.map(o => o.value))}
+          className="text-xs font-medium text-indigo-600 hover:text-indigo-800 mb-2"
+        >
+          {allSelected ? 'Clear' : 'Select All'}
+        </button>
+        <div className="flex flex-col">
+          {options.map((o) => {
+            const checked = selected.includes(o.value);
+            return (
+              <label key={o.value} className="flex items-center gap-2 cursor-pointer py-1 text-sm text-slate-700">
+                <Checkbox checked={checked} onCheckedChange={(c) => setSelected(c ? [...selected, o.value] : selected.filter(v => v !== o.value))} />
+                {o.label}
+              </label>
+            );
+          })}
         </div>
-      )}
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -690,7 +678,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
           </div>
 
           {/* Desktop Table View */}
-          <div className="hidden md:block border border-indigo-100 rounded-xl min-h-[240px] bg-white/50 backdrop-blur-sm shadow-inner">
+          <div className="hidden md:block border border-indigo-100 rounded-xl bg-white/50 backdrop-blur-sm shadow-inner">
             <Table className="table-fixed w-full">
               <TableHeader>
                 <TableRow>
