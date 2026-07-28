@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, addDoc, updateDoc, query, limit } from 'firebase/firestore';
+import { collection, doc, getDocs, addDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../app/lib/firebase';
 
 export interface WorkModel {
@@ -74,7 +74,7 @@ function mapDoc(id: string, data: any): WorkModel {
  * visible/manageable and re-seeding no longer fires while they exist.
  */
 async function fetchActiveWorkModels(): Promise<WorkModel[]> {
-  const snap = await getDocs(query(collection(db, 'workModels'), limit(500)));
+  const snap = await getDocs(collection(db, 'workModels'));
   return snap.docs
     .filter(d => d.get('status') !== 'voided')
     .map(d => mapDoc(d.id, d.data()));
