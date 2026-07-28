@@ -684,6 +684,14 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     setSelectedStatuses(STATUS_OPTIONS.map(o => o.value));
   };
 
+  // Reset everything: show all columns AND clear all active header filters so
+  // all data is visible again. Used by the "Reset Table" button in the Column
+  // Visibility popover.
+  const resetTable = () => {
+    setVisibleColumns({ ...DEFAULT_VISIBLE_COLUMNS });
+    resetFilters();
+  };
+
   return (
     <div className="space-y-6">
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl overflow-hidden">
@@ -745,6 +753,11 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                       {c.label}
                     </label>
                   ))}
+                </div>
+                <div className="border-t border-slate-100 px-4 py-2.5">
+                  <Button variant="outline" size="sm" className="w-full h-8 text-xs" onClick={resetTable}>
+                    Reset Table
+                  </Button>
                 </div>
               </PopoverContent>
             </Popover>
