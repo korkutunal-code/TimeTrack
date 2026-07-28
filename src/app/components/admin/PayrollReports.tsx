@@ -500,7 +500,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
   // falls on a later calendar day than its shift's clock-in. Used in both the
   // parent summary row and the per-shift sub-rows.
   const DayOffsetBadge = ({ offset }: { offset: number }) => (
-    <span className="ml-1 inline-flex items-center rounded bg-purple-100 px-1 text-sm font-medium text-purple-700 align-middle">
+    <span className="ml-1 inline-flex items-center rounded bg-purple-100 px-1 text-xs font-medium text-purple-700 align-middle">
       +{offset}d
     </span>
   );
@@ -764,7 +764,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                                     )}
                                     {formatDateShortWithWeekday(day.workDate)}
                                     {isMultiShift && (
-                                      <span className="ml-1 text-sm font-normal text-slate-400">({segs.length} shifts)</span>
+                                      <span className="ml-1 text-xs font-normal text-slate-400">({segs.length} shifts)</span>
                                     )}
                                   </span>
                                 </td>
