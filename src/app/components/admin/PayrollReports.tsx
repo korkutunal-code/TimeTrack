@@ -500,14 +500,14 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
   // falls on a later calendar day than its shift's clock-in. Used in both the
   // parent summary row and the per-shift sub-rows.
   const DayOffsetBadge = ({ offset }: { offset: number }) => (
-    <span className="ml-1 inline-flex items-center rounded bg-purple-100 px-1 text-xs font-medium text-purple-700 align-middle">
+    <span className="inline-flex items-center rounded bg-purple-100 px-1 text-xs font-medium leading-none text-purple-700">
       +{offset}d
     </span>
   );
   const fmtBoundary = (b: TimeBoundary | undefined): JSX.Element => {
     if (!b || !b.time) return <span>--</span>;
     return (
-      <span>
+      <span className="inline-flex items-center gap-1.5 leading-none">
         {fmtTime(b.time)}
         {b.dayOffset > 0 && <DayOffsetBadge offset={b.dayOffset} />}
       </span>
