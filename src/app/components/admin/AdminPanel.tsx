@@ -76,14 +76,10 @@ function FilterHeader({
         <button
           type="button"
           aria-label={`Filter ${title}`}
-          className={`inline-flex items-center gap-1 cursor-pointer transition-colors text-xs font-semibold uppercase tracking-wider ${
-            active
-              ? 'text-indigo-600 fill-indigo-50'
-              : 'text-slate-500 hover:text-slate-700'
-          }`}
+          className="inline-flex items-center gap-1 cursor-pointer transition-colors text-muted-foreground font-medium text-xs uppercase tracking-wider"
         >
           <span>{title}</span>
-          <Filter className="size-3.5" />
+          <Filter className={`size-3.5 ${active ? 'text-indigo-600 fill-indigo-50' : 'text-muted-foreground'}`} />
         </button>
       </PopoverTrigger>
       {/* PopoverContent is portaled to document.body via Radix Portal, so it
