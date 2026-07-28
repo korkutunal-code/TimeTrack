@@ -208,7 +208,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                     checked={!!systemSettings.lunch_reminder_time}
                     onCheckedChange={(checked) => update('lunch_reminder_time', checked ? (systemSettings.lunch_reminder_time || '15:00') : '')}
                   />
-                  <Label>Lunch Reminder Time</Label>
+                  <Label>Lunch Reminder</Label>
                 </label>
                 <Input
                   type="time"
@@ -216,7 +216,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                   onChange={(e) => update('lunch_reminder_time', e.target.value)}
                   className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
                 />
-                <p className="text-xs text-slate-400">If they haven't logged lunch out. Based on employee timezone.</p>
+                <p className="text-xs text-slate-400">If they haven't logged lunch out. Pacific time.</p>
               </div>
 
               <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('clockout_reminder_time')}`}>
@@ -233,7 +233,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                   onChange={(e) => update('clockout_reminder_time', e.target.value)}
                   className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
                 />
-                <p className="text-xs text-slate-400">If still clocked in. Based on employee timezone.</p>
+                <p className="text-xs text-slate-400">If still clocked in. Pacific time.</p>
               </div>
 
               <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('longshift_threshold_hours')}`}>
@@ -252,7 +252,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                   onChange={(e) => update('longshift_threshold_hours', parseFloat(e.target.value) || 10)}
                   className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
                 />
-                <p className="text-xs text-slate-400">Warn if continuously clocked in over this amount of hours.</p>
+                <p className="text-xs text-slate-400">Warn if worked in over this amount of hours.</p>
               </div>
             </div>
           </CardContent>
