@@ -243,6 +243,17 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const toggleColumn = (col: UserColumn) =>
     setVisibleColumns(prev => ({ ...prev, [col]: !prev[col] }));
 
+  // Dynamic, proportional column distribution under `table-fixed`. The User
+  // column gets a fixed ~25% share and the remaining ~75% is divided equally
+  // among the currently-visible non-User columns. This recomputes whenever a
+  // column is toggled, so hiding a column redistributes its space evenly to
+  // the rest instead of dumping it all into the User column (the large gap)
+  // or bunching the others against the right border. If every non-User column
+  // is hidden, User expands to fill the full width.
+  const visibleOtherCount = CUSTOMIZABLE_COLUMNS.filter(c => visibleColumns[c.key]).length;
+  const userColPct = visibleOtherCount === 0 ? 100 : 25;
+  const otherColPct = visibleOtherCount === 0 ? 0 : 75 / visibleOtherCount;
+
   // Persist active filter selections per-admin so they survive refresh/relogin.
   useEffect(() => {
     if (!currentUser.uid) return;
@@ -786,27 +797,27 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             <Table className="table-fixed w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="text-left">User</TableHead>
+                  <TableHead className="text-left" style={{ width: `${userColPct}%` }}>User</TableHead>
                   {visibleColumns.workModel && (
-                    <TableHead className="w-36 whitespace-nowrap text-center">
+                    <TableHead className="whitespace-nowrap text-center" style={{ width: `${otherColPct}%` }}>
                       <FilterHeader column="workModel" title="Work Model" options={WORK_MODEL_OPTIONS} selected={selectedWorkModels} setSelected={setSelectedWorkModels} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
                     </TableHead>
                   )}
                   {visibleColumns.role && (
-                    <TableHead className="w-36 whitespace-nowrap text-center">
+                    <TableHead className="whitespace-nowrap text-center" style={{ width: `${otherColPct}%` }}>
                       <FilterHeader column="role" title="Role" options={ROLE_OPTIONS} selected={selectedRoles} setSelected={setSelectedRoles} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
                     </TableHead>
                   )}
                   {visibleColumns.status && (
-                    <TableHead className="w-36 whitespace-nowrap text-center">
+                    <TableHead className="whitespace-nowrap text-center" style={{ width: `${otherColPct}%` }}>
                       <FilterHeader column="status" title="Status" options={STATUS_OPTIONS} selected={selectedStatuses} setSelected={setSelectedStatuses} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
                     </TableHead>
                   )}
                   {visibleColumns.edit && (
-                    <TableHead className="w-16 text-center">Edit</TableHead>
+                    <TableHead className="text-center" style={{ width: `${otherColPct}%` }}>Edit</TableHead>
                   )}
                   {visibleColumns.delete && (
-                    <TableHead className="w-16 text-center">Delete</TableHead>
+                    <TableHead className="text-center" style={{ width: `${otherColPct}%` }}>Delete</TableHead>
                   )}
                 </TableRow>
               </TableHeader>
