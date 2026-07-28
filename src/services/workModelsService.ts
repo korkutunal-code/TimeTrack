@@ -44,10 +44,10 @@ const DEFAULT_MODELS: WorkModelInput[] = [
   },
 ];
 
-function mapDoc(id: string, data: any): WorkModel {
+function mapDoc(id: string, data: Record<string, unknown>): WorkModel {
   return {
     id,
-    name: String(data.name || ''),
+    name: String(data.name ?? ''),
     noOvertime: data.noOvertime === true,
     overtimeLimit: Number(data.overtimeLimit ?? 8),
     overtimeMultiplier: Number(data.overtimeMultiplier ?? 1.5),
