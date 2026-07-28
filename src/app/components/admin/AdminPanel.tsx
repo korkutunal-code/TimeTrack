@@ -76,9 +76,9 @@ function FilterHeader({
         <button
           type="button"
           aria-label={`Filter ${title}`}
-          className={`inline-flex items-center gap-1 cursor-pointer transition-colors ${
+          className={`inline-flex items-center gap-1 cursor-pointer transition-colors text-xs font-semibold uppercase tracking-wider ${
             active
-              ? 'text-indigo-600 fill-indigo-50 font-bold'
+              ? 'text-indigo-600 fill-indigo-50'
               : 'text-slate-500 hover:text-slate-700'
           }`}
         >
@@ -89,7 +89,7 @@ function FilterHeader({
       {/* PopoverContent is portaled to document.body via Radix Portal, so it
           floats above the table/card regardless of ancestor overflow-hidden
           (no clipping) and never forces scrollbars on the table container. */}
-      <PopoverContent align="center" className="w-48 p-3">
+      <PopoverContent align="center" className="w-auto min-w-max px-3 py-2">
         <button
           type="button"
           onClick={() => setSelected(allSelected ? [] : options.map(o => o.value))}
