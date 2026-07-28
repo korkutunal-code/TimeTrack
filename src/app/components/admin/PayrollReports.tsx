@@ -710,7 +710,8 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                             <th className="p-1.5">L.In</th>
                             <th className="p-1.5">Out</th>
                             <th className="p-1.5 text-right">Reg</th>
-                            <th className="p-1.5 text-right">OT+DT</th>
+                            <th className="p-1.5 text-right">OT</th>
+                            <th className="p-1.5 text-right">DT</th>
                             <th className="p-1.5 text-right">Total</th>
                           </tr>
                         </thead>
@@ -730,6 +731,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                                 return next;
                               });
                             };
+                            const dayTotalHours = (day.totalWorkMinutes || 0) / 60;
 
                             const rows: JSX.Element[] = [
                               <tr key={day.workDate} className="border-b border-slate-100 hover:bg-slate-50/50">
@@ -755,13 +757,17 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                                 </td>
                                 <td className="p-1.5">{fmtBoundary(b.clockOut)}</td>
                                 <td className="p-1.5 text-right">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
-                                <td className="p-1.5 text-right">{(((day.otMinutes || 0) + (day.doubleTimeMinutes || 0)) / 60).toFixed(1)}</td>
-                                <td className="p-1.5 text-right font-semibold">{((day.totalWorkMinutes || 0) / 60).toFixed(1)}</td>
+                                <td className="p-1.5 text-right">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
+                                <td className="p-1.5 text-right">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
+                                <td className={`p-1.5 text-right font-semibold ${dayTotalHours > 8 ? 'text-red-600' : ''}`}>
+                                  {dayTotalHours.toFixed(1)}
+                                </td>
                               </tr>
                             ];
 
                             if (isMultiShift && isDateExpanded) {
                               segs.forEach((seg: DocumentData, i: number) => {
+                                const shiftTotalHours = (seg.workMinutes || 0) / 60;
                                 rows.push(
                                   <tr key={`${day.workDate}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
                                     <td className="p-1.5 pl-6 text-purple-700 font-medium">↳ Shift {i + 1}</td>
@@ -775,7 +781,10 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                                     <td className="p-1.5">{fmtBoundary({ time: seg.clockOutManual, dayOffset: segFieldDayOffset(seg, 'clockOutManual') })}</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
-                                    <td className="p-1.5 text-right text-purple-700 font-semibold">{((seg.workMinutes || 0) / 60).toFixed(1)}</td>
+                                    <td className="p-1.5 text-right text-slate-400">--</td>
+                                    <td className={`p-1.5 text-right font-semibold ${shiftTotalHours > 8 ? 'text-red-600' : 'text-purple-700'}`}>
+                                      {shiftTotalHours.toFixed(1)}
+                                    </td>
                                   </tr>
                                 );
                               });
