@@ -17,6 +17,9 @@ import { generateCSV, downloadCSV } from '../../../services/exportService';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
 import { calculateBiweeklyOvertimeTotals } from '../../../utils/overtimeCalculations.js';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore - JS module
+import { formatDateShortWithWeekday } from '../../../utils/dateHelpers.js';
 import { computeSegmentWorkMinutes } from '../../lib/segmentOps';
 import type { TimeSegment } from '../../lib/database';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
@@ -737,7 +740,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                                         ? <ChevronDown className="size-3.5 text-slate-500" />
                                         : <ChevronRight className="size-3.5 text-slate-500" />
                                     )}
-                                    {day.workDate.split('-').slice(1).join('/')}
+                                    {formatDateShortWithWeekday(day.workDate)}
                                     {isMultiShift && (
                                       <span className="ml-1 text-[10px] font-normal text-slate-400">({segs.length} shifts)</span>
                                     )}
