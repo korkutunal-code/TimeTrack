@@ -45,7 +45,8 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
   const [payrollSettings, setPayrollSettings] = useState({
     payroll_cycle_type: 'biweekly',
     weekly_start_day: 1,
-    biweekly_start_date: '2024-01-01'
+    biweekly_start_date: '2024-01-01',
+    monthly_start_day: 1,
   });
 
   useEffect(() => {
@@ -58,6 +59,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
             payroll_cycle_type: data.payroll_cycle_type || 'biweekly',
             weekly_start_day: data.weekly_start_day ?? 1,
             biweekly_start_date: data.biweekly_start_date || '2024-01-01',
+            monthly_start_day: data.monthly_start_day ?? 1,
           });
         }
       } catch (err) {
@@ -130,16 +132,44 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
         setEndDate(lastEnd.toISOString().slice(0, 10));
       }
     } else if (cycleType === 'monthly') {
+      // Configurable monthly cycle anchored on monthly_start_day (1–28).
+      // Previously this hardcoded the 1st of the calendar month using
+      // browser-local Date (TZ bug). Now UTC-anchored (matching the weekly/
+      // biweekly branches) and derived from the configured start day.
+      const startDay = Math.min(28, Math.max(1, payrollSettings.monthly_start_day || 1));
+      const todayYmd = today.toISOString().slice(0, 10);
+      const [ty, tm, td] = todayYmd.split('-').map(Number);
+
+      // Cycle start = day `startDay` of the month containing today's cycle.
+      // If today's day-of-month is before the anchor day, the cycle began
+      // in the previous month.
+      let startY = ty;
+      let startM0 = tm - 1; // 0-indexed
+      if (td < startDay) {
+        if (startM0 === 0) { startM0 = 11; startY -= 1; }
+        else startM0 -= 1;
+      }
+      const currentStart = new Date(Date.UTC(startY, startM0, startDay));
+
+      // End = one day before the next cycle start (day before next month's
+      // anchor day). nextStart uses startM0+1 (normalized by Date.UTC).
+      const nextStart = new Date(Date.UTC(startY, startM0 + 1, startDay));
+      const currentEnd = new Date(nextStart);
+      currentEnd.setUTCDate(nextStart.getUTCDate() - 1);
+
       if (preset === 'current') {
-        const start = new Date(today.getFullYear(), today.getMonth(), 1);
-        const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-        setStartDate(start.toISOString().split('T')[0]);
-        setEndDate(end.toISOString().split('T')[0]);
+        setStartDate(currentStart.toISOString().slice(0, 10));
+        setEndDate(currentEnd.toISOString().slice(0, 10));
       } else {
-        const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-        const end = new Date(today.getFullYear(), today.getMonth(), 0);
-        setStartDate(start.toISOString().split('T')[0]);
-        setEndDate(end.toISOString().split('T')[0]);
+        // Last cycle = one month before the current cycle.
+        let lastStartY = startY;
+        let lastStartM0 = startM0 - 1;
+        if (lastStartM0 < 0) { lastStartM0 = 11; lastStartY -= 1; }
+        const lastStart = new Date(Date.UTC(lastStartY, lastStartM0, startDay));
+        const lastEnd = new Date(currentStart);
+        lastEnd.setUTCDate(currentStart.getUTCDate() - 1);
+        setStartDate(lastStart.toISOString().slice(0, 10));
+        setEndDate(lastEnd.toISOString().slice(0, 10));
       }
     }
   };

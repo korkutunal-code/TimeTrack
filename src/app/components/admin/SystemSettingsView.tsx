@@ -26,6 +26,7 @@ interface SystemSettings {
   payroll_cycle_type: string;
   weekly_start_day: number;
   biweekly_start_date: string;
+  monthly_start_day: number;
   locked_up_to_date: string;
 }
 
@@ -53,6 +54,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   payroll_cycle_type: 'biweekly',
   weekly_start_day: 1,
   biweekly_start_date: '2024-01-01',
+  monthly_start_day: 1,
   locked_up_to_date: '',
 };
 
@@ -96,6 +98,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
         payroll_cycle_type: systemSettings.payroll_cycle_type,
         weekly_start_day: systemSettings.weekly_start_day,
         biweekly_start_date: systemSettings.biweekly_start_date,
+        monthly_start_day: systemSettings.monthly_start_day,
         locked_up_to_date: systemSettings.locked_up_to_date,
         locked_at: Timestamp.now(),
         locked_by: currentUser.uid,
@@ -148,6 +151,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
         payroll_cycle_type: data.payroll_cycle_type || 'biweekly',
         weekly_start_day: data.weekly_start_day ?? 1,
         biweekly_start_date: data.biweekly_start_date || '2024-01-01',
+        monthly_start_day: data.monthly_start_day ?? 1,
         locked_up_to_date: data.locked_up_to_date || '',
       };
       setSystemSettings(next);
@@ -354,6 +358,21 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                 onChange={(e) => update('biweekly_start_date', e.target.value)}
               />
               <p className="text-xs text-slate-400 mt-1">Select any date that marks the start of a bi-weekly cycle.</p>
+            </div>
+          )}
+
+          {systemSettings.payroll_cycle_type === 'monthly' && (
+            <div className={`rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('monthly_start_day')}`}>
+              <Label>Monthly Cycle Start Day</Label>
+              <Input
+                type="number"
+                min="1"
+                max="28"
+                value={systemSettings.monthly_start_day}
+                onChange={(e) => update('monthly_start_day', Math.min(28, Math.max(1, parseInt(e.target.value, 10) || 1)))}
+                className="max-w-[140px]"
+              />
+              <p className="text-xs text-slate-400 mt-1">Day of month (1–28) that marks the start of each monthly cycle. Use 1 for calendar months.</p>
             </div>
           )}
         </CardContent>
