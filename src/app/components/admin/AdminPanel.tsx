@@ -18,7 +18,7 @@ import { UserAvatar } from '../ui/user-avatar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 import { WorkModelOverrideModal } from './WorkModelOverrideModal';
 import { toast } from 'sonner';
-import { UserPlus, Upload, Download, Edit, Trash2, CheckCircle2, Loader2, UserCheck, UserX, Building2, Laptop, Shield, Filter, Sliders, Briefcase } from 'lucide-react';
+import { UserPlus, Upload, Download, Edit, Trash2, CheckCircle2, Loader2, UserCheck, UserX, Building2, Laptop, Shield, Filter, Sliders, Briefcase, Settings } from 'lucide-react';
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
@@ -48,6 +48,41 @@ const STATUS_OPTIONS = [
   { value: 'Active', label: 'Active' },
   { value: 'Inactive', label: 'Inactive' },
 ];
+
+// Customizable columns in the Manage Users table. "User" is intentionally
+// excluded — it is always visible. Widths are percentages of the table width
+// used under `table-fixed`; the User column absorbs whatever remains so the
+// visible columns always sum to 100%.
+type UserColumn = 'workModel' | 'role' | 'status' | 'edit' | 'delete';
+
+const CUSTOMIZABLE_COLUMNS: { key: UserColumn; label: string; width: number }[] = [
+  { key: 'workModel', label: 'Work Model', width: 18 },
+  { key: 'role', label: 'Role', width: 18 },
+  { key: 'status', label: 'Status', width: 18 },
+  { key: 'edit', label: 'Edit', width: 7 },
+  { key: 'delete', label: 'Delete', width: 7 },
+];
+
+const DEFAULT_VISIBLE_COLUMNS: Record<UserColumn, boolean> = {
+  workModel: true,
+  role: true,
+  status: true,
+  edit: true,
+  delete: true,
+};
+
+function loadVisibleColumns(uid: string | undefined): Record<UserColumn, boolean> {
+  if (!uid) return DEFAULT_VISIBLE_COLUMNS;
+  try {
+    const saved = localStorage.getItem(`manage_users_visible_cols_${uid}`);
+    if (saved) {
+      return { ...DEFAULT_VISIBLE_COLUMNS, ...JSON.parse(saved) };
+    }
+  } catch {
+    // Corrupt or unavailable localStorage — fall back to defaults.
+  }
+  return DEFAULT_VISIBLE_COLUMNS;
+}
 
 function FilterHeader({
   column,
@@ -153,6 +188,32 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>(STATUS_OPTIONS.map(o => o.value));
   const [openFilterMenu, setOpenFilterMenu] = useState<FilterColumn | null>(null);
   const [openMobileFilterMenu, setOpenMobileFilterMenu] = useState<FilterColumn | null>(null);
+
+  // Per-admin column visibility, persisted to localStorage by uid.
+  const [visibleColumns, setVisibleColumns] = useState<Record<UserColumn, boolean>>(() =>
+    loadVisibleColumns(currentUser.uid),
+  );
+  const [columnSettingsOpen, setColumnSettingsOpen] = useState(false);
+
+  useEffect(() => {
+    if (!currentUser.uid) return;
+    try {
+      localStorage.setItem(
+        `manage_users_visible_cols_${currentUser.uid}`,
+        JSON.stringify(visibleColumns),
+      );
+    } catch {
+      // Storage unavailable (private mode / quota) — preferences stay in-memory only.
+    }
+  }, [visibleColumns, currentUser.uid]);
+
+  const toggleColumn = (col: UserColumn) =>
+    setVisibleColumns(prev => ({ ...prev, [col]: !prev[col] }));
+
+  // User column width absorbs the remainder so visible columns sum to 100%.
+  const userColWidth = 100 - CUSTOMIZABLE_COLUMNS
+    .filter(c => visibleColumns[c.key])
+    .reduce((sum, c) => sum + c.width, 0);
 
   const [correctionEntry, setCorrectionEntry] = useState<TimeEntry | null>(null);
   const [originalCorrectionEntry, setOriginalCorrectionEntry] = useState<TimeEntry | null>(null);
@@ -603,6 +664,34 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         <CardHeader className="bg-white/40 pb-2">
           <CardTitle className="text-slate-800 font-bold flex items-center justify-between">
             <span>Manage Users</span>
+            <Popover open={columnSettingsOpen} onOpenChange={setColumnSettingsOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 rounded-full text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                  aria-label="Customize columns"
+                >
+                  <Settings className="size-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" sideOffset={4} className="w-48 p-0 overflow-hidden">
+                <div className="bg-indigo-50 border-b border-indigo-100 px-4 py-3">
+                  <h3 className="text-sm font-semibold text-indigo-900">Column Visibility</h3>
+                </div>
+                <div className="px-4 py-3 flex flex-col">
+                  {CUSTOMIZABLE_COLUMNS.map(c => (
+                    <label key={c.key} className="flex items-center gap-2 cursor-pointer py-1 text-sm text-slate-700">
+                      <Checkbox
+                        checked={visibleColumns[c.key]}
+                        onCheckedChange={() => toggleColumn(c.key)}
+                      />
+                      {c.label}
+                    </label>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -633,14 +722,14 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                       </div>
                     </div>
                     <div className="shrink-0 inline-flex items-center gap-1">
-                      {renderEditButton(user)}
-                      {renderDeleteButton(user)}
+                      {visibleColumns.edit && renderEditButton(user)}
+                      {visibleColumns.delete && renderDeleteButton(user)}
                     </div>
                   </div>
                   <div className="flex items-center gap-3 flex-wrap">
-                    {renderRolePill(user)}
-                    {renderWorkModelPill(user)}
-                    {renderStatusPill(user)}
+                    {visibleColumns.role && renderRolePill(user)}
+                    {visibleColumns.workModel && renderWorkModelPill(user)}
+                    {visibleColumns.status && renderStatusPill(user)}
                   </div>
                 </CardContent>
               </Card>
@@ -652,24 +741,34 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             <Table className="table-fixed w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[32%] text-left">User</TableHead>
-                  <TableHead className="w-[18%] text-center">
-                    <FilterHeader column="workModel" title="Work Model" options={WORK_MODEL_OPTIONS} selected={selectedWorkModels} setSelected={setSelectedWorkModels} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
-                  </TableHead>
-                  <TableHead className="w-[18%] text-center">
-                    <FilterHeader column="role" title="Role" options={ROLE_OPTIONS} selected={selectedRoles} setSelected={setSelectedRoles} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
-                  </TableHead>
-                  <TableHead className="w-[18%] text-center">
-                    <FilterHeader column="status" title="Status" options={STATUS_OPTIONS} selected={selectedStatuses} setSelected={setSelectedStatuses} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
-                  </TableHead>
-                  <TableHead className="w-[7%] text-center">Edit</TableHead>
-                  <TableHead className="w-[7%] text-center">Delete</TableHead>
+                  <TableHead className="text-left" style={{ width: `${userColWidth}%` }}>User</TableHead>
+                  {visibleColumns.workModel && (
+                    <TableHead className="w-[18%] text-center">
+                      <FilterHeader column="workModel" title="Work Model" options={WORK_MODEL_OPTIONS} selected={selectedWorkModels} setSelected={setSelectedWorkModels} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
+                    </TableHead>
+                  )}
+                  {visibleColumns.role && (
+                    <TableHead className="w-[18%] text-center">
+                      <FilterHeader column="role" title="Role" options={ROLE_OPTIONS} selected={selectedRoles} setSelected={setSelectedRoles} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
+                    </TableHead>
+                  )}
+                  {visibleColumns.status && (
+                    <TableHead className="w-[18%] text-center">
+                      <FilterHeader column="status" title="Status" options={STATUS_OPTIONS} selected={selectedStatuses} setSelected={setSelectedStatuses} openColumn={openFilterMenu} setOpenColumn={setOpenFilterMenu} />
+                    </TableHead>
+                  )}
+                  {visibleColumns.edit && (
+                    <TableHead className="w-[7%] text-center">Edit</TableHead>
+                  )}
+                  {visibleColumns.delete && (
+                    <TableHead className="w-[7%] text-center">Delete</TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredUsers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-10">
+                    <TableCell colSpan={1 + CUSTOMIZABLE_COLUMNS.filter(c => visibleColumns[c.key]).length} className="text-center py-10">
                       <div className="flex flex-col items-center gap-3">
                         <p className="text-sm text-slate-500">No users match your filter criteria.</p>
                         <Button variant="outline" size="sm" onClick={resetFilters}>Reset Filters</Button>
@@ -684,31 +783,41 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                         <span className="font-medium truncate">{user.name}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-center">
-                      <div className="flex items-center justify-center">
-                        {renderWorkModelPill(user)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <div className="flex items-center justify-center">
-                        {renderRolePill(user)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <div className="flex items-center justify-center">
-                        {renderStatusPill(user)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <div className="flex items-center justify-center">
-                        {renderEditButton(user)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <div className="flex items-center justify-center">
-                        {renderDeleteButton(user)}
-                      </div>
-                    </TableCell>
+                    {visibleColumns.workModel && (
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center">
+                          {renderWorkModelPill(user)}
+                        </div>
+                      </TableCell>
+                    )}
+                    {visibleColumns.role && (
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center">
+                          {renderRolePill(user)}
+                        </div>
+                      </TableCell>
+                    )}
+                    {visibleColumns.status && (
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center">
+                          {renderStatusPill(user)}
+                        </div>
+                      </TableCell>
+                    )}
+                    {visibleColumns.edit && (
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center">
+                          {renderEditButton(user)}
+                        </div>
+                      </TableCell>
+                    )}
+                    {visibleColumns.delete && (
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center">
+                          {renderDeleteButton(user)}
+                        </div>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
