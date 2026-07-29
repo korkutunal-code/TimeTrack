@@ -18,6 +18,7 @@ import { ALL_USERS, USER_GROUP_OPTIONS, buildUserIdMatcher, isGroupSelection } f
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
 import { calculateBiweeklyOvertimeTotals } from '../../../utils/overtimeCalculations.js';
+import type { OvertimeEntry } from '../../../utils/overtimeCalculations';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
 import { formatDateShortWithWeekday } from '../../../utils/dateHelpers.js';
@@ -262,11 +263,11 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
         });
 
       // Group by employee and calculate biweekly overtime totals (California rules)
-      const byUser = new Map<string, DocumentData[]>();
+      const byUser = new Map<string, OvertimeEntry[]>();
       rawEntries.forEach(e => {
         const uid = String(e.userId || '');
         if (!byUser.has(uid)) byUser.set(uid, []);
-        byUser.get(uid)!.push(e);
+        byUser.get(uid)!.push(e as OvertimeEntry);
       });
 
       const summaries: PayrollSummary[] = [];

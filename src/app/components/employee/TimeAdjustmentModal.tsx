@@ -15,7 +15,8 @@ import {
   DialogTitle,
   DialogDescription,
 } from '../ui/dialog';
-import { getCurrentPTDate, subtractPTDays } from '../../../utils/timeCalculations';
+import { getLocalDate, subtractLocalDays, getEmployeeTimezone } from '../../../utils/timeCalculations';
+import { displayTimeForView } from '../../../utils/timeView';
 
 type EditableField = 'clockInManual' | 'lunchOutManual' | 'lunchInManual' | 'clockOutManual';
 
@@ -106,9 +107,18 @@ interface TimeAdjustmentModalProps {
  *    shows a yellow "Open" badge while the request is active.
  */
 export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjustmentModalProps) {
+  // Employee's local timezone drives the 14-day window and all timestamp
+  // display + edit inputs (Req 2d).
+  const employeeTz = useMemo(() => getEmployeeTimezone(user.timezone), [user.timezone]);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [requests, setRequests] = useState<CorrectionRequest[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Display a segment time in the employee's LOCAL timezone: prefer the
+  // absolute epoch system timestamp (converted to local), else the stored
+  // manual string (local wall clock for new entries).
+  const fmtLocal = (ms: number | undefined, manual: string | undefined): string | undefined =>
+    displayTimeForView(ms, manual, 'local', employeeTz);
 
   // Inline direct-edit state (≤24h path). `mode: 'close'` is for retroactive
   // shift closing (empty Clock Out on an open shift); `'endLunch'` is for
@@ -128,8 +138,10 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const today = getCurrentPTDate();
-      const start = subtractPTDays(today, 13); // 14-day window inclusive
+      // 14-day window in the employee's LOCAL zone (entry dates are local
+      // calendar dates per the local-time-tracking refactor).
+      const today = getLocalDate(employeeTz);
+      const start = subtractLocalDays(today, 13, employeeTz); // 14-day window inclusive
       const [ents, reqs] = await Promise.all([
         dbService.getTimeEntriesForUserInRange(user.uid, start, today),
         dbService.getActiveCorrectionRequestsForUser(user.uid),
@@ -141,7 +153,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
     } finally {
       setLoading(false);
     }
-  }, [user.uid]);
+  }, [user.uid, employeeTz]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -224,17 +236,20 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
       return;
     }
     const ts = row.segment[field.systemKey];
+    // Pre-fill the input with the value as shown in the employee's LOCAL zone
+    // (epoch-derived when available, so legacy PT-stored rows edit in local).
+    const currentLocal = fmtLocal(ts, current) ?? current;
     if (within24h(ts)) {
       // Direct-edit path.
       setRequesting(null);
       setEditing({ entryId: row.entry.id, segmentId: row.segment.id, field: field.key, mode: 'edit' });
-      setEditValue(current);
+      setEditValue(currentLocal);
       setEditReason('');
     } else {
       // Correction-request path.
       setEditing(null);
       setRequesting({ row, field });
-      setReqTime(current);
+      setReqTime(currentLocal);
       setReqReason('');
     }
   };
@@ -474,7 +489,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
                               title={value ? 'Click to edit or request a correction' : 'No time recorded'}
                             >
                               <span className="font-mono tabular-nums text-foreground text-xs">
-                                {value || '—'}
+                                {fmtLocal(row.segment[field.systemKey], value) || '—'}
                               </span>
                               {activeReq && (
                                 <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-[10px] px-1.5 py-0 h-4">

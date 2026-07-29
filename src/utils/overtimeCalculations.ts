@@ -204,7 +204,7 @@ export function calculateDailyOvertimeBreakdown(
 }
 
 // Partial TimeEntry with enough info for overtime calcs, plus the optional weekly adjustment field
-type OvertimeEntry = Partial<TimeEntry> & {
+export type OvertimeEntry = Partial<TimeEntry> & {
     workDate: string;
     totalWorkMinutes?: number;
     regularMinutes?: number;

@@ -428,3 +428,60 @@ describe('PT helpers — timezone safety (W2 audit)', () => {
         });
     });
 });
+
+// =============================================================================
+// Employee-local timezone helpers (local-time-tracking refactor)
+// =============================================================================
+import {
+    getEmployeeTimezone,
+    getLocalDate,
+    getLocalTimeHHMM,
+    getTimezoneAbbreviation,
+    formatInstantLocalHHMMAbbr,
+} from './timeCalculations';
+
+describe('employee-local timezone helpers', () => {
+    describe('getEmployeeTimezone', () => {
+        it('prefers the profile timezone', () => {
+            expect(getEmployeeTimezone('Europe/Istanbul')).toBe('Europe/Istanbul');
+        });
+        it('falls back to a valid IANA zone when profile tz is empty', () => {
+            const tz = getEmployeeTimezone('');
+            expect(typeof tz).toBe('string');
+            expect(tz.length).toBeGreaterThan(0);
+        });
+    });
+
+    describe('getLocalDate / getLocalTimeHHMM', () => {
+        it('returns YYYY-MM-DD and HH:MM formats', () => {
+            expect(getLocalDate('UTC')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+            expect(getLocalTimeHHMM('UTC')).toMatch(/^\d{2}:\d{2}$/);
+        });
+    });
+
+    describe('getTimezoneAbbreviation — UTC (not GMT) offsets (Req 2a)', () => {
+        const d = new Date(Date.UTC(2026, 6, 28, 12, 0, 0));
+        it('normalizes GMT+3 to UTC+3 for Europe/Istanbul', () => {
+            expect(getTimezoneAbbreviation('Europe/Istanbul', d)).toBe('UTC+3');
+        });
+        it('normalizes GMT+5:30 to UTC+5:30 for Asia/Kolkata', () => {
+            expect(getTimezoneAbbreviation('Asia/Kolkata', d)).toBe('UTC+5:30');
+        });
+        it('keeps true abbreviations (PDT for America/Los_Angeles in July)', () => {
+            expect(getTimezoneAbbreviation('America/Los_Angeles', d)).toBe('PDT');
+        });
+        it('keeps true abbreviations (EDT for America/New_York in July)', () => {
+            expect(getTimezoneAbbreviation('America/New_York', d)).toBe('EDT');
+        });
+    });
+
+    describe('formatInstantLocalHHMMAbbr', () => {
+        it('includes the UTC offset abbreviation, not GMT', () => {
+            const out = formatInstantLocalHHMMAbbr(Date.UTC(2026, 6, 28, 20, 32, 0), 'Europe/Istanbul');
+            // 20:32 UTC = 23:32 Istanbul; banner shows local time + UTC+3.
+            expect(out).toContain('11:32');
+            expect(out).toContain('UTC+3');
+            expect(out).not.toContain('GMT');
+        });
+    });
+});

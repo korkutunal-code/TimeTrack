@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
 import { Clock, Coffee, LogOut, RefreshCw, CalendarDays, AlertTriangle, WifiOff } from 'lucide-react';
 
@@ -15,7 +15,7 @@ import {
   type PunchStatus,
   type WeekSummary,
 } from '../../../services/clockService';
-import { formatHoursHMM, getEmployeeTimezone } from '../../../utils/timeCalculations';
+import { formatHoursHMM, getEmployeeTimezone, getTimezoneAbbreviation } from '../../../utils/timeCalculations';
 
 interface ClockPunchProps {
   user: User;
@@ -35,7 +35,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   // Employee's persisted local timezone drives entry doc ids, the local
   // midnight split, and per-local-date totals (the local-time-tracking
   // refactor). Falls back to the OS timezone when the profile has none.
-  const employeeTz = getEmployeeTimezone(user.timezone);
+  const employeeTz = useMemo(() => getEmployeeTimezone(user.timezone), [user.timezone]);
   // Layer 2: persistent failure banner. A fleeting toast was easy to miss on
   // a flaky mobile connection, leaving the employee believing their clock-out
   // landed when it hadn't (root cause of the stuck open shifts on
@@ -333,7 +333,8 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <CalendarDays className="h-4 w-4" />
-              This Week: Week of {week.weekStart} in America/Los_Angeles
+              {/* Req 2b: week boundaries + label use the employee's local timezone */}
+              This Week: Week of {week.weekStart} ({getTimezoneAbbreviation(employeeTz)})
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
@@ -377,7 +378,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
       </div>
 
       <p className="text-[10px] text-center text-muted-foreground">
-        All times stored in America/Los_Angeles. Lunch uses existing segment model.
+        Times shown in your local timezone ({getTimezoneAbbreviation(employeeTz)}). Lunch uses existing segment model.
       </p>
     </div>
   );

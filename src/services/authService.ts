@@ -288,7 +288,7 @@ export function getCurrentUserData() {
     return currentUserData;
 }
 
-export async function getUserData(uid: string) {
+export async function getUserData(uid: string): Promise<{ uid: string } & DocumentData> {
     const userDoc = await getDoc(doc(db, 'users', uid));
     if (userDoc.exists()) {
         return { uid, ...userDoc.data() };

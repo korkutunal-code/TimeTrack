@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { User } from '../../lib/auth';
 import { TimeEntry, dbService } from '../../lib/database';
 import { Button } from '../ui/button';
@@ -9,7 +9,8 @@ import { Label } from '../ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { ArrowLeft, AlertTriangle, Clock, Calendar, Target, Briefcase, ChevronLeft, ChevronRight, Filter, X, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatHoursHMM } from '../../../utils/timeCalculations';
+import { formatHoursHMM, getEmployeeTimezone } from '../../../utils/timeCalculations';
+import { displayTimeForView } from '../../../utils/timeView';
 import { TimeAdjustmentModal } from './TimeAdjustmentModal';
 
 interface HistoryViewProps {
@@ -19,22 +20,18 @@ interface HistoryViewProps {
 
 type PeriodFilter = 'this-week' | 'last-week' | 'custom';
 
-/** Get Monday of the current PT week, as YYYY-MM-DD.
- * S4: The week range is computed in canonical America/Los_Angeles (not the
- * employee's profile timezone) so the range edges match the stored `workDate`
- * values (which are PT logical days per AGENTS.md §2). Previously using
- * user.timezone could place the range edge on a different calendar day than
- * the stored workDate, occasionally excluding a just-closed PT-day entry. */
-function getWeekBounds(offset: 'this' | 'last'): { start: string; end: string } {
-  // Get "now" in canonical PT
+/** Get Monday of the current employee-LOCAL week, as YYYY-MM-DD.
+ * The range edges are computed in the employee's local timezone so they match
+ * the stored `workDate` values, which are local calendar dates per the
+ * local-time-tracking refactor (see .kilo/rules/timezone-enforcement.md). */
+function getWeekBounds(offset: 'this' | 'last', timezone?: string): { start: string; end: string } {
+  const tz = getEmployeeTimezone(timezone);
+  // Get "now" in the employee's local zone
   const now = new Date();
-  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' });
-  const todayStr = formatter.format(now); // YYYY-MM-DD in PT
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const todayStr = formatter.format(now); // YYYY-MM-DD in local zone
   const [y, m, d] = todayStr.split('-').map(Number);
-  // Bug fix: previously `new Date(y, m-1, d)` then `.getDay()` which depended on
-  // the runtime's local TZ. For a UTC server + a non-UTC user, the JS Date is
-  // built as local-midnight on the server which is the wrong wall-clock.
-  // Now use UTC-anchored Date so getUTCDay() is stable.
+  // UTC-anchored Date so getUTCDay() is stable regardless of runtime TZ.
   const todayUtc = new Date(Date.UTC(y, m - 1, d));
 
   // JS getDay(): 0=Sun. We want Monday=0.
@@ -69,6 +66,9 @@ function formatDateRange(start: string, end: string): string {
 }
 
 export function HistoryView({ user, onBack }: HistoryViewProps) {
+  // Employee's local timezone drives week bounds and all timestamp display
+  // (Req 2c). Falls back to the OS zone when the profile has none.
+  const employeeTz = useMemo(() => getEmployeeTimezone(user.timezone), [user.timezone]);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -83,11 +83,11 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
   const [appliedRange, setAppliedRange] = useState<{ start: string; end: string } | null>(null);
 
   const getDateRange = useCallback((): { start: string; end: string } | null => {
-    if (periodFilter === 'this-week') return getWeekBounds('this');
-    if (periodFilter === 'last-week') return getWeekBounds('last');
+    if (periodFilter === 'this-week') return getWeekBounds('this', employeeTz);
+    if (periodFilter === 'last-week') return getWeekBounds('last', employeeTz);
     if (periodFilter === 'custom') return appliedRange;
     return null;
-  }, [periodFilter, appliedRange]);
+  }, [periodFilter, appliedRange, employeeTz]);
 
   const loadHistory = useCallback(async () => {
     setLoading(true);
@@ -177,6 +177,14 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
     return `${displayHour}:${minutes} ${ampm}`;
   };
 
+  // Req 2c: display a boundary in the employee's LOCAL timezone. Prefer the
+  // absolute epoch-ms system timestamp (converted to local), else the stored
+  // manual string (which for new entries is already the local wall clock).
+  const formatBoundary = (ms: number | undefined, manual: string | undefined): string => {
+    const shown = displayTimeForView(ms, manual, 'local', employeeTz);
+    return formatTime(shown);
+  };
+
   const formatLunchDuration = (entry: TimeEntry) => {
     if (entry.skipLunch) return 'Skipped';
     if (!entry.lunchOutManual || !entry.lunchInManual) return '-';
@@ -198,23 +206,42 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
   // clockInManual (zero-padded "HH:MM" compares chronologically). If the
   // latest segment is still open (no clockOut), isOpen is true so the caller
   // shows the open-clock-out indicator.
-  const getDayBoundaries = (entry: TimeEntry): { clockIn?: string; clockOut?: string; isOpen: boolean } => {
+  const getDayBoundaries = (entry: TimeEntry): {
+    clockIn?: string; clockOut?: string; isOpen: boolean;
+    clockInMs?: number; clockOutMs?: number;
+  } => {
     const segs = entry.segments;
     if (!segs || segs.length === 0) {
-      return { clockIn: entry.clockInManual, clockOut: entry.clockOutManual, isOpen: !entry.clockOutManual };
+      return {
+        clockIn: entry.clockInManual, clockOut: entry.clockOutManual,
+        isOpen: !entry.clockOutManual,
+        clockInMs: entry.clockInSystem, clockOutMs: entry.clockOutSystem,
+      };
     }
     // Sort chronologically by clockIn (string compare works on "HH:MM").
     const sorted = [...segs].sort((a, b) => (a.clockInManual || '').localeCompare(b.clockInManual || ''));
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
-    const latestClockOut = sorted.reduce((max, s) => {
-      if (s.clockOutManual && (!max || s.clockOutManual > max)) return s.clockOutManual;
-      return max;
-    }, '' as string);
+    // Latest clock-out: prefer the epoch timestamp for true chronology.
+    let latestClockOut: string | undefined;
+    let latestClockOutMs: number | undefined;
+    for (const s of sorted) {
+      const outMs = typeof s.clockOutSystem === 'number' ? s.clockOutSystem : undefined;
+      if (outMs !== undefined) {
+        if (latestClockOutMs === undefined || outMs > latestClockOutMs) {
+          latestClockOutMs = outMs;
+          latestClockOut = s.clockOutManual;
+        }
+      } else if (s.clockOutManual && (!latestClockOut || s.clockOutManual > latestClockOut)) {
+        latestClockOut = s.clockOutManual;
+      }
+    }
     return {
       clockIn: first?.clockInManual || entry.clockInManual,
-      clockOut: latestClockOut || undefined,
+      clockOut: latestClockOut,
       isOpen: !last?.clockOutManual,
+      clockInMs: typeof first?.clockInSystem === 'number' ? first.clockInSystem : entry.clockInSystem,
+      clockOutMs: latestClockOutMs ?? entry.clockOutSystem,
     };
   };
 
@@ -228,6 +255,8 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
   const getDayLunchSummary = (entry: TimeEntry): {
     lunchOut?: string;
     lunchIn?: string;
+    lunchOutMs?: number;
+    lunchInMs?: number;
     isMultiple: boolean;
   } => {
     const segs = entry.segments;
@@ -236,6 +265,8 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
       return {
         lunchOut: hasBreak ? entry.lunchOutManual : undefined,
         lunchIn: hasBreak ? entry.lunchInManual : undefined,
+        lunchOutMs: hasBreak ? entry.lunchOutSystem : undefined,
+        lunchInMs: hasBreak ? entry.lunchInSystem : undefined,
         isMultiple: false,
       };
     }
@@ -248,7 +279,13 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
       return { isMultiple: false };
     }
     if (breaks.length === 1) {
-      return { lunchOut: breaks[0].lunchOutManual, lunchIn: breaks[0].lunchInManual, isMultiple: false };
+      return {
+        lunchOut: breaks[0].lunchOutManual,
+        lunchIn: breaks[0].lunchInManual,
+        lunchOutMs: breaks[0].lunchOutSystem,
+        lunchInMs: breaks[0].lunchInSystem,
+        isMultiple: false,
+      };
     }
     return { isMultiple: true };
   };
@@ -591,11 +628,11 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
                     <div className="grid grid-cols-2 gap-2 mb-2">
                       <div className="bg-muted/50 p-2.5 rounded border">
                         <p className="text-xs text-muted-foreground mb-1">Clock In</p>
-                        <p className="text-sm font-bold">{formatTime(boundaries.clockIn)}</p>
+                        <p className="text-sm font-bold">{formatBoundary(boundaries.clockInMs, boundaries.clockIn)}</p>
                       </div>
                       <div className="bg-muted/50 p-2.5 rounded border">
                         <p className="text-xs text-muted-foreground mb-1">Clock Out</p>
-                        <p className="text-sm font-bold">{hasWarning ? '—' : (formatTime(boundaries.clockOut) || '-')}</p>
+                        <p className="text-sm font-bold">{hasWarning ? '—' : (formatBoundary(boundaries.clockOutMs, boundaries.clockOut) || '-')}</p>
                       </div>
                       <div className="bg-muted/50 p-2.5 rounded border">
                         <p className="text-xs text-muted-foreground mb-1">Lunch</p>
@@ -660,12 +697,12 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
                             </Badge>
                           )}
                         </TableCell>
-                        <TableCell className="tabular-nums">{formatTime(boundaries.clockIn)}</TableCell>
+                        <TableCell className="tabular-nums">{formatBoundary(boundaries.clockInMs, boundaries.clockIn)}</TableCell>
                         <TableCell className="tabular-nums">
                           {lunch.isMultiple ? (
                             <span className="text-muted-foreground italic">Multiple</span>
                           ) : lunch.lunchOut ? (
-                            formatTime(lunch.lunchOut)
+                            formatBoundary(lunch.lunchOutMs, lunch.lunchOut)
                           ) : (
                             <span className="text-muted-foreground">-</span>
                           )}
@@ -674,7 +711,7 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
                           {lunch.isMultiple ? (
                             <span className="text-muted-foreground italic">Multiple</span>
                           ) : lunch.lunchIn ? (
-                            formatTime(lunch.lunchIn)
+                            formatBoundary(lunch.lunchInMs, lunch.lunchIn)
                           ) : (
                             <span className="text-muted-foreground">-</span>
                           )}
@@ -686,7 +723,7 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
                               <span className="font-medium">Missing</span>
                             </div>
                           ) : (
-                            formatTime(boundaries.clockOut)
+                            formatBoundary(boundaries.clockOutMs, boundaries.clockOut)
                           )}
                         </TableCell>
                         <TableCell>
@@ -720,14 +757,14 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
                         rows.push(
                           <TableRow key={`${entry.id}-seg-${i}`} className="bg-slate-50/60 text-xs">
                             <TableCell className="pl-10 text-slate-500">↳ Shift {i + 1}</TableCell>
-                            <TableCell className="tabular-nums text-slate-700">{formatTime(seg.clockInManual)}</TableCell>
+                            <TableCell className="tabular-nums text-slate-700">{formatBoundary(seg.clockInSystem, seg.clockInManual)}</TableCell>
                             <TableCell className="tabular-nums text-slate-700">
-                              {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : formatTime(seg.lunchOutManual)}
+                              {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : formatBoundary(seg.lunchOutSystem, seg.lunchOutManual)}
                             </TableCell>
                             <TableCell className="tabular-nums text-slate-700">
-                              {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : formatTime(seg.lunchInManual)}
+                              {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : formatBoundary(seg.lunchInSystem, seg.lunchInManual)}
                             </TableCell>
-                            <TableCell className="tabular-nums text-slate-700">{formatTime(seg.clockOutManual) || '—'}</TableCell>
+                            <TableCell className="tabular-nums text-slate-700">{formatBoundary(seg.clockOutSystem, seg.clockOutManual) || '—'}</TableCell>
                             <TableCell className="text-slate-400">
                               {seg.autoClosed ? (
                                 <Badge variant="secondary" className="text-[10px] bg-amber-100 text-amber-800 border-amber-300">auto-closed</Badge>

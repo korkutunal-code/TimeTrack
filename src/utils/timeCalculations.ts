@@ -357,9 +357,11 @@ export function subtractLocalDays(dateStr: string, days: number, timezone?: stri
 }
 
 /**
- * Short IANA abbreviation for a timezone, e.g. "EST", "PDT", "GMT+3".
- * Derived from Intl's `timeZoneName: 'short'` part. Falls back to the offset
- * form ("UTC-5") when a short name isn't produced for the locale.
+ * Short IANA abbreviation for a timezone, e.g. "EST", "PDT", "UTC+3".
+ * Derived from Intl's `timeZoneName: 'short'` part. Offset forms are
+ * normalized to UTC ("GMT+3" → "UTC+3") to match the timezone selector's
+ * UTC-offset formatting. Falls back to the offset form ("UTC-5") when a
+ * short name isn't produced for the locale.
  */
 export function getTimezoneAbbreviation(timezone?: string, date: Date = new Date()): string {
   const tz = getEmployeeTimezone(timezone);
@@ -372,7 +374,12 @@ export function getTimezoneAbbreviation(timezone?: string, date: Date = new Date
       timeZoneName: 'short',
     }).formatToParts(date);
     const name = parts.find((p) => p.type === 'timeZoneName')?.value;
-    if (name && !/^[+-]?\d/.test(name)) return name;
+    if (name && !/^[+-]?\d/.test(name)) {
+      // Normalize offset-style "GMT±X" / "GMT" to "UTC±X" / "UTC" (Req 2a);
+      // keep true abbreviations ("EST", "PDT", "CET") untouched.
+      if (/^GMT([+-]\d+(:\d+)?)?$/i.test(name)) return name.replace(/^GMT/i, 'UTC');
+      return name;
+    }
   } catch {
     // fall through to offset form
   }

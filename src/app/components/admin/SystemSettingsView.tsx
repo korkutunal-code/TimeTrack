@@ -220,7 +220,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                     checked={systemSettings.enable_lunch_reminder}
                     onCheckedChange={(checked) => update('enable_lunch_reminder', !!checked)}
                   />
-                  <Label>Lunch Reminder</Label>
+                  <Label>Lunch Reminder (Employee Time Zone)</Label>
                 </label>
                 <Input
                   type="time"
@@ -228,7 +228,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                   onChange={(e) => update('lunch_reminder_time', e.target.value)}
                   className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
                 />
-                <p className="text-xs text-slate-400">If they haven't logged lunch out. Pacific time.</p>
+                <p className="text-xs text-slate-400">If they haven't logged lunch out. Employee local time.</p>
               </div>
 
               <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('enable_clockout_reminder') || fieldHighlight('clockout_reminder_time')}`}>
@@ -237,7 +237,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                     checked={systemSettings.enable_clockout_reminder}
                     onCheckedChange={(checked) => update('enable_clockout_reminder', !!checked)}
                   />
-                  <Label>Clock Out Reminder</Label>
+                  <Label>Clock Out Reminder (Employee Time Zone)</Label>
                 </label>
                 <Input
                   type="time"
@@ -245,7 +245,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                   onChange={(e) => update('clockout_reminder_time', e.target.value)}
                   className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
                 />
-                <p className="text-xs text-slate-400">If still clocked in. Pacific time.</p>
+                <p className="text-xs text-slate-400">If still clocked in. Employee local time.</p>
               </div>
 
               <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('enable_longshift_reminder') || fieldHighlight('longshift_threshold_hours')}`}>
@@ -366,7 +366,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
             aria-expanded={isLockPeriodOpen}
             className="w-full flex items-center justify-between text-left"
           >
-            <CardTitle className="text-slate-800 font-bold">Lock Payroll Period</CardTitle>
+            <CardTitle className="text-slate-800 font-bold">Lock Payroll Period (California Time)</CardTitle>
             <ChevronDown
               className={`size-5 text-slate-500 transition-transform duration-200 ${isLockPeriodOpen ? 'rotate-180' : 'rotate-0'}`}
             />
@@ -398,7 +398,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                 </Button>
               </div>
               <p className="text-xs text-slate-500 mt-2">
-                Setting a date here will prevent any edits or corrections for time entries on or before this date. Clear the date to unlock all periods.
+                Setting a date here will prevent any edits or corrections for time entries on or before this date, interpreted in California Time (Pacific Time). Clear the date to unlock all periods.
               </p>
             </div>
           </div>
@@ -417,7 +417,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
             aria-expanded={isExcludeRecordsOpen}
             className="w-full flex items-center justify-between text-left"
           >
-            <CardTitle className="text-slate-800 font-bold">Exclude Records From Analysis</CardTitle>
+            <CardTitle className="text-slate-800 font-bold">Exclude Records From Analysis (California Time)</CardTitle>
             <ChevronDown
               className={`size-5 text-slate-500 transition-transform duration-200 ${isExcludeRecordsOpen ? 'rotate-180' : 'rotate-0'}`}
             />
@@ -426,7 +426,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
         {isExcludeRecordsOpen && (
         <CardContent className="space-y-3 pt-2">
           <p className="text-xs text-slate-500">
-            All time records on or before the selected date will be excluded from analysis, metrics, and payroll reports.
+            All time records on or before the selected date — interpreted in California Time (Pacific Time) — will be excluded from analysis, metrics, and payroll reports.
           </p>
           <div className={`space-y-3 bg-white p-4 border border-slate-200 rounded-lg transition-colors ${fieldHighlight('exclude_records_before_date')}`}>
             <div>
