@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { Coffee, LogOut, LogIn, Loader2, Pencil, Send } from 'lucide-react';
 
 import type { User } from '../../lib/auth';
-import { dbService, type TimeEntry, type TimeSegment, type CorrectionRequest } from '../../lib/database';
+import { dbService, type TimeEntry, type CorrectionRequest } from '../../lib/database';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -16,7 +16,8 @@ import {
   DialogDescription,
 } from '../ui/dialog';
 import { getLocalDate, subtractLocalDays, getEmployeeTimezone } from '../../../utils/timeCalculations';
-import { displayTimeForView, explodeDocsBySegmentLocalDate } from '../../../utils/timeView';
+import { displayTimeForView } from '../../../utils/timeView';
+import { flattenToShiftRows, type ShiftRow } from './shiftRows';
 
 type EditableField = 'clockInManual' | 'lunchOutManual' | 'lunchInManual' | 'clockOutManual';
 
@@ -35,57 +36,6 @@ const FIELDS: FieldConfig[] = [
   { key: 'lunchInManual', label: 'Lunch In', icon: <Coffee className="size-3.5" />, issueType: 'Lunch In', systemKey: 'lunchInSystem', isLunch: true },
   { key: 'clockOutManual', label: 'Clock Out', icon: <LogOut className="size-3.5" />, issueType: 'Clock Out', systemKey: 'clockOutSystem', isLunch: false },
 ];
-
-interface ShiftRow {
-  key: string;
-  entry: TimeEntry;
-  segment: TimeSegment;
-  shiftNumber: number;
-  totalShifts: number;
-}
-
-/**
- * Flatten entries into one row per shift/segment. A split-shift day with 2
- * segments produces 2 rows. The synthesized "current" segment (from top-level
- * fields) is included only when it is NOT a duplicate of the last archived
- * segment (the dual-write case in the ClockPunch flow).
- *
- * Entries are first exploded by segment localDate (explodeDocsBySegmentLocalDate)
- * so a pre-fix cross-midnight doc (23:32→00:28 split into 23:32→23:59 +
- * 00:00→00:28 but stored on one doc) renders as TWO rows with the correct
- * dates (07/29 and 07/30) instead of three rows all pinned to the punch-in
- * date — the synthesized top-level "current" spanning midnight is dropped.
- */
-function flattenToShiftRows(entries: TimeEntry[]): ShiftRow[] {
-  const rows: ShiftRow[] = [];
-  for (const entry of explodeDocsBySegmentLocalDate(entries)) {
-    const segs = entry.segments ?? [];
-    const current = entry.currentSegment ?? null;
-
-    const allShifts: TimeSegment[] = [...segs];
-    if (current) {
-      const last = segs.length > 0 ? segs[segs.length - 1] : null;
-      const isDup =
-        last &&
-        last.clockInManual === current.clockInManual &&
-        last.complete === current.complete;
-      if (!isDup) {
-        allShifts.push(current);
-      }
-    }
-
-    allShifts.forEach((seg, i) => {
-      rows.push({
-        key: `${entry.id}|${seg.id}`,
-        entry,
-        segment: seg,
-        shiftNumber: i + 1,
-        totalShifts: allShifts.length,
-      });
-    });
-  }
-  return rows;
-}
 
 /** Whether a system timestamp is within the last 24 hours (direct-edit window). */
 function within24h(ts: number | undefined): boolean {

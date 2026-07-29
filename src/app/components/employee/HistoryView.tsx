@@ -107,6 +107,10 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
         // dates: a 23:32→00:28 shift stored on the 07/29 doc renders as two
         // rows — 23:32→23:59 under 07/29 and 00:00→00:28 under 07/30.
         data = explodeDocsBySegmentLocalDate(data);
+        // Restore newest-first order: the explosion emits a pre-fix doc's
+        // dates ascending, breaking the workDate-desc order from Firestore.
+        // Stable sort keeps segments within a date in chronological order.
+        data.sort((a, b) => b.date.localeCompare(a.date));
       } else {
         // No range (custom not yet applied) — show nothing
         data = [];
