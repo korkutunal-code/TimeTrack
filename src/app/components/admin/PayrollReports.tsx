@@ -25,9 +25,16 @@ import { computeSegmentWorkMinutes } from '../../lib/segmentOps';
 import type { TimeSegment } from '../../lib/database';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
+import { type TimeViewMode, displayTimeForView } from '../../../utils/timeView';
 
 interface PayrollReportsProps {
   allUsers: User[];
+  /**
+   * Admin timezone view (Req 4). 'local' = employee local tz (default),
+   * 'pt' = America/Los_Angeles. Display-only; conversion uses the absolute
+   * epoch system timestamps so stored data is never mutated.
+   */
+  timeViewMode?: TimeViewMode;
 }
 
 interface PayrollSummary {
@@ -41,7 +48,7 @@ interface PayrollSummary {
   dailyEntries?: DocumentData[];
 }
 
-export function PayrollReports({ allUsers }: PayrollReportsProps) {
+export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollReportsProps) {
   const [selectedUserId, setSelectedUserId] = useState<string>(ALL_USERS);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -335,6 +342,9 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
   // only detect a +1d boundary.
   interface TimeBoundary {
     time?: string;
+    /** Absolute epoch-ms system timestamp for the boundary (when known). Used
+     * by the admin timezone view (Req 4) to convert to local/PT for display. */
+    ms?: number;
     dayOffset: number; // calendar days after the anchor (0 = same day, 1 = next, 2 = +2d, …)
   }
 
@@ -381,8 +391,8 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
         outOffset = !Number.isNaN(inM) && !Number.isNaN(outM) && outM < inM ? 1 : 0;
       }
       return {
-        clockIn: { time: day.clockInManual, dayOffset: 0 },
-        clockOut: { time: day.clockOutManual, dayOffset: outOffset },
+        clockIn: { time: day.clockInManual, ms: inMs, dayOffset: 0 },
+        clockOut: { time: day.clockOutManual, ms: outMs, dayOffset: outOffset },
       };
     }
     // Earliest clock-in and latest clock-out across all segments, using system
@@ -424,8 +434,8 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
       outOffset = latest.manualWrapped ? 1 : 0;
     }
     return {
-      clockIn: earliest ? { time: earliest.time, dayOffset: 0 } : undefined,
-      clockOut: latest ? { time: latest.time, dayOffset: outOffset } : undefined,
+      clockIn: earliest ? { time: earliest.time, ms: earliest.ms, dayOffset: 0 } : undefined,
+      clockOut: latest ? { time: latest.time, ms: latest.ms, dayOffset: outOffset } : undefined,
     };
   };
 
@@ -447,8 +457,8 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
       const liOffset = inMs !== undefined && liMs !== undefined ? dayOffsetFromSystem(inMs, liMs)
         : (!Number.isNaN(inM) && !Number.isNaN(liM) && liM < inM ? 1 : 0);
       return {
-        lunchOut: { time: day.lunchOutManual, dayOffset: loOffset },
-        lunchIn: { time: day.lunchInManual, dayOffset: liOffset },
+        lunchOut: { time: day.lunchOutManual, ms: loMs, dayOffset: loOffset },
+        lunchIn: { time: day.lunchInManual, ms: liMs, dayOffset: liOffset },
         isMultiple: false,
       };
     }
@@ -466,8 +476,8 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
       const liOffset = inMs !== undefined && liMs !== undefined ? dayOffsetFromSystem(inMs, liMs)
         : (!Number.isNaN(inM) && !Number.isNaN(liM) && liM < inM ? 1 : 0);
       breaks.push({
-        lunchOut: { time: s.lunchOutManual, dayOffset: loOffset },
-        lunchIn: { time: s.lunchInManual, dayOffset: liOffset },
+        lunchOut: { time: s.lunchOutManual, ms: loMs, dayOffset: loOffset },
+        lunchIn: { time: s.lunchInManual, ms: liMs, dayOffset: liOffset },
       });
     }
     if (breaks.length === 0) return { isMultiple: false };
@@ -516,11 +526,15 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
       +{offset}d
     </span>
   );
-  const fmtBoundary = (b: TimeBoundary | undefined): JSX.Element => {
+  const fmtBoundary = (b: TimeBoundary | undefined, empTz?: string): JSX.Element => {
     if (!b || !b.time) return <span>--</span>;
+    // Admin timezone view (Req 4): when the absolute epoch-ms timestamp is
+    // known, render it converted to the selected view zone (employee local or
+    // PT). Falls back to the stored manual string for legacy rows without ms.
+    const shown = displayTimeForView(b.ms, b.time, timeViewMode, empTz) ?? b.time;
     return (
       <span className="inline-flex items-center gap-1.5 leading-none">
-        {fmtTime(b.time)}
+        {fmtTime(shown)}
         {b.dayOffset > 0 && <DayOffsetBadge offset={b.dayOffset} />}
       </span>
     );
@@ -678,7 +692,10 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
 
           {/* Employee Cards - Mobile Friendly */}
           <div className="space-y-2">
-            {report.map(summary => (
+            {report.map(summary => {
+              // Employee's local timezone for the Req-4 'local' view mode.
+              const empTz = allUsers.find(u => u.uid === summary.userId)?.timezone;
+              return (
               <Card key={summary.userId} className="border-2 border-slate-200">
                 <CardContent className="py-1 px-2 [&:last-child]:pb-1">
                   <div className="flex flex-row items-center justify-between gap-4 py-1 px-2">
@@ -765,7 +782,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                             const renderLunchCell = (boundary: TimeBoundary | undefined): JSX.Element => {
                               if (lunch.isMultiple) return <span className="italic text-slate-400">Multiple</span>;
                               if (lunchMissing) return <span className="inline-block bg-red-100 text-red-700 font-semibold border border-red-200 px-2 py-0.5 rounded">--</span>;
-                              return fmtBoundary(boundary);
+                              return fmtBoundary(boundary, empTz);
                             };
 
                             const rows: JSX.Element[] = [
@@ -783,14 +800,14 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                                     )}
                                   </span>
                                 </td>
-                                <td className="p-1.5">{fmtBoundary(b.clockIn)}</td>
+                                <td className="p-1.5">{fmtBoundary(b.clockIn, empTz)}</td>
                                 <td className="p-1.5">
                                   {renderLunchCell(lunch.lunchOut)}
                                 </td>
                                 <td className="p-1.5">
                                   {renderLunchCell(lunch.lunchIn)}
                                 </td>
-                                <td className="p-1.5">{fmtBoundary(b.clockOut)}</td>
+                                <td className="p-1.5">{fmtBoundary(b.clockOut, empTz)}</td>
                                 <td className="p-1.5 text-right">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
                                 <td className="p-1.5 text-right">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
                                 <td className="p-1.5 text-right">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
@@ -806,14 +823,14 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                                 rows.push(
                                   <tr key={`${day.workDate}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
                                     <td className="p-1.5 pl-6 text-purple-700 font-medium">↳ Shift {i + 1}</td>
-                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockInManual, dayOffset: 0 })}</td>
+                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockInManual, ms: seg.clockInSystem, dayOffset: 0 }, empTz)}</td>
                                     <td className="p-1.5">
-                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, dayOffset: segFieldDayOffset(seg, 'lunchOutManual') })}
+                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, ms: seg.lunchOutSystem, dayOffset: segFieldDayOffset(seg, 'lunchOutManual') }, empTz)}
                                     </td>
                                     <td className="p-1.5">
-                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, dayOffset: segFieldDayOffset(seg, 'lunchInManual') })}
+                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, ms: seg.lunchInSystem, dayOffset: segFieldDayOffset(seg, 'lunchInManual') }, empTz)}
                                     </td>
-                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockOutManual, dayOffset: segFieldDayOffset(seg, 'clockOutManual') })}</td>
+                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual') }, empTz)}</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
@@ -833,7 +850,8 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                   )}
                 </CardContent>
               </Card>
-            ))}
+              );
+            })}
           </div>
 
           {/* Info Card */}

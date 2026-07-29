@@ -25,6 +25,8 @@ import { Badge } from './components/ui/badge';
 import { Button } from './components/ui/button';
 import { UserAvatar } from './components/ui/user-avatar';
 import { TimeZoneSelector } from './components/ui/time-zone-selector';
+import { TimezoneViewToggle } from './components/ui/timezone-view-toggle';
+import type { TimeViewMode } from '../utils/timeView';
 import { DEFAULT_DISPLAY_TIMEZONE } from './lib/timezones';
 import { Save, RotateCcw, ArrowLeft } from 'lucide-react';
 
@@ -84,6 +86,9 @@ export default function App() {
   // View state
   const [employeeView, setEmployeeView] = useState<EmployeeView>('today');
   const [adminView, setAdminView] = useState<AdminView>('panel');
+  // Admin/Manager timezone view (Req 4): 'local' = employee local tz (default),
+  // 'pt' = America/Los_Angeles (California Time). Applied to analysis views.
+  const [timeViewMode, setTimeViewMode] = useState<TimeViewMode>('local');
 
   // Unsaved-changes navigation guard for the Settings tab.
   // settingsGuardRef lets SystemSettingsView expose its dirty state +
@@ -382,19 +387,31 @@ export default function App() {
         </TabsContent>
 
         <TabsContent value="payroll">
-          <PayrollReports allUsers={allUsers} />
+          <div className="mb-3">
+            <TimezoneViewToggle mode={timeViewMode} onChange={setTimeViewMode} />
+          </div>
+          <PayrollReports allUsers={allUsers} timeViewMode={timeViewMode} />
         </TabsContent>
 
         <TabsContent value="audit">
-          <AuditViewer allUsers={allUsers} />
+          <div className="mb-3">
+            <TimezoneViewToggle mode={timeViewMode} onChange={setTimeViewMode} />
+          </div>
+          <AuditViewer allUsers={allUsers} timeViewMode={timeViewMode} />
         </TabsContent>
 
         <TabsContent value="metrics">
-          <PatternMetrics allUsers={allUsers} />
+          <div className="mb-3">
+            <TimezoneViewToggle mode={timeViewMode} onChange={setTimeViewMode} />
+          </div>
+          <PatternMetrics allUsers={allUsers} timeViewMode={timeViewMode} />
         </TabsContent>
 
         <TabsContent value="team">
-          <TeamDashboard user={currentUser} allUsers={allUsers} />
+          <div className="mb-3">
+            <TimezoneViewToggle mode={timeViewMode} onChange={setTimeViewMode} />
+          </div>
+          <TeamDashboard user={currentUser} allUsers={allUsers} timeViewMode={timeViewMode} />
         </TabsContent>
 
         <TabsContent value="corrections">

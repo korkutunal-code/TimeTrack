@@ -2,8 +2,8 @@ import { Clock, Coffee, TrendingUp } from 'lucide-react';
 import { Card, CardContent } from '../ui/card';
 import { Badge } from '../ui/badge';
 import type { TimeSegment } from '../../lib/database';
-import { formatHoursHMM } from '../../../utils/timeCalculations';
-import { getDisplayClock, formatInstantHHMM } from '../../lib/timezones';
+import { formatHoursHMM, formatInstantLocalHHMMAbbr } from '../../../utils/timeCalculations';
+import { getDisplayClock } from '../../lib/timezones';
 
 interface ClockStatusProps {
   isClockedIn: boolean;
@@ -15,10 +15,14 @@ interface ClockStatusProps {
   breakMinutes: number;
   /**
    * IANA zone id used purely for DISPLAY of the live date/time/zone label on
-   * this screen. Does not affect stored data or calculations (which remain in
-   * America/Los_Angeles).
+   * this screen. Does not affect stored data or calculations.
    */
   displayTimezone: string;
+  /**
+   * IANA zone used for the "Since" banner (Req 3) — the employee's persisted
+   * local timezone. Defaults to `displayTimezone` when omitted.
+   */
+  statusTimezone?: string;
 }
 
 export function ClockStatus({
@@ -28,8 +32,10 @@ export function ClockStatus({
   workMinutes,
   breakMinutes,
   displayTimezone,
+  statusTimezone,
 }: ClockStatusProps) {
   const displayClock = getDisplayClock(displayTimezone);
+  const sinceZone = statusTimezone ?? displayTimezone;
   const statusColor = isOnLunch
     ? 'bg-amber-100 text-amber-800 border-amber-300'
     : isClockedIn
@@ -77,33 +83,22 @@ export function ClockStatus({
         </div>
 
         {sinceEpoch ? (
-          // Two-row "Since" display: the same start instant shown in both the
-          // selected display zone (row 1) and canonical PT (row 2). Only the
-          // HH:MM values are bold; "Since" and zone names stay normal weight.
+          // Single-row "Since" display (Req 3): the start instant shown in the
+          // employee's LOCAL timezone with the short zone abbreviation, and NO
+          // date portion (e.g. "Since 10:30 PM EST").
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Clock className="h-4 w-4" />
               <span>
                 Since{' '}
                 <span className="font-bold text-foreground tabular-nums">
-                  {formatInstantHHMM(sinceEpoch, displayTimezone)}
-                </span>{' '}
-                {displayClock.zoneName}
-              </span>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Clock className="h-4 w-4" />
-              <span>
-                Since{' '}
-                <span className="font-bold text-foreground tabular-nums">
-                  {formatInstantHHMM(sinceEpoch, 'America/Los_Angeles')}
-                </span>{' '}
-                America/Los_Angeles
+                  {formatInstantLocalHHMMAbbr(sinceEpoch, sinceZone)}
+                </span>
               </span>
             </div>
           </div>
         ) : sincePTManual ? (
-          // Degraded fallback: no system millis — show only the PT manual
+          // Degraded fallback: no system millis — show only the local manual
           // string (can't reliably convert to another zone without the instant).
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -113,7 +108,7 @@ export function ClockStatus({
                 <span className="font-bold text-foreground tabular-nums">
                   {sincePTManual}
                 </span>{' '}
-                America/Los_Angeles
+                {displayClock.zoneName}
               </span>
             </div>
           </div>

@@ -290,3 +290,118 @@ export function getPTWeekStart(dateStr: string = getCurrentPTDate()): string {
   // Reuse the PT date formatter (the adjusted instant will resolve to correct PT calendar day)
   return getPTDate(start);
 }
+
+// ---------------------------------------------------------------------------
+// Employee LOCAL timezone helpers
+// The canonical storage/payroll timezone is America/Los_Angeles (PT) per
+// AGENTS.md §2. The helpers below are for the employee-facing LOCAL calendar
+// date/time used by the punch flows (entry doc ids, "since" banners, and the
+// local-midnight shift split). They mirror the PT helpers' format (en-CA date,
+// en-US 24h time) so behaviour stays consistent, but format in the employee's
+// own IANA zone instead of PT. Per the local-time-tracking refactor, the
+// employee's *local* calendar date drives their own time-entry documents.
+// ---------------------------------------------------------------------------
+
+/** Resolve the employee's effective local IANA zone (profile tz, else OS tz). */
+export function getEmployeeTimezone(profileTimezone?: string | null): string {
+  if (profileTimezone && typeof profileTimezone === 'string' && profileTimezone.trim() !== '') {
+    return profileTimezone;
+  }
+  try {
+    const tz = Intl?.DateTimeFormat?.().resolvedOptions?.().timeZone;
+    if (tz && typeof tz === 'string') return tz;
+  } catch {
+    // fall through
+  }
+  return 'America/Los_Angeles';
+}
+
+/** Current calendar date in the employee's local zone as YYYY-MM-DD. */
+export function getLocalDate(timezone?: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: getEmployeeTimezone(timezone),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+/** Current wall time in the employee's local zone as HH:MM (24h). */
+export function getLocalTimeHHMM(timezone?: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: getEmployeeTimezone(timezone),
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date());
+}
+
+/** Convert a JS Date to the employee's local YYYY-MM-DD (for range queries). */
+export function getLocalDateFor(d: Date, timezone?: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: getEmployeeTimezone(timezone),
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+/**
+ * Subtract N days from a local YYYY-MM-DD date string (returns local YYYY-MM-DD).
+ * Uses a local-noon UTC anchor (matches getPTWeekStart) to avoid DST/midnight
+ * off-by-one errors.
+ */
+export function subtractLocalDays(dateStr: string, days: number, timezone?: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return getLocalDateFor(new Date(Date.UTC(y, m - 1, d - days, 12, 0, 0)), timezone);
+}
+
+/**
+ * Short IANA abbreviation for a timezone, e.g. "EST", "PDT", "GMT+3".
+ * Derived from Intl's `timeZoneName: 'short'` part. Falls back to the offset
+ * form ("UTC-5") when a short name isn't produced for the locale.
+ */
+export function getTimezoneAbbreviation(timezone?: string, date: Date = new Date()): string {
+  const tz = getEmployeeTimezone(timezone);
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZoneName: 'short',
+    }).formatToParts(date);
+    const name = parts.find((p) => p.type === 'timeZoneName')?.value;
+    if (name && !/^[+-]?\d/.test(name)) return name;
+  } catch {
+    // fall through to offset form
+  }
+  // Offset fallback, e.g. "UTC-5".
+  try {
+    const offParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      timeZoneName: 'shortOffset',
+    }).formatToParts(date);
+    const off = offParts.find((p) => p.type === 'timeZoneName')?.value; // e.g. "GMT-5"
+    if (off) return off.replace('GMT', 'UTC');
+  } catch {
+    // fall through
+  }
+  return tz;
+}
+
+/**
+ * Format an epoch-millis instant as "H:MM AM/PM ABBR" in the employee's local
+ * zone — for the punch "since" banner (Req 3). No date portion; includes the
+ * short timezone abbreviation (e.g. "10:30 PM EST", "7:05 AM GMT+3").
+ */
+export function formatInstantLocalHHMMAbbr(epochMs: number, timezone?: string): string {
+  const tz = getEmployeeTimezone(timezone);
+  const time = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(new Date(epochMs));
+  return `${time} ${getTimezoneAbbreviation(tz, new Date(epochMs))}`;
+}

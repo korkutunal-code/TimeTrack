@@ -31,13 +31,16 @@ import { Download, Printer, RefreshCw, Eye, Users, AlertTriangle, Calendar, Cloc
 import { USER_GROUP_OPTIONS, buildUserIdMatcher } from '../../../utils/userSelection';
 import { useExclusionCutoff } from '../../hooks/useExclusionCutoff';
 import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
+import { type TimeViewMode, displayTimeForView } from '../../../utils/timeView';
 
 interface TeamDashboardProps {
   user: User;
   allUsers: User[];
+  /** Admin/Manager timezone view (Req 4). 'local' = employee local tz (default), 'pt' = PT. */
+  timeViewMode?: TimeViewMode;
 }
 
-export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
+export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDashboardProps) {
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [, setLoading] = useState(true);
   const [selectedUserId, setSelectedUserId] = useState<string>('all');
@@ -54,6 +57,16 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
   const [originalEditingEntry, setOriginalEditingEntry] = useState<TimeEntry | null>(null);
   const [adminNotes, setAdminNotes] = useState('');
   const [workModels, setWorkModels] = useState<WorkModelDef[]>([]);
+
+  // Req 4: display a time boundary in the selected admin view zone. Uses the
+  // absolute epoch system timestamp when present (converts to employee-local
+  // or PT), else the stored manual string as-is (legacy rows).
+  const fmtTz = (epochMs: number | undefined, manualFallback: string | undefined, empTz?: string): string => {
+    const shown = displayTimeForView(epochMs, manualFallback, timeViewMode, empTz);
+    return shown || '--';
+  };
+  const tzForUser = (userId?: string): string | undefined =>
+    allUsers.find((u) => u.uid === userId)?.timezone;
 
   useEffect(() => {
     listWorkModels().then(setWorkModels).catch(e => console.error('Failed to load work models', e));
@@ -594,11 +607,11 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
                   <div className="grid grid-cols-2 gap-2 mb-2">
                     <div className="bg-muted/50 p-2 rounded text-center border border-border">
                       <p className="text-xs text-muted-foreground mb-0.5">In</p>
-                      <p className="text-sm font-bold">{entry.clockInManual || '--'}</p>
+                      <p className="text-sm font-bold">{fmtTz(entry.clockInSystem, entry.clockInManual, tzForUser(entry.userId))}</p>
                     </div>
                     <div className="bg-muted/50 p-2 rounded text-center border border-border">
                       <p className="text-xs text-muted-foreground mb-0.5">Out</p>
-                      <p className="text-sm font-bold">{entry.clockOutManual || '--'}</p>
+                      <p className="text-sm font-bold">{fmtTz(entry.clockOutSystem, entry.clockOutManual, tzForUser(entry.userId))}</p>
                     </div>
                   </div>
 
@@ -639,13 +652,13 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
                   <p className="text-xs text-slate-600 mb-1 flex items-center gap-1">
                     <LogIn className="size-3" /> Clock In
                   </p>
-                  <p className="font-bold">{selectedEntry.clockInManual || '--'}</p>
+                  <p className="font-bold">{fmtTz(selectedEntry.clockInSystem, selectedEntry.clockInManual, tzForUser(selectedEntry.userId))}</p>
                 </div>
                 <div className="bg-slate-50 p-2 rounded border border-slate-200">
                   <p className="text-xs text-slate-600 mb-1 flex items-center gap-1">
                     <LogOut className="size-3" /> Clock Out
                   </p>
-                  <p className="font-bold">{selectedEntry.clockOutManual || '--'}</p>
+                  <p className="font-bold">{fmtTz(selectedEntry.clockOutSystem, selectedEntry.clockOutManual, tzForUser(selectedEntry.userId))}</p>
                 </div>
                 {!selectedEntry.skipLunch && (
                   <>
@@ -653,13 +666,13 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
                       <p className="text-xs text-slate-600 mb-1 flex items-center gap-1">
                         <Coffee className="size-3" /> Lunch Start
                       </p>
-                      <p className="font-bold text-sm">{selectedEntry.lunchOutManual || '--'}</p>
+                      <p className="font-bold text-sm">{fmtTz(selectedEntry.lunchOutSystem, selectedEntry.lunchOutManual, tzForUser(selectedEntry.userId))}</p>
                     </div>
                     <div className="bg-slate-50 p-2 rounded border border-slate-200">
                       <p className="text-xs text-slate-600 mb-1 flex items-center gap-1">
                         <Coffee className="size-3" /> Lunch End
                       </p>
-                      <p className="font-bold text-sm">{selectedEntry.lunchInManual || '--'}</p>
+                      <p className="font-bold text-sm">{fmtTz(selectedEntry.lunchInSystem, selectedEntry.lunchInManual, tzForUser(selectedEntry.userId))}</p>
                     </div>
                   </>
                 )}

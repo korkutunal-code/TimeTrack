@@ -15,9 +15,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/
 import { USER_GROUP_OPTIONS, buildUserIdMatcher } from '../../../utils/userSelection';
 import { useExclusionCutoff } from '../../hooks/useExclusionCutoff';
 import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
+import { type TimeViewMode, zoneForMode } from '../../../utils/timeView';
 
 interface AuditViewerProps {
   allUsers: User[];
+  /** Admin timezone view (Req 4). 'local' = employee local tz (default), 'pt' = PT. */
+  timeViewMode?: TimeViewMode;
 }
 
 interface AuditResult {
@@ -32,7 +35,7 @@ interface AuditResult {
   flags: string[];
 }
 
-export function AuditViewer({ allUsers }: AuditViewerProps) {
+export function AuditViewer({ allUsers, timeViewMode = 'local' }: AuditViewerProps) {
   const [selectedUserId, setSelectedUserId] = useState<string>('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -138,10 +141,12 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
     return `${hours}h ${mins}m`;
   };
 
-  const formatTimestamp = (timestamp: number | undefined): string => {
+  // Format a system timestamp for the selected admin view zone (Req 4):
+  // 'local' → the employee's own local timezone, 'pt' → America/Los_Angeles.
+  const formatTimestamp = (timestamp: number | undefined, employeeTz?: string): string => {
     if (!timestamp) return '--';
     return new Date(timestamp).toLocaleString('en-US', {
-      timeZone: 'America/Los_Angeles',
+      timeZone: zoneForMode(timeViewMode, employeeTz),
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -288,7 +293,10 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
       {/* Results List */}
       {results.length > 0 ? (
         <div className="space-y-3">
-          {results.map((result, index) => (
+          {results.map((result, index) => {
+            // Employee's local timezone for the Req-4 'local' view mode.
+            const empTz = allUsers.find(u => u.uid === result.entry.userId)?.timezone;
+            return (
             <Card
               key={index}
               className={`border-2 ${result.flags.length > 0 ? 'border-amber-400 bg-amber-50/30' : 'border-slate-200'}`}
@@ -318,7 +326,7 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
                         <p className="text-xs text-slate-600">Clock In</p>
                         <p className="text-sm font-bold text-slate-900">{result.entry.clockInManual}</p>
                         <p className="text-xs text-slate-500">
-                          Submitted: {formatTimestamp(result.entry.clockInSystem)}
+                          Submitted: {formatTimestamp(result.entry.clockInSystem, empTz)}
                         </p>
                       </div>
                       <div className="text-right">
@@ -341,7 +349,7 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
                             {result.entry.lunchOutManual} → {result.entry.lunchInManual}
                           </p>
                           <p className="text-xs text-slate-500">
-                            Submitted: {formatTimestamp(result.entry.lunchOutSystem)}
+                            Submitted: {formatTimestamp(result.entry.lunchOutSystem, empTz)}
                           </p>
                         </div>
                         <div className="text-right">
@@ -361,7 +369,7 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
                         <p className="text-xs text-slate-600">Clock Out</p>
                         <p className="text-sm font-bold text-slate-900">{result.entry.clockOutManual}</p>
                         <p className="text-xs text-slate-500">
-                          Submitted: {formatTimestamp(result.entry.clockOutSystem)}
+                          Submitted: {formatTimestamp(result.entry.clockOutSystem, empTz)}
                         </p>
                       </div>
                       <div className="text-right">
@@ -376,7 +384,8 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
                 </div>
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
         </div>
       ) : !loading ? (
         <Card className="border-2 border-dashed border-slate-300">

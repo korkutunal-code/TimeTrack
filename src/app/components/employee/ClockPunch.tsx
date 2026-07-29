@@ -15,7 +15,7 @@ import {
   type PunchStatus,
   type WeekSummary,
 } from '../../../services/clockService';
-import { formatHoursHMM } from '../../../utils/timeCalculations';
+import { formatHoursHMM, getEmployeeTimezone } from '../../../utils/timeCalculations';
 
 interface ClockPunchProps {
   user: User;
@@ -32,6 +32,10 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   const [week, setWeek] = useState<WeekSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // Employee's persisted local timezone drives entry doc ids, the local
+  // midnight split, and per-local-date totals (the local-time-tracking
+  // refactor). Falls back to the OS timezone when the profile has none.
+  const employeeTz = getEmployeeTimezone(user.timezone);
   // Layer 2: persistent failure banner. A fleeting toast was easy to miss on
   // a flaky mobile connection, leaving the employee believing their clock-out
   // landed when it hadn't (root cause of the stuck open shifts on
@@ -48,8 +52,8 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     setLoading(true);
     try {
       const [s, w] = await Promise.all([
-        getPunchStatus(user.uid),
-        getWeekSummary(user.uid),
+        getPunchStatus(user.uid, employeeTz),
+        getWeekSummary(user.uid, employeeTz),
       ]);
       setStatus(s);
       setWeek(w);
@@ -58,7 +62,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     } finally {
       setLoading(false);
     }
-  }, [user.uid]);
+  }, [user.uid, employeeTz]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -105,7 +109,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     punchInFlight.current = true;
     setActionLoading('in');
     try {
-      await punchIn(user.uid);
+      await punchIn(user.uid, undefined, employeeTz);
       setWriteFailure(null);
       toast.success('Clocked in — shift started');
       await load();
@@ -125,7 +129,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     punchInFlight.current = true;
     setActionLoading('out');
     try {
-      await punchOut(user.uid);
+      await punchOut(user.uid, employeeTz);
       setWriteFailure(null);
       toast.success('Clocked out — shift complete');
       await load();
@@ -147,7 +151,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     try {
       const s = status;
       const isEnding = s?.isOnLunch;
-      await toggleLunch(user.uid);
+      await toggleLunch(user.uid, false, employeeTz);
       setWriteFailure(null);
       toast.success(isEnding ? 'Lunch ended — welcome back' : 'Lunch started');
       await load();
@@ -261,7 +265,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
         </div>
       )}
 
-      {/* Big visual status + live PT clock */}
+      {/* Big visual status + live clock */}
       {status && (
         <ClockStatus
           isClockedIn={isIn}
@@ -270,6 +274,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
           workMinutes={status.workMinutes}
           breakMinutes={status.breakMinutes}
           displayTimezone={displayTimezone}
+          statusTimezone={employeeTz}
         />
       )}
 

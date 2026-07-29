@@ -15,7 +15,7 @@ import { Label } from '../ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Alert, AlertDescription } from '../ui/alert';
 import { ProgressStepper } from '../ui/progress-stepper';
-import { formatHoursHMM } from '../../../utils/timeCalculations';
+import { formatHoursHMM, getEmployeeTimezone, getLocalDate } from '../../../utils/timeCalculations';
 import { dragmeService, type DragmeTask } from '../../../services/dragmeService';
 import { HelpModal } from '../ui/help-modal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
@@ -85,8 +85,12 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
   const [correctionDate, setCorrectionDate] = useState('');
   const [submittingCorrection, setSubmittingCorrection] = useState(false);
 
-  const tz = user.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const today = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const tz = getEmployeeTimezone(user.timezone);
+  // Entry doc id / date queries use the employee's LOCAL calendar date
+  // (YYYY-MM-DD in their own timezone) — NOT the UTC date (the old
+  // `new Date().toISOString().split('T')[0]` bug) and NOT fixed Pacific Time.
+  // This is the local-time-tracking refactor (Req 1).
+  const today = useMemo(() => getLocalDate(tz), [tz]);
 
   useEffect(() => {
     // Set initial manual time once on mount

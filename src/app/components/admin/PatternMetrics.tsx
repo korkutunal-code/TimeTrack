@@ -10,9 +10,16 @@ import { toast } from 'sonner';
 import { TrendingUp, AlertTriangle, Users, Flag, Clock, BarChart } from 'lucide-react';
 import { useExclusionCutoff } from '../../hooks/useExclusionCutoff';
 import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
+import type { TimeViewMode } from '../../../utils/timeView';
 
 interface PatternMetricsProps {
   allUsers: User[];
+  /**
+   * Admin timezone view (Req 4). Accepted for consistency across analysis
+   * tabs; PatternMetrics renders aggregate counts/percentages (no per-entry
+   * timestamps), so the mode currently does not alter its output.
+   */
+  timeViewMode?: TimeViewMode;
 }
 
 interface EmployeeRisk {
@@ -35,7 +42,7 @@ interface PatternMetricsData {
   insights: string[];
 }
 
-export function PatternMetrics({ allUsers }: PatternMetricsProps) {
+export function PatternMetrics({ allUsers, timeViewMode: _timeViewMode = 'local' }: PatternMetricsProps) {
   const [period, setPeriod] = useState<string>('30');
   const [metrics, setMetrics] = useState<PatternMetricsData | null>(null);
   const [loading, setLoading] = useState(false);
