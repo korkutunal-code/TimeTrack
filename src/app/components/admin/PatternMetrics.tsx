@@ -11,6 +11,7 @@ import { TrendingUp, AlertTriangle, Users, Flag, Clock, BarChart } from 'lucide-
 import { useExclusionCutoff } from '../../hooks/useExclusionCutoff';
 import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
 import type { TimeViewMode } from '../../../utils/timeView';
+import { explodeDocsBySegmentLocalDate } from '../../../utils/timeView';
 
 interface PatternMetricsProps {
   allUsers: User[];
@@ -57,10 +58,17 @@ export function PatternMetrics({ allUsers, timeViewMode: _timeViewMode = 'local'
       startDate.setDate(endDate.getDate() - days);
 
       const allEntries = await dbService.getAllTimeEntries();
-      const filteredEntries = filterByExclusionCutoff(allEntries, exclusionCutoff, e => e.date).filter(entry => {
-        const entryDate = new Date(entry.date);
-        return entryDate >= startDate && entryDate <= endDate && entry.complete;
-      });
+      const filteredEntries = filterByExclusionCutoff(allEntries, exclusionCutoff, e => e.date)
+        // Attribute pre-fix cross-midnight split segments to their own local
+        // dates (23:32→00:28 → 07/29 + 07/30) so aggregates (entry counts,
+        // flag rates) reflect day-attributed portions, then recompute day-level
+        // flags per part so a doc-level flag isn't duplicated across halves.
+        .flatMap((entry) => explodeDocsBySegmentLocalDate([entry]))
+        .map((entry) => ({ ...entry, flags: dbService.calculateFlags(entry) }))
+        .filter(entry => {
+          const entryDate = new Date(entry.date);
+          return entryDate >= startDate && entryDate <= endDate && entry.complete;
+        });
 
       // Summary metrics
       const totalEntries = filteredEntries.length;

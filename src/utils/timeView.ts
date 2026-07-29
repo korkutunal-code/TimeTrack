@@ -74,12 +74,18 @@ export function displayTimeForView(
 export interface ExplodableSegment {
   id?: string;
   localDate?: string;
+  splitFromMidnight?: boolean;
   workMinutes?: number;
   complete?: boolean;
   clockInManual?: string;
   clockOutManual?: string;
   clockInSystem?: number;
   clockOutSystem?: number;
+  lunchOutManual?: string;
+  lunchInManual?: string;
+  lunchOutSystem?: number;
+  lunchInSystem?: number;
+  skipLunch?: boolean;
 }
 
 export interface ExplodableDoc {
@@ -93,9 +99,21 @@ export interface ExplodableDoc {
   clockOutManual?: string;
   clockInSystem?: number;
   clockOutSystem?: number;
+  lunchOutManual?: string;
+  lunchInManual?: string;
+  lunchOutSystem?: number;
+  lunchInSystem?: number;
+  skipLunch?: boolean;
   complete?: boolean;
   totalWorkMinutes?: number;
   totalHours?: number;
+  /** Display-layer marker: true when this doc was produced by the cross-midnight
+   * explosion (it is a synthetic view, not a persisted doc). */
+  synthetic?: boolean;
+  /** Display-layer: the persisted source doc id a synthetic exploded entry was
+   * derived from. Any WRITE (edit/void/correction) must target this id, not the
+   * synthetic `id`. */
+  sourceId?: string;
 }
 
 /**
@@ -125,6 +143,11 @@ export function explodeDocBySegmentLocalDate<T extends ExplodableDoc>(doc: T): T
     const mins = dateSegs.reduce((sum, s) => sum + (s.workMinutes ?? 0), 0);
     const first = dateSegs[0];
     const lastClosed = [...dateSegs].reverse().find((s) => s.clockOutManual) ?? dateSegs[dateSegs.length - 1];
+    // Per-part lunch boundaries (from THIS date's segments, not the doc's
+    // top-level fields) so day-level flag logic (short/long lunch) computed on
+    // the exploded part reflects that part, not the whole cross-midnight shift.
+    const firstLunchOut = dateSegs.find((s) => s.lunchOutManual);
+    const lastLunchIn = [...dateSegs].reverse().find((s) => s.lunchInManual);
     return {
       ...doc,
       id: doc.userId ? `${doc.userId}_${date}` : doc.id,
@@ -138,11 +161,32 @@ export function explodeDocBySegmentLocalDate<T extends ExplodableDoc>(doc: T): T
       clockOutManual: lastClosed?.clockOutManual,
       clockInSystem: first?.clockInSystem,
       clockOutSystem: lastClosed?.clockOutSystem,
+      lunchOutManual: firstLunchOut?.lunchOutManual,
+      lunchInManual: lastLunchIn?.lunchInManual,
+      lunchOutSystem: firstLunchOut?.lunchOutSystem,
+      lunchInSystem: lastLunchIn?.lunchInSystem,
+      skipLunch: dateSegs.length > 0 && dateSegs.every((s) => s.skipLunch === true),
       complete: dateSegs.length > 0 && dateSegs.every((s) => s.complete === true),
       totalWorkMinutes: mins,
       totalHours: mins / 60,
+      // Mark as a synthetic display view and record the persisted source doc id
+      // so any write (edit/void/correction) targets the real doc, not this
+      // synthetic `${userId}_${date}` id (which may not exist in Firestore).
+      synthetic: true,
+      sourceId: doc.id,
     } as T;
   });
+}
+
+/**
+ * Resolve the persisted Firestore doc id a (possibly synthetic exploded) entry
+ * should be written against. Real docs return their own id; synthetic exploded
+ * entries return their `sourceId` (the persisted cross-midnight doc they were
+ * derived from). Segment ids are unaffected — a synthetic part's segment still
+ * lives on the source doc.
+ */
+export function writeDocId<T extends ExplodableDoc>(entry: T): string {
+  return entry.synthetic && entry.sourceId ? entry.sourceId : (entry.id ?? '');
 }
 
 /** Explode a list of docs (see explodeDocBySegmentLocalDate). */

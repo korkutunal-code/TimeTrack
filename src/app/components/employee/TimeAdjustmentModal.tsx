@@ -16,7 +16,7 @@ import {
   DialogDescription,
 } from '../ui/dialog';
 import { getLocalDate, subtractLocalDays, getEmployeeTimezone } from '../../../utils/timeCalculations';
-import { displayTimeForView } from '../../../utils/timeView';
+import { displayTimeForView, writeDocId } from '../../../utils/timeView';
 import { flattenToShiftRows, type ShiftRow } from './shiftRows';
 
 type EditableField = 'clockInManual' | 'lunchOutManual' | 'lunchInManual' | 'clockOutManual';
@@ -146,8 +146,10 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
         undefined;
       if (within24h(clockInTs)) {
         // Direct close path (≤24h): close the shift immediately on save.
+        // writeDocId resolves synthetic exploded parts to their persisted
+        // source doc so the write targets a real doc, not the synthetic id.
         setRequesting(null);
-        setEditing({ entryId: row.entry.id, segmentId: row.segment.id, field: field.key, mode: 'close' });
+        setEditing({ entryId: writeDocId(row.entry), segmentId: row.segment.id, field: field.key, mode: 'close' });
         setEditValue('');
         setEditReason('');
       } else {
@@ -174,7 +176,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
       if (within24h(lunchOutTs)) {
         // Direct end-lunch path (≤24h): end lunch immediately on save.
         setRequesting(null);
-        setEditing({ entryId: row.entry.id, segmentId: row.segment.id, field: field.key, mode: 'endLunch' });
+        setEditing({ entryId: writeDocId(row.entry), segmentId: row.segment.id, field: field.key, mode: 'endLunch' });
         setEditValue('');
         setEditReason('');
       } else {
@@ -196,9 +198,10 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
     // (epoch-derived when available, so legacy PT-stored rows edit in local).
     const currentLocal = fmtLocal(ts, current) ?? current;
     if (within24h(ts)) {
-      // Direct-edit path.
+      // Direct-edit path. writeDocId resolves synthetic exploded parts to
+      // their persisted source doc.
       setRequesting(null);
-      setEditing({ entryId: row.entry.id, segmentId: row.segment.id, field: field.key, mode: 'edit' });
+      setEditing({ entryId: writeDocId(row.entry), segmentId: row.segment.id, field: field.key, mode: 'edit' });
       setEditValue(currentLocal);
       setEditReason('');
     } else {

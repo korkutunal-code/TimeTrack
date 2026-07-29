@@ -31,7 +31,7 @@ import { Download, Printer, RefreshCw, Eye, Users, AlertTriangle, Calendar, Cloc
 import { USER_GROUP_OPTIONS, buildUserIdMatcher } from '../../../utils/userSelection';
 import { useExclusionCutoff } from '../../hooks/useExclusionCutoff';
 import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
-import { type TimeViewMode, displayTimeForView } from '../../../utils/timeView';
+import { type TimeViewMode, displayTimeForView, explodeDocsBySegmentLocalDate } from '../../../utils/timeView';
 
 interface TeamDashboardProps {
   user: User;
@@ -93,6 +93,16 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
   // synchronous setState inside an effect (react-hooks/set-state-in-effect).
   const filteredEntries = useMemo(() => {
     let filtered = filterByExclusionCutoff(entries, exclusionCutoff, e => e.date);
+
+    // Attribute pre-fix cross-midnight split segments to their own local
+    // dates (23:32→00:28 → 07/29 23:32→23:59 + 07/30 00:00→00:28) so the Team
+    // tab lists and filters each day-portion under the correct date.
+    // Recompute day-level flags per part (calculateFlags uses totalHours +
+    // lunch) so a doc-level flag isn't duplicated across both halves.
+    filtered = explodeDocsBySegmentLocalDate(filtered).map((e) => ({
+      ...e,
+      flags: dbService.calculateFlags(e),
+    }));
 
     const matchesUser = buildUserIdMatcher(selectedUserId, allUsers);
     filtered = filtered.filter(e => matchesUser(e.userId));
@@ -206,11 +216,23 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
   };
 
   const handleEditClick = (entry: TimeEntry) => {
-    setEditingEntry({ ...entry });
-    setOriginalEditingEntry(entry);
-    setAdminNotes(entry.adminNotes || '');
+    const source = resolveSourceEntry(entry);
+    setEditingEntry({ ...source });
+    setOriginalEditingEntry(source);
+    setAdminNotes(source.adminNotes || '');
     setEditEntryOpen(true);
   };
+
+  // Exploded synthetic day-portions (from the cross-midnight localDate
+  // explosion) must be edited/voided via their SOURCE doc — the persisted
+  // cross-midnight record — not the synthetic `${uid}_${date}` id (which may
+  // not exist in Firestore, and whose partial segments[] would corrupt the doc
+  // if written back with the 'replace' close-patch). Resolve to the full
+  // source entry from `entries` state.
+  const resolveSourceEntry = (entry: TimeEntry): TimeEntry =>
+    entry.synthetic && entry.sourceId
+      ? (entries.find((e) => e.id === entry.sourceId) ?? entry)
+      : entry;
 
   const handleSaveEdit = async () => {
     if (!editingEntry || !originalEditingEntry || !adminNotes.trim()) {
@@ -336,16 +358,19 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
       return;
     }
     try {
-      const before = { ...entry };
+      // Void the persisted source doc (a synthetic day-portion can't be voided
+      // on its own — its id may not exist in Firestore).
+      const source = resolveSourceEntry(entry);
+      const before = { ...source };
       await auditLogService.logVoidEntry({
         actorUid: user.uid,
         actorName: user.name || user.email,
         actorRole: 'admin',
-        targetId: entry.id,
+        targetId: source.id,
         before,
         reason: reason.trim(),
       });
-      await updateDoc(doc(db, 'timeEntries', entry.id), {
+      await updateDoc(doc(db, 'timeEntries', source.id), {
         status: 'voided',
         voidedAt: Timestamp.now(),
         voidedBy: user.uid,

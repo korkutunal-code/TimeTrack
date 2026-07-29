@@ -90,6 +90,15 @@ export interface TimeEntry {
 
   /** Synthesized current-segment view exposed by mapEntry (not persisted). */
   currentSegment?: TimeSegment | null;
+
+  /** Display-layer marker set by the cross-midnight localDate explosion
+   * (explodeDocsBySegmentLocalDate). True when this entry is a synthetic view,
+   * not a persisted doc. Never stored. */
+  synthetic?: boolean;
+  /** Display-layer: the persisted source doc id a synthetic exploded entry was
+   * derived from. Writes (edit/void/correction) must target this id via
+   * writeDocId(), not the synthetic `id`. Never stored. */
+  sourceId?: string;
 }
 
 export interface CorrectionRequest {

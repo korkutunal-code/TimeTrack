@@ -15,7 +15,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/
 import { USER_GROUP_OPTIONS, buildUserIdMatcher } from '../../../utils/userSelection';
 import { useExclusionCutoff } from '../../hooks/useExclusionCutoff';
 import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
-import { type TimeViewMode, zoneForMode } from '../../../utils/timeView';
+import { type TimeViewMode, zoneForMode, explodeDocsBySegmentLocalDate } from '../../../utils/timeView';
 
 interface AuditViewerProps {
   allUsers: User[];
@@ -55,7 +55,12 @@ export function AuditViewer({ allUsers, timeViewMode = 'local' }: AuditViewerPro
       const allEntries = await dbService.getAllTimeEntries();
       const matchesUserId = buildUserIdMatcher(selectedUserId, allUsers);
       const scopedEntries = filterByExclusionCutoff(allEntries, exclusionCutoff, e => e.date);
-      const filteredEntries = scopedEntries.filter(entry => {
+      // Attribute pre-fix cross-midnight split segments to their own local
+      // dates (23:32→00:28 → 07/29 23:32→23:59 + 07/30 00:00→00:28) so the
+      // Audit tab analyzes each day-portion under the correct date instead of
+      // lumping the whole shift under the punch-in day.
+      const dateAttributed = explodeDocsBySegmentLocalDate(scopedEntries);
+      const filteredEntries = dateAttributed.filter(entry => {
         const inDateRange = entry.date >= startDate && entry.date <= endDate;
         const matchesUser = matchesUserId(entry.userId);
         return inDateRange && matchesUser && !!entry.clockInManual && !!entry.clockOutManual;
