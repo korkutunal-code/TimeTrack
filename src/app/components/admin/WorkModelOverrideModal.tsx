@@ -39,6 +39,7 @@ export function WorkModelOverrideModal({ user, open, onOpenChange, onUserUpdated
 
   useEffect(() => {
     if (!open) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoadingModels(true);
     listWorkModels()
       .then(list => {

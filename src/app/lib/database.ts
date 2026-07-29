@@ -547,7 +547,7 @@ class DatabaseService {
     });
     const snap = await getDoc(doc(db, 'users', uid));
     if (!snap.exists()) throw new Error('User not found');
-    const data = snap.data() as any;
+    const data = snap.data() as DocumentData;
     return {
       uid: snap.id,
       email: String(data.email || ''),
@@ -575,7 +575,7 @@ class DatabaseService {
     const snap = await getDocs(q);
     if (snap.empty) return null;
     const d = snap.docs[0];
-    const data = d.data() as any;
+    const data = d.data() as DocumentData;
     return {
       uid: d.id,
       email: String(data.email || ''),
