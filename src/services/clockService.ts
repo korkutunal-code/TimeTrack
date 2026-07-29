@@ -34,6 +34,7 @@ import {
   localDateOf,
   type SplitSegmentShape,
 } from '../utils/midnightSplit';
+import { explodeDocsBySegmentLocalDate } from '../utils/timeView';
 
 /**
  * ClockService — owned by Clock Agent (Phase 1)
@@ -630,10 +631,18 @@ export async function getWeekSummary(userId: string, timezone?: string): Promise
   // Simple 7-day window (inclusive)
   const weekEnd = ptDate; // today
 
-  const entries = await dbService.getTimeEntriesForUserInRange(userId, weekStart, weekEnd);
+  const rawEntries = await dbService.getTimeEntriesForUserInRange(userId, weekStart, weekEnd);
+  // Skip soft-deleted docs (voided/archived) so they don't inflate totals.
+  // Then explode pre-fix cross-midnight split docs: a 23:32→00:28 shift stored
+  // on the 07/29 doc (with the 00:00→00:28 part attributed to localDate 07/30)
+  // counts as work on BOTH local days — without this the "This Week" card
+  // showed 1 day worked instead of 2 for that shift.
+  const entries = explodeDocsBySegmentLocalDate(
+    rawEntries.filter((e) => e.status !== 'voided' && e.status !== 'archived'),
+  );
 
   let total = 0;
-  let daysWorked = 0;
+  const workedDates = new Set<string>();
   for (const e of entries) {
     // `entry.totalWorkMinutes` is the canonical day total maintained by
     // `mapEntry` (it includes archived + current-segment minutes, and falls
@@ -647,12 +656,14 @@ export async function getWeekSummary(userId: string, timezone?: string): Promise
         ? e.totalWorkMinutes
         : (e.segments?.reduce((s, seg) => s + (seg.workMinutes || 0), 0) || 0);
     total += mins;
-    if (mins > 0) daysWorked++;
+    // Days worked = DISTINCT local calendar dates with work, not doc count
+    // (two docs can share a date; one pre-fix doc can span two dates).
+    if (mins > 0) workedDates.add(e.workDate ?? e.date);
   }
 
   return {
     totalMinutes: total,
-    daysWorked,
+    daysWorked: workedDates.size,
     entries,
     weekStart,
     weekEnd: ptDate,

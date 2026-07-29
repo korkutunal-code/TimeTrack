@@ -38,7 +38,10 @@ export interface TimeSegment {
 export interface TimeEntry {
   id: string;               // Firestore doc id (uid_date)
   userId: string;
-  date: string;             // YYYY-MM-DD
+  date: string;             // YYYY-MM-DD (derived from workDate at hydration)
+  /** Logical work date as stored on the doc (employee local calendar date).
+   * Optional on hydrated entries — `date` always mirrors it. */
+  workDate?: string;
 
   /** Split-shift segments for the day. Always populated (at least 1 for legacy). */
   segments?: TimeSegment[];

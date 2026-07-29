@@ -296,7 +296,10 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
 
   // Calculate stats from currently-loaded entries
   const totalHours = entries.reduce((acc, e) => acc + (e.totalHours || 0), 0);
-  const daysWorked = entries.filter(e => e.complete).length;
+  // Days worked = DISTINCT local dates with a completed entry (entries are
+  // already exploded by segment localDate above, so a pre-fix cross-midnight
+  // shift counts both days; same-date duplicate docs count once).
+  const daysWorked = new Set(entries.filter(e => e.complete).map(e => e.workDate ?? e.date)).size;
   // SHIFTS WORKED: count of completed shifts across all segments in the
   // period. A single day with a split shift (2 segments) counts as 2 shifts,
   // matching the segment model in AGENTS.md §2.

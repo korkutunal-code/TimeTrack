@@ -25,7 +25,7 @@ jest.mock('../app/lib/database', () => {
   };
 });
 
-import { findOpenShiftEntry } from './clockService';
+import { findOpenShiftEntry, getWeekSummary } from './clockService';
 import { getCurrentPTDate, getPTDate } from '../utils/timeCalculations';
 import type { TimeEntry } from '../app/lib/database';
 
@@ -129,5 +129,66 @@ describe('findOpenShiftEntry — S5 cross-midnight', () => {
     const result = await findOpenShiftEntry(UID);
     expect(result).not.toBeNull();
     expect(result?.id).toBe(active.id);
+  });
+});
+
+describe('getWeekSummary — cross-midnight split attribution (This Week card)', () => {
+  beforeEach(() => {
+    getTimeEntry.mockReset();
+    getTimeEntriesForUserInRange.mockReset();
+  });
+
+  it('counts 2 days worked for a pre-fix 23:32→00:28 split stored on one doc', async () => {
+    // The corrupted shape that exposed the bug: both midnight-split parts on
+    // the 07/29 doc, day-2 part attributed to localDate 07/30.
+    const corrupted = {
+      id: `${UID}_2026-07-29`,
+      userId: UID,
+      date: '2026-07-29',
+      workDate: '2026-07-29',
+      complete: true,
+      status: 'active',
+      totalWorkMinutes: 56,
+      clockInManual: '23:32',
+      clockOutManual: '00:28',
+      currentSegment: { clockInManual: '23:32', clockOutManual: '00:28', complete: true, workMinutes: 56 },
+      segments: [
+        { id: 'seg_d1', clockInManual: '23:32', clockOutManual: '23:59', workMinutes: 28, complete: true, splitFromMidnight: true, localDate: '2026-07-29' },
+        { id: 'seg_d2', clockInManual: '00:00', clockOutManual: '00:28', workMinutes: 28, complete: true, splitFromMidnight: true, localDate: '2026-07-30' },
+      ],
+    } as any;
+    getTimeEntriesForUserInRange.mockResolvedValue([corrupted]);
+
+    const summary = await getWeekSummary(UID, 'UTC');
+    expect(summary.daysWorked).toBe(2);
+    expect(summary.totalMinutes).toBe(56);
+  });
+
+  it('counts distinct dates (not docs) and skips voided docs', async () => {
+    const d1 = {
+      id: `${UID}_2026-07-28`, userId: UID, date: '2026-07-28', workDate: '2026-07-28',
+      complete: true, status: 'active', totalWorkMinutes: 480,
+      segments: [{ id: 'a', clockInManual: '09:00', clockOutManual: '17:00', workMinutes: 480, complete: true }],
+    } as any;
+    const voided = { ...d1, id: `${UID}_2026-07-27`, date: '2026-07-27', workDate: '2026-07-27', status: 'voided' } as any;
+    getTimeEntriesForUserInRange.mockResolvedValue([d1, voided]);
+
+    const summary = await getWeekSummary(UID, 'UTC');
+    expect(summary.daysWorked).toBe(1);
+    expect(summary.totalMinutes).toBe(480);
+  });
+
+  it('normal same-date multi-doc day counts once', async () => {
+    // Two docs sharing a date (pathological duplicate) must count one day.
+    const mk = (id: string) => ({
+      id, userId: UID, date: '2026-07-28', workDate: '2026-07-28',
+      complete: true, status: 'active', totalWorkMinutes: 120,
+      segments: [{ id: `s_${id}`, clockInManual: '09:00', clockOutManual: '11:00', workMinutes: 120, complete: true }],
+    }) as any;
+    getTimeEntriesForUserInRange.mockResolvedValue([mk(`${UID}_2026-07-28`), mk(`${UID}_2026-07-28_dup`)]);
+
+    const summary = await getWeekSummary(UID, 'UTC');
+    expect(summary.daysWorked).toBe(1);
+    expect(summary.totalMinutes).toBe(240);
   });
 });
