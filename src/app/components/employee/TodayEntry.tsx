@@ -6,7 +6,7 @@ import { AlertCircle, AlertTriangle, ArrowRight, CheckCircle2, Clock, Coffee, Hi
 
 import type { User } from '../../lib/auth';
 import type { CorrectionRequest, TimeEntry } from '../../lib/database';
-import { dbService, buildConsistentClosePatch } from '../../lib/database';
+import { dbService, buildConsistentClosePatch, createInitialSegment, stripUndefined } from '../../lib/database';
 import { db } from '../../lib/firebase';
 import { auditLogService } from '../../../services/auditLogService';
 import { Button } from '../ui/button';
@@ -290,8 +290,19 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       );
       const accumulatedMinutes = priorArchivedMins + justCompletedMins;
 
+      // S7 (split-shift consistency): persist the new OPEN segment into
+      // segments[] alongside the just-completed (closed) segment, mirroring
+      // clockService.punchIn. Without this, segments[] ends in the closed
+      // seg1 while the open seg2 lives only in top-level fields — which
+      // triggers mapEntry's S1 fallback to inherit seg1's clockOutManual
+      // up to the entry, falsely rendering seg2 as complete ("looks clocked
+      // out" bug). Ending segments[] in an open segment keeps every reader
+      // (ClockPunch, HistoryView, getActiveSegment) seeing the live open
+      // shift correctly.
+      const openSeg = stripUndefined(createInitialSegment(currentTime, now.toMillis(), taskId || undefined));
+
       await updateDoc(doc(db, 'timeEntries', entryId), {
-        // Archive the just-completed segment into the stored segments[] list
+        // Archive the just-completed segment AND append the new open segment
         segments: arrayUnion({
           id: `seg_${Date.now()}`,
           clockInManual: entry.clockInManual,
@@ -306,7 +317,7 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
           workMinutes: justCompletedMins,
           taskId: entry.taskId || null,
           complete: true,
-        }),
+        }, openSeg),
         // Reset the "current segment" top-level fields for a fresh shift
         clockInManual: currentTime,
         clockInSubmitted: true,

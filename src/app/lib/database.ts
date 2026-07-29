@@ -236,12 +236,25 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
   // Applied before `current` synthesis so the current-view also reflects
   // the real clock-out, and the existing coveredByArchived dedup keeps
   // totals correct (no double-count).
+  //
+  // GUARD: only inherit clock-out/lunch from the last persisted segment when
+  // the top-level clockIn is absent (legacy doc) OR matches that segment's
+  // clockIn (same shift, dual-write divergence). If the top-level clockIn
+  // belongs to a DIFFERENT (newer, open) shift, the persisted segment is a
+  // prior CLOSED shift — inheriting its clockOutManual/lunch would falsely
+  // mark the open shift complete ("looks clocked out" bug on split-shift
+  // docs whose open seg2 lives only in top-level fields while segments[]
+  // ends in the closed seg1).
   const lastPersistedSeg = archived.length ? archived[archived.length - 1] : null;
   if (lastPersistedSeg) {
     if (!entry.clockInManual && lastPersistedSeg.clockInManual) entry.clockInManual = lastPersistedSeg.clockInManual;
-    if (!entry.clockOutManual && lastPersistedSeg.clockOutManual) entry.clockOutManual = lastPersistedSeg.clockOutManual;
-    if (!entry.lunchOutManual && lastPersistedSeg.lunchOutManual) entry.lunchOutManual = lastPersistedSeg.lunchOutManual;
-    if (!entry.lunchInManual && lastPersistedSeg.lunchInManual) entry.lunchInManual = lastPersistedSeg.lunchInManual;
+    const sameShift =
+      !entry.clockInManual || entry.clockInManual === lastPersistedSeg.clockInManual;
+    if (sameShift) {
+      if (!entry.clockOutManual && lastPersistedSeg.clockOutManual) entry.clockOutManual = lastPersistedSeg.clockOutManual;
+      if (!entry.lunchOutManual && lastPersistedSeg.lunchOutManual) entry.lunchOutManual = lastPersistedSeg.lunchOutManual;
+      if (!entry.lunchInManual && lastPersistedSeg.lunchInManual) entry.lunchInManual = lastPersistedSeg.lunchInManual;
+    }
   }
 
   const current: TimeSegment | null = entry.clockInManual

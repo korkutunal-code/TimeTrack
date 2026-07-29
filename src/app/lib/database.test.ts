@@ -806,3 +806,131 @@ describe('buildConsistentClosePatch — S7 dual-write contract', () => {
     expect(last.workMinutes).toBe(totalWorkMinutes);
   });
 });
+
+/**
+ * Regression: "didn't clock out but looks clocked out" on a split-shift doc.
+ *
+ * Bug: the mapEntry S1 fallback unconditionally copied the last persisted
+ * segment's clockOutManual/lunch up to the entry, even when the top-level
+ * fields belonged to a DIFFERENT (newer, open) shift. With segments[] ending
+ * in a CLOSED seg1 while an OPEN seg2 lived only in top-level fields, this
+ * marked seg2 falsely complete → every view showed "clocked out" with seg1's
+ * exact minutes (the open seg2 contributed 0 via the clamp).
+ *
+ * Fix: the S1 fallback only inherits clockOut/lunch when the top-level
+ * clockIn is absent (legacy doc) OR matches the last persisted segment's
+ * clockIn (same shift, dual-write divergence).
+ */
+describe('mapEntry — S1 fallback must not falsely close an open split-shift seg2', () => {
+  it('REGRESSION: open seg2 (top-level only) is NOT falsely closed by inheriting closed seg1 clockOut', () => {
+    // Buggy doc shape (TodayEntry classic split-shift "Start New Shift"
+    // before the write-side fix): segments[] ends in the CLOSED seg1 while
+    // the open seg2 lives only in top-level fields. Pre-fix, the S1 fallback
+    // copied seg1.clockOutManual up to the entry, marking seg2 complete and
+    // rendering the user as "clocked out" with seg1's exact minutes (10h).
+    const data = {
+      userId: 'u1',
+      workDate: '2026-07-28',
+      clockInManual: '20:00', // seg2 (open) clock-in — different from seg1
+      // clockOutManual omitted → undefined (open shift)
+      dayComplete: false,
+      totalWorkMinutes: 600, // accumulated = seg1's 10h
+      segments: [
+        {
+          id: 'seg_1',
+          clockInManual: '08:00', // seg1 clock-in (A)
+          clockOutManual: '18:00', // seg1 clock-out (B) — 10h
+          workMinutes: 600,
+          complete: true,
+        },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-07-28', data as any);
+    // The open seg2 must NOT inherit seg1's clockOutManual:
+    expect(entry.clockOutManual).toBeUndefined();
+    expect(entry.currentSegment?.complete).toBe(false);
+    expect(entry.currentSegment?.clockOutManual).toBeUndefined();
+    // The open shift is detected as active (not "clocked out"):
+    expect(getActiveSegment(entry)).not.toBeNull();
+    expect(hasOpenSegment(entry)).toBe(true);
+    // Day total reflects seg1's completed minutes (the open seg2 contributes 0
+    // to the persisted total; live minutes are added by getPunchStatus):
+    expect(entry.totalWorkMinutes).toBe(600);
+  });
+
+  it('LEGIT CASE: same-shift dual-write gap still inherits clockOut from last persisted seg', () => {
+    // A doc whose top-level clockInManual matches the last persisted segment's
+    // clockInManual (same shift) but clockOutManual wasn't dual-written at the
+    // top level. The S1 fallback MUST still repair this so HistoryView doesn't
+    // show "Missing Clock Out" for a valid closed shift.
+    const data = {
+      userId: 'u1',
+      workDate: '2026-07-28',
+      clockInManual: '08:00', // matches seg1.clockInManual (same shift)
+      // clockOutManual omitted at top level (dual-write gap)
+      dayComplete: true,
+      totalWorkMinutes: 600,
+      segments: [
+        {
+          id: 'seg_1',
+          clockInManual: '08:00',
+          clockOutManual: '18:00', // present only in segments[]
+          workMinutes: 600,
+          complete: true,
+        },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-07-28', data as any);
+    // Inherited from seg1 (same shift) — the repair the S1 fallback exists for:
+    expect(entry.clockOutManual).toBe('18:00');
+    expect(entry.currentSegment?.complete).toBe(true);
+    expect(getActiveSegment(entry)).toBeNull();
+    expect(entry.totalWorkMinutes).toBe(600);
+  });
+
+  it('LEGIT CASE: legacy doc with no top-level clockIn still inherits from last persisted seg', () => {
+    // A legacy/corrupted doc where the top-level clockInManual is missing but
+    // segments[] holds the complete shift. The S1 fallback inherits clockIn
+    // (always) and clockOut (sameShift=true because clockIn is absent).
+    const data = {
+      userId: 'u1',
+      workDate: '2026-07-28',
+      // clockInManual omitted at top level
+      dayComplete: true,
+      totalWorkMinutes: 480,
+      segments: [
+        { id: 'seg_1', clockInManual: '09:00', clockOutManual: '17:00', workMinutes: 480, complete: true },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-07-28', data as any);
+    expect(entry.clockInManual).toBe('09:00');
+    expect(entry.clockOutManual).toBe('17:00');
+    expect(entry.totalWorkMinutes).toBe(480);
+  });
+
+  it('REGRESSION: ClockPunch two-segment doc (seg1 closed + seg2 open in segments[]) stays open', () => {
+    // The default ClockPunch path appends the open seg2 into segments[]. The
+    // guard must NOT break this: segments[] ends in an open segment, so
+    // getActiveSegment returns it (the S1 fallback is irrelevant here).
+    const data = {
+      userId: 'u1',
+      workDate: '2026-07-28',
+      clockInManual: '20:00', // mirrors seg2 (open)
+      dayComplete: false,
+      totalWorkMinutes: 600,
+      segments: [
+        { id: 'seg_1', clockInManual: '08:00', clockOutManual: '18:00', workMinutes: 600, complete: true },
+        { id: 'seg_2', clockInManual: '20:00', complete: false },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-07-28', data as any);
+    expect(getActiveSegment(entry)).not.toBeNull();
+    expect(getActiveSegment(entry)?.id).toBe('seg_2');
+    expect(hasOpenSegment(entry)).toBe(true);
+    expect(entry.totalWorkMinutes).toBe(600);
+  });
+});
