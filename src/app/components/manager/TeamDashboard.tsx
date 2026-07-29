@@ -9,7 +9,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../ui/select';
 import { Badge } from '../ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { UserAvatar } from '../ui/user-avatar';
@@ -28,6 +28,7 @@ import {
 } from '../ui/dropdown-menu';
 import { toast } from 'sonner';
 import { Download, Printer, RefreshCw, Eye, Users, AlertTriangle, Calendar, Clock, Filter, LogIn, LogOut, Coffee, MoreVertical, Edit, Trash2 } from 'lucide-react';
+import { USER_GROUP_OPTIONS, buildUserIdMatcher } from '../../../utils/userSelection';
 
 interface TeamDashboardProps {
   user: User;
@@ -77,9 +78,8 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
   const filteredEntries = useMemo(() => {
     let filtered = [...entries];
 
-    if (selectedUserId !== 'all') {
-      filtered = filtered.filter(e => e.userId === selectedUserId);
-    }
+    const matchesUser = buildUserIdMatcher(selectedUserId, allUsers);
+    filtered = filtered.filter(e => matchesUser(e.userId));
 
     if (startDate) {
       filtered = filtered.filter(e => e.date >= startDate);
@@ -98,7 +98,7 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
     }
 
     return filtered;
-  }, [entries, selectedUserId, startDate, endDate, status]);
+  }, [entries, selectedUserId, startDate, endDate, status, allUsers]);
 
   const setQuickDate = (preset: string) => {
     // Bug fix: previously used `today.getDay()` and `setDate()` in local TZ.
@@ -446,8 +446,11 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Employees</SelectItem>
-                  {allUsers.filter(u => u.role === 'employee').map(u => (
+                  {USER_GROUP_OPTIONS.map(o => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                  <SelectSeparator />
+                  {allUsers.map(u => (
                     <SelectItem key={u.uid} value={u.uid}>{u.name}</SelectItem>
                   ))}
                 </SelectContent>

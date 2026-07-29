@@ -5,12 +5,13 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Badge } from '../ui/badge';
 import { toast } from 'sonner';
 import { Calendar, Download, RefreshCw, Edit } from 'lucide-react';
 import { generateCSV, downloadCSV } from '../../../services/exportService';
+import { USER_GROUP_OPTIONS, buildUserIdMatcher } from '../../../utils/userSelection';
 
 interface AdminTimesheetReviewProps {
   allUsers: User[];
@@ -63,9 +64,10 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
     setLoading(true);
     try {
       const all = await dbService.getAllTimeEntries();
+      const matchesUser = buildUserIdMatcher(selectedUserId, allUsers);
       const filtered = all
         .filter(e => e.date >= startDate && e.date <= endDate)
-        .filter(e => selectedUserId === 'all' || e.userId === selectedUserId);
+        .filter(e => matchesUser(e.userId));
 
       // Attach denormalized user name for display
       const withNames: ReviewEntry[] = filtered.map(e => ({
@@ -170,8 +172,11 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
               <Select value={selectedUserId} onValueChange={setSelectedUserId}>
                 <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Employees</SelectItem>
-                  {allUsers.filter(u => u.role === 'employee').map(u => (
+                  {USER_GROUP_OPTIONS.map(o => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                  <SelectSeparator />
+                  {allUsers.map(u => (
                     <SelectItem key={u.uid} value={u.uid}>{u.name}</SelectItem>
                   ))}
                 </SelectContent>

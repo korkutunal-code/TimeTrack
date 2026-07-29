@@ -6,12 +6,13 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../ui/select';
 import { Badge } from '../ui/badge';
 import { Checkbox } from '../ui/checkbox';
 import { toast } from 'sonner';
 import { Search, AlertTriangle, Clock, Shield, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
+import { USER_GROUP_OPTIONS, buildUserIdMatcher } from '../../../utils/userSelection';
 
 interface AuditViewerProps {
   allUsers: User[];
@@ -46,9 +47,10 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
     setLoading(true);
     try {
       const allEntries = await dbService.getAllTimeEntries();
+      const matchesUserId = buildUserIdMatcher(selectedUserId, allUsers);
       const filteredEntries = allEntries.filter(entry => {
         const inDateRange = entry.date >= startDate && entry.date <= endDate;
-        const matchesUser = selectedUserId === 'all' || entry.userId === selectedUserId;
+        const matchesUser = matchesUserId(entry.userId);
         return inDateRange && matchesUser && !!entry.clockInManual && !!entry.clockOutManual;
       });
 
@@ -187,8 +189,11 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Employees</SelectItem>
-                  {allUsers.filter(u => u.role === 'employee').map(u => (
+                  {USER_GROUP_OPTIONS.map(o => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                  <SelectSeparator />
+                  {allUsers.map(u => (
                     <SelectItem key={u.uid} value={u.uid}>{u.name}</SelectItem>
                   ))}
                 </SelectContent>

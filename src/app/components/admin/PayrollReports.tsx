@@ -9,10 +9,11 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
 import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, ChevronDown, ChevronRight } from 'lucide-react';
 import { generateCSV, downloadCSV } from '../../../services/exportService';
+import { ALL_USERS, USER_GROUP_OPTIONS, buildUserIdMatcher, isGroupSelection } from '../../../utils/userSelection';
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
@@ -40,7 +41,7 @@ interface PayrollSummary {
 }
 
 export function PayrollReports({ allUsers }: PayrollReportsProps) {
-  const [selectedUserId, setSelectedUserId] = useState<string>('all');
+  const [selectedUserId, setSelectedUserId] = useState<string>(ALL_USERS);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [report, setReport] = useState<PayrollSummary[] | null>(null);
@@ -193,10 +194,13 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
       const workModelList = await listWorkModels();
       const workModelById = new Map<string, WorkModelDef>(workModelList.map(m => [m.id, m]));
 
-      // Pull entries from Firestore (same query pattern as the old app)
+      // Pull entries from Firestore (same query pattern as the old app).
+      // Group selections (All / All Employees / All Managers / All Admins)
+      // fetch the full date range, then narrow by role when grouping below.
+      // A specific user uses a server-side userId equality filter.
       const base = collection(db, 'timeEntries');
       const q =
-        selectedUserId === 'all'
+        isGroupSelection(selectedUserId)
           ? query(base, where('workDate', '>=', startDate), where('workDate', '<=', endDate), orderBy('workDate', 'asc'))
           : query(
             base,
@@ -255,7 +259,11 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
       });
 
       const summaries: PayrollSummary[] = [];
+      // For role-group selections, drop grouped users whose role doesn't match.
+      // (A specific user is already server-filtered; "All" keeps everyone.)
+      const roleMatcher = buildUserIdMatcher(selectedUserId, allUsers);
       for (const [userId, entries] of byUser.entries()) {
+        if (!roleMatcher(userId)) continue;
         const userObj = allUsers.find(u => u.uid === userId);
         const userWorkModel = userObj?.workModelId ? workModelById.get(userObj.workModelId) ?? null : null;
         const userOverride = userObj?.workModelOverride ?? null;
@@ -542,8 +550,11 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Employees</SelectItem>
-                  {allUsers.filter(u => u.role === 'employee').map(u => (
+                  {USER_GROUP_OPTIONS.map(o => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
+                  <SelectSeparator />
+                  {allUsers.map(u => (
                     <SelectItem key={u.uid} value={u.uid}>{u.name}</SelectItem>
                   ))}
                 </SelectContent>

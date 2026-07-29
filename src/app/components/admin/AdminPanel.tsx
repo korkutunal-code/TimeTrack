@@ -1094,7 +1094,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                     <SelectValue placeholder="Select employee" />
                   </SelectTrigger>
                   <SelectContent>
-                    {allUsers.filter(u => u.role === 'employee').map(u => (
+                    {allUsers.slice().sort((a, b) => a.name.localeCompare(b.name)).map(u => (
                       <SelectItem key={u.uid} value={u.uid}>{u.name}</SelectItem>
                     ))}
                   </SelectContent>
