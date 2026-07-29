@@ -374,12 +374,16 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
                         )}
                       </div>
                     </td>
-                    {FIELDS.map((field) => {
-                      const value = row.segment[field.key];
-                      const isEditing =
-                        editing?.entryId === row.entry.id &&
-                        editing?.segmentId === row.segment.id &&
-                        editing.field === field.key;
+                      {FIELDS.map((field) => {
+                        const value = row.segment[field.key];
+                        // Compare the WRITE doc id (source doc for synthetic
+                        // exploded parts) — row.entry.id is now a display-only
+                        // `${sourceId}@${date}` id, so it never matches. The
+                        // segmentId still disambiguates parts from one source.
+                        const isEditing =
+                          editing?.entryId === writeDocId(row.entry) &&
+                          editing?.segmentId === row.segment.id &&
+                          editing.field === field.key;
                       const isRequesting =
                         requesting?.row.key === row.key && requesting.field.key === field.key;
                       const activeReq = activeRequestMap.get(`${row.entry.date}|${field.issueType}`);

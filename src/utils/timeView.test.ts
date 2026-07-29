@@ -40,7 +40,7 @@ describe('explodeDocBySegmentLocalDate', () => {
 
     // Day 1: yesterday, its own portion only, synthesized current dropped.
     expect(out[0].workDate).toBe('2026-07-29');
-    expect(out[0].id).toBe('u1_2026-07-29');
+    expect(out[0].id).toBe('u1_2026-07-29@2026-07-29'); // synthetic, non-colliding
     expect(out[0].segments).toHaveLength(1);
     expect(out[0].segments?.[0].clockInManual).toBe('23:32');
     expect(out[0].clockOutManual).toBe('23:59');
@@ -50,7 +50,7 @@ describe('explodeDocBySegmentLocalDate', () => {
 
     // Day 2: today, attributed to 07/30.
     expect(out[1].workDate).toBe('2026-07-30');
-    expect(out[1].id).toBe('u1_2026-07-30');
+    expect(out[1].id).toBe('u1_2026-07-29@2026-07-30'); // synthetic, non-colliding
     expect(out[1].segments).toHaveLength(1);
     expect(out[1].segments?.[0].clockInManual).toBe('00:00');
     expect(out[1].clockOutManual).toBe('00:28');
@@ -164,13 +164,48 @@ describe('exploded entry — synthetic/source markers + per-part fields', () => 
     expect(writeDocId(real)).toBe('u1_2026-07-28');
   });
 
-  it('day1 synthetic id coincides with the source id but is still marked synthetic', () => {
-    // This is why a `synthetic` marker (not id-equality) must drive resolution.
+  it('synthetic ids are distinct from the source id and marked synthetic (resolution via sourceId, not id-equality)', () => {
     const out = explodeDocBySegmentLocalDate(crossMidnightDoc());
     const [day1] = out;
-    expect(day1.id).toBe('u1_2026-07-29'); // coincides with source id
+    // The synthetic id embeds the source id + date with a '@' separator, so it
+    // NEVER equals the persisted `${uid}_${date}` source id.
+    expect(day1.id).toBe('u1_2026-07-29@2026-07-29');
+    expect(day1.id).not.toBe(day1.sourceId);
     expect(day1.synthetic).toBe(true);
     expect(day1.sourceId).toBe('u1_2026-07-29');
     expect(writeDocId(day1)).toBe('u1_2026-07-29');
+  });
+
+  it('REGRESSION: synthetic part id never collides with a real same-date doc id (bot review)', () => {
+    // Scenario: user has a cross-midnight shift 07/29→07/30 (pre-fix doc) AND a
+    // normal real shift on 07/30 (its own `${uid}_2026-07-30` doc). The exploded
+    // 07/30 part must NOT reuse the real doc's id, or React keys/dedup collide.
+    const crossMidnight: ExplodableDoc = {
+      id: 'u1_2026-07-29', userId: 'u1', date: '2026-07-29', workDate: '2026-07-29', complete: true,
+      segments: [
+        { id: 'd1', clockInManual: '23:32', clockOutManual: '23:59', complete: true, workMinutes: 28, localDate: '2026-07-29', splitFromMidnight: true },
+        { id: 'd2', clockInManual: '00:00', clockOutManual: '00:28', complete: true, workMinutes: 28, localDate: '2026-07-30', splitFromMidnight: true },
+      ],
+    };
+    const realDay30: ExplodableDoc = {
+      id: 'u1_2026-07-30', userId: 'u1', date: '2026-07-30', workDate: '2026-07-30', complete: true,
+      segments: [{ id: 'r', clockInManual: '09:00', clockOutManual: '17:00', complete: true, workMinutes: 480 }],
+    };
+    const out = explodeDocsBySegmentLocalDate([crossMidnight, realDay30]);
+    // 07/29 part, 07/30 part (synthetic), real 07/30 doc.
+    expect(out).toHaveLength(3);
+    const ids = out.map((d) => d.id);
+    // All ids unique — no duplicates.
+    expect(new Set(ids).size).toBe(3);
+    // The synthetic 07/30 part does NOT equal the real 07/30 doc id.
+    const syntheticPart = out.find((d) => d.synthetic && d.workDate === '2026-07-30');
+    const realDoc = out.find((d) => !d.synthetic && d.id === 'u1_2026-07-30');
+    expect(syntheticPart).toBeDefined();
+    expect(realDoc).toBeDefined();
+    expect(syntheticPart!.id).not.toBe('u1_2026-07-30');
+    expect(syntheticPart!.id).toBe('u1_2026-07-29@2026-07-30');
+    expect(realDoc!.id).toBe('u1_2026-07-30');
+    // Both still attribute workDate correctly (day-attribution preserved).
+    expect(syntheticPart!.workDate).toBe('2026-07-30');
   });
 });

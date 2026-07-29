@@ -223,7 +223,10 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
 
       const snap = await getDocs(q);
       const rawEntries = filterByExclusionCutoff(
-        snap.docs.map(d => d.data()).filter(e => e.dayComplete === true),
+        // Include the Firestore doc id so each entry carries a unique,
+        // collision-free key (real `${uid}_${date}` id for normal docs; the
+        // cross-midnight explosion derives `${sourceId}@${date}` synthetics).
+        snap.docs.map(d => ({ id: d.id, ...d.data() }) as DocumentData).filter(e => e.dayComplete === true),
         payrollSettings.exclude_records_before_date,
         (e: DocumentData) => String(e.workDate || e.date || ''),
       ).map(e => {
@@ -763,7 +766,13 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                             const lunch = getDayLunch(day);
                             const segs = Array.isArray(day.segments) ? day.segments : [];
                             const isMultiShift = segs.length > 1;
-                            const dateKey = `${summary.userId}|${day.workDate}`;
+                            // Unique, collision-free row key. Real entries use
+                            // their Firestore `${uid}_${date}` id; exploded
+                            // cross-midnight parts use `${sourceId}@${date}` —
+                            // so a real 07/30 shift and a synthetic 07/30 part
+                            // never share a key (workDate alone could collide).
+                            const rowKey = String(day.id ?? day.workDate);
+                            const dateKey = `${summary.userId}|${rowKey}`;
                             const isDateExpanded = expandedDates.has(dateKey);
                             const toggleDate = () => {
                               setExpandedDates(prev => {
@@ -794,7 +803,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                             };
 
                             const rows: JSX.Element[] = [
-                              <tr key={day.workDate} className="border-b border-slate-100 hover:bg-slate-50/50">
+                              <tr key={rowKey} className="border-b border-slate-100 hover:bg-slate-50/50">
                                 <td className="p-1.5 font-medium">
                                   <span className={`inline-flex items-center gap-1 ${isMultiShift ? 'cursor-pointer' : ''}`} onClick={isMultiShift ? toggleDate : undefined}>
                                     {isMultiShift && (
@@ -829,7 +838,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                               segs.forEach((seg: DocumentData, i: number) => {
                                 const shiftTotalHours = (seg.workMinutes || 0) / 60;
                                 rows.push(
-                                  <tr key={`${day.workDate}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
+                                  <tr key={`${rowKey}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
                                     <td className="p-1.5 pl-6 text-purple-700 font-medium">↳ Shift {i + 1}</td>
                                     <td className="p-1.5">{fmtBoundary({ time: seg.clockInManual, ms: seg.clockInSystem, dayOffset: 0 }, empTz)}</td>
                                     <td className="p-1.5">

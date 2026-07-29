@@ -132,6 +132,11 @@ export interface ExplodableDoc {
 export function explodeDocBySegmentLocalDate<T extends ExplodableDoc>(doc: T): T[] {
   const segs = doc.segments ?? [];
   const fallbackDate = doc.workDate ?? doc.date;
+  // The persisted source doc id. Hydrated entries carry `id`; raw Firestore
+  // docs (which may omit it) are reconstructed from `${userId}_${workDate}` —
+  // the timeEntries collection's id pattern. This is the id any WRITE must
+  // target (via writeDocId).
+  const sourceId = doc.id ?? (doc.userId && fallbackDate ? `${doc.userId}_${fallbackDate}` : undefined);
   const dates: string[] = [];
   for (const s of segs) {
     const d = s.localDate ?? fallbackDate;
@@ -150,7 +155,12 @@ export function explodeDocBySegmentLocalDate<T extends ExplodableDoc>(doc: T): T
     const lastLunchIn = [...dateSegs].reverse().find((s) => s.lunchInManual);
     return {
       ...doc,
-      id: doc.userId ? `${doc.userId}_${date}` : doc.id,
+      // Synthetic display id — `${sourceId}@${date}`. The `@` cannot appear in
+      // a real `${uid}_${date}` Firestore id, so a synthetic part can NEVER
+      // collide with a real same-date doc (e.g. a normal 07/30 shift vs an
+      // exploded 07/29→07/30 part). Unique per (source, date) for React keys.
+      // Never used for Firestore reads/writes (writeDocId uses sourceId).
+      id: `${sourceId ?? doc.userId ?? 'entry'}@${date}`,
       date,
       workDate: date,
       segments: dateSegs,
@@ -171,9 +181,9 @@ export function explodeDocBySegmentLocalDate<T extends ExplodableDoc>(doc: T): T
       totalHours: mins / 60,
       // Mark as a synthetic display view and record the persisted source doc id
       // so any write (edit/void/correction) targets the real doc, not this
-      // synthetic `${userId}_${date}` id (which may not exist in Firestore).
+      // synthetic `${sourceId}@${date}` id (which is display-only).
       synthetic: true,
-      sourceId: doc.id,
+      sourceId,
     } as T;
   });
 }
