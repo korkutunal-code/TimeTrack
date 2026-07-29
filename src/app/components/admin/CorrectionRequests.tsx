@@ -11,6 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Label } from '../ui/label';
 import { toast } from 'sonner';
 import { FileWarning, CheckCircle2, Clock, XCircle } from 'lucide-react';
+import { useExclusionCutoff } from '../../hooks/useExclusionCutoff';
+import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
 
 interface CorrectionRequestsProps {
   currentUser: User;
@@ -87,6 +89,7 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
   const [newStatus, setNewStatus] = useState<CorrectionRequest['status']>('In Progress');
   const [resolutionNote, setResolutionNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const exclusionCutoff = useExclusionCutoff();
 
   const loadRequests = async () => {
     setLoading(true);
@@ -97,7 +100,10 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
       } else {
         data = await dbService.getCorrectionRequestsForUser(currentUser.uid);
       }
-      setRequests(data);
+      // Soft exclusion: hide correction requests targeting attendance days on
+      // or before the admin's exclusion cutoff (same cutoff as the other
+      // analysis tabs). Raw requests remain intact in Firestore.
+      setRequests(filterByExclusionCutoff(data, exclusionCutoff, r => r.requested_date));
     } catch (err) {
       console.error('[CorrectionRequests] Failed to load:', err);
       toast.error('Failed to load correction requests.');
@@ -110,7 +116,7 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser.uid]);
+  }, [currentUser.uid, exclusionCutoff]);
 
   const handleOpenResolve = (req: CorrectionRequest) => {
     setSelectedRequest(req);

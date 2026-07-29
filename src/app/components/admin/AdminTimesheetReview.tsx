@@ -12,6 +12,8 @@ import { toast } from 'sonner';
 import { Calendar, Download, RefreshCw, Edit } from 'lucide-react';
 import { generateCSV, downloadCSV } from '../../../services/exportService';
 import { USER_GROUP_OPTIONS, buildUserIdMatcher } from '../../../utils/userSelection';
+import { useExclusionCutoff } from '../../hooks/useExclusionCutoff';
+import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
 
 interface AdminTimesheetReviewProps {
   allUsers: User[];
@@ -48,6 +50,7 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'corrected' | 'incomplete'>('all');
   const [entries, setEntries] = useState<ReviewEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const exclusionCutoff = useExclusionCutoff();
 
   const setDefaultRange = () => {
     const { start, end } = computeDefaultRange();
@@ -65,7 +68,7 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
     try {
       const all = await dbService.getAllTimeEntries();
       const matchesUser = buildUserIdMatcher(selectedUserId, allUsers);
-      const filtered = all
+      const filtered = filterByExclusionCutoff(all, exclusionCutoff, e => e.date)
         .filter(e => e.date >= startDate && e.date <= endDate)
         .filter(e => matchesUser(e.userId));
 

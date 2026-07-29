@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Badge } from '../ui/badge';
 import { toast } from 'sonner';
 import { TrendingUp, AlertTriangle, Users, Flag, Clock, BarChart } from 'lucide-react';
+import { useExclusionCutoff } from '../../hooks/useExclusionCutoff';
+import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
 
 interface PatternMetricsProps {
   allUsers: User[];
@@ -37,6 +39,7 @@ export function PatternMetrics({ allUsers }: PatternMetricsProps) {
   const [period, setPeriod] = useState<string>('30');
   const [metrics, setMetrics] = useState<PatternMetricsData | null>(null);
   const [loading, setLoading] = useState(false);
+  const exclusionCutoff = useExclusionCutoff();
 
   const analyzePatterns = async () => {
     setLoading(true);
@@ -47,7 +50,7 @@ export function PatternMetrics({ allUsers }: PatternMetricsProps) {
       startDate.setDate(endDate.getDate() - days);
 
       const allEntries = await dbService.getAllTimeEntries();
-      const filteredEntries = allEntries.filter(entry => {
+      const filteredEntries = filterByExclusionCutoff(allEntries, exclusionCutoff, e => e.date).filter(entry => {
         const entryDate = new Date(entry.date);
         return entryDate >= startDate && entryDate <= endDate && entry.complete;
       });

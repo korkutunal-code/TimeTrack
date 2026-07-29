@@ -13,6 +13,8 @@ import { toast } from 'sonner';
 import { Search, AlertTriangle, Clock, Shield, Info } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 import { USER_GROUP_OPTIONS, buildUserIdMatcher } from '../../../utils/userSelection';
+import { useExclusionCutoff } from '../../hooks/useExclusionCutoff';
+import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
 
 interface AuditViewerProps {
   allUsers: User[];
@@ -36,6 +38,7 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
   const [endDate, setEndDate] = useState('');
   const [suspiciousOnly, setSuspiciousOnly] = useState(false);
   const [results, setResults] = useState<AuditResult[]>([]);
+  const exclusionCutoff = useExclusionCutoff();
   const [loading, setLoading] = useState(false);
 
   const loadEntries = async () => {
@@ -48,7 +51,8 @@ export function AuditViewer({ allUsers }: AuditViewerProps) {
     try {
       const allEntries = await dbService.getAllTimeEntries();
       const matchesUserId = buildUserIdMatcher(selectedUserId, allUsers);
-      const filteredEntries = allEntries.filter(entry => {
+      const scopedEntries = filterByExclusionCutoff(allEntries, exclusionCutoff, e => e.date);
+      const filteredEntries = scopedEntries.filter(entry => {
         const inDateRange = entry.date >= startDate && entry.date <= endDate;
         const matchesUser = matchesUserId(entry.userId);
         return inDateRange && matchesUser && !!entry.clockInManual && !!entry.clockOutManual;

@@ -29,6 +29,8 @@ import {
 import { toast } from 'sonner';
 import { Download, Printer, RefreshCw, Eye, Users, AlertTriangle, Calendar, Clock, Filter, LogIn, LogOut, Coffee, MoreVertical, Edit, Trash2 } from 'lucide-react';
 import { USER_GROUP_OPTIONS, buildUserIdMatcher } from '../../../utils/userSelection';
+import { useExclusionCutoff } from '../../hooks/useExclusionCutoff';
+import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
 
 interface TeamDashboardProps {
   user: User;
@@ -43,6 +45,7 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
   const [endDate, setEndDate] = useState('');
   const [status, setStatus] = useState<string>('all');
   const [selectedEntry, setSelectedEntry] = useState<TimeEntry | null>(null);
+  const exclusionCutoff = useExclusionCutoff();
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   // Edit Entry State
@@ -76,7 +79,7 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
   // Derived during render (no filter effect/state) so React never sees a
   // synchronous setState inside an effect (react-hooks/set-state-in-effect).
   const filteredEntries = useMemo(() => {
-    let filtered = [...entries];
+    let filtered = filterByExclusionCutoff(entries, exclusionCutoff, e => e.date);
 
     const matchesUser = buildUserIdMatcher(selectedUserId, allUsers);
     filtered = filtered.filter(e => matchesUser(e.userId));
@@ -98,7 +101,7 @@ export function TeamDashboard({ user, allUsers }: TeamDashboardProps) {
     }
 
     return filtered;
-  }, [entries, selectedUserId, startDate, endDate, status, allUsers]);
+  }, [entries, selectedUserId, startDate, endDate, status, allUsers, exclusionCutoff]);
 
   const setQuickDate = (preset: string) => {
     // Bug fix: previously used `today.getDay()` and `setDate()` in local TZ.

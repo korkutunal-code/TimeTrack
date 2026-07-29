@@ -46,6 +46,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
   const [isReminderSettingsOpen, setIsReminderSettingsOpen] = useState(false);
   const [isPayrollSettingsOpen, setIsPayrollSettingsOpen] = useState(false);
   const [isLockPeriodOpen, setIsLockPeriodOpen] = useState(false);
+  const [isExcludeRecordsOpen, setIsExcludeRecordsOpen] = useState(false);
   const [showHighlight, setShowHighlight] = useState(false);
 
   const isDirty = !settingsEqual(systemSettings, initialSettings);
@@ -79,6 +80,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
         biweekly_start_date: systemSettings.biweekly_start_date,
         monthly_start_day: systemSettings.monthly_start_day,
         locked_up_to_date: systemSettings.locked_up_to_date,
+        exclude_records_before_date: systemSettings.exclude_records_before_date,
         updatedAt: Timestamp.now(),
         updatedBy: currentUser.uid,
       };
@@ -397,6 +399,60 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
               </div>
               <p className="text-xs text-slate-500 mt-2">
                 Setting a date here will prevent any edits or corrections for time entries on or before this date. Clear the date to unlock all periods.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+        )}
+      </Card>
+
+      {/* Exclude Records From Analysis — soft exclusion cutoff. Records on or
+          before this date are filtered out of every analysis/metrics/payroll/
+          audit/corrections view. Raw data stays intact in Firestore. */}
+      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
+        <CardHeader className="bg-white/40 pb-2">
+          <button
+            type="button"
+            onClick={() => setIsExcludeRecordsOpen((open) => !open)}
+            aria-expanded={isExcludeRecordsOpen}
+            className="w-full flex items-center justify-between text-left"
+          >
+            <CardTitle className="text-slate-800 font-bold">Exclude Records From Analysis</CardTitle>
+            <ChevronDown
+              className={`size-5 text-slate-500 transition-transform duration-200 ${isExcludeRecordsOpen ? 'rotate-180' : 'rotate-0'}`}
+            />
+          </button>
+        </CardHeader>
+        {isExcludeRecordsOpen && (
+        <CardContent className="space-y-3 pt-2">
+          <p className="text-xs text-slate-500">
+            All time records on or before the selected date will be excluded from analysis, metrics, and payroll reports.
+          </p>
+          <div className={`space-y-3 bg-white p-4 border border-slate-200 rounded-lg transition-colors ${fieldHighlight('exclude_records_before_date')}`}>
+            <div>
+              <Label className="text-slate-900">Exclude Records On or Before</Label>
+              <div className="flex gap-2 mt-1">
+                <Input
+                  type="date"
+                  value={systemSettings.exclude_records_before_date}
+                  onChange={(e) => update('exclude_records_before_date', e.target.value)}
+                  className="border-slate-200"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => update('exclude_records_before_date', '')}
+                  disabled={!systemSettings.exclude_records_before_date}
+                  className="h-9 shrink-0"
+                  title="Clear exclusion date"
+                >
+                  <XIcon className="size-4" />
+                  Clear
+                </Button>
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                Setting a date here hides all historical records on or before this date from every analysis tab. The underlying time entries are preserved in the database. Clear the date to include all records again.
               </p>
             </div>
           </div>

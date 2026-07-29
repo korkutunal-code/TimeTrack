@@ -24,6 +24,7 @@ import { formatDateShortWithWeekday } from '../../../utils/dateHelpers.js';
 import { computeSegmentWorkMinutes } from '../../lib/segmentOps';
 import type { TimeSegment } from '../../lib/database';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
+import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
 
 interface PayrollReportsProps {
   allUsers: User[];
@@ -53,6 +54,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
     weekly_start_day: 1,
     biweekly_start_date: '2024-01-01',
     monthly_start_day: 1,
+    exclude_records_before_date: '',
   });
 
   useEffect(() => {
@@ -67,6 +69,7 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
             weekly_start_day: s.weekly_start_day,
             biweekly_start_date: s.biweekly_start_date,
             monthly_start_day: s.monthly_start_day,
+            exclude_records_before_date: s.exclude_records_before_date || '',
           });
         }
       } catch (err) {
@@ -211,10 +214,11 @@ export function PayrollReports({ allUsers }: PayrollReportsProps) {
           );
 
       const snap = await getDocs(q);
-      const rawEntries = snap.docs
-        .map(d => d.data())
-        .filter(e => e.dayComplete === true)
-        .map(e => {
+      const rawEntries = filterByExclusionCutoff(
+        snap.docs.map(d => d.data()).filter(e => e.dayComplete === true),
+        payrollSettings.exclude_records_before_date,
+        (e: DocumentData) => String(e.workDate || e.date || ''),
+      ).map(e => {
           // Rebuild the day's total from the canonical segments[] sum.
           // Split-shift (multi-segment) docs persist only the final shift's
           // minutes in the root totalWorkMinutes field (e.g. 353 for shift 2,

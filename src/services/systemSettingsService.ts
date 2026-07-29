@@ -19,6 +19,13 @@ export interface GlobalSettings {
   biweekly_start_date: string;
   monthly_start_day: number;
   locked_up_to_date: string;
+  /**
+   * PT YYYY-MM-DD cutoff (or '' when disabled). All time records on or before
+   * this date are softly excluded from analysis, metrics, payroll summaries,
+   * audit, and corrections views. The raw documents remain intact in
+   * Firestore — this is a reporting concern, not a data mutation.
+   */
+  exclude_records_before_date: string;
 }
 
 export const DEFAULT_SETTINGS: GlobalSettings = {
@@ -35,6 +42,7 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
   biweekly_start_date: '2024-01-01',
   monthly_start_day: 1,
   locked_up_to_date: '',
+  exclude_records_before_date: '',
 };
 
 /**
@@ -89,5 +97,6 @@ function mapSettings(data: Record<string, unknown>): GlobalSettings {
     biweekly_start_date: (data.biweekly_start_date as string) || DEFAULT_SETTINGS.biweekly_start_date,
     monthly_start_day: (data.monthly_start_day as number) ?? DEFAULT_SETTINGS.monthly_start_day,
     locked_up_to_date: (data.locked_up_to_date as string) || DEFAULT_SETTINGS.locked_up_to_date,
+    exclude_records_before_date: (data.exclude_records_before_date as string) || DEFAULT_SETTINGS.exclude_records_before_date,
   };
 }
