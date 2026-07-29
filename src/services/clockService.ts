@@ -4,6 +4,7 @@ import {
   Timestamp,
   updateDoc,
 } from 'firebase/firestore';
+import type { DocumentData } from 'firebase/firestore';
 import { db } from '../app/lib/firebase';
 import type { TimeEntry, TimeSegment } from '../app/lib/database';
 import {
@@ -302,55 +303,132 @@ export async function punchOut(userId: string, timezone?: string): Promise<TimeE
     const active = getActiveSegment(existing);
     if (!active) throw new Error('No active segment');
 
+    const archived = (existing?.segments || []).filter((s: TimeSegment) => s.id !== active.id);
+    const preTotal = (existing?.totalWorkMinutes as number) || 0;
+
     // Local-midnight split: when an employee timezone is supplied and the open
     // segment crossed a local midnight, split it into per-local-day portions
-    // (Day N closes at 23:59 local; the final portion closes at the actual
-    // punch-out time). This assigns each portion's minutes to its own local
-    // calendar date instead of lumping a cross-midnight shift into one day.
-    let closedSeg: TimeSegment;
-    let splitSegments: TimeSegment[] | null = null;
+    // and DISTRIBUTE each portion onto its own per-local-date doc
+    // (`${userId}_${localDate}`). Storing the Day-2 portion on the punch-in
+    // day's doc (the pre-fix behavior) caused the edit modal to render a
+    // phantom third shift (the synthesized top-level "current" spanning
+    // midnight), double-counted day totals, and payroll aggregating the
+    // post-midnight portion under yesterday instead of today.
+    let splitParts: SplitSegmentShape[] | null = null;
     if (timezone && typeof active.clockInSystem === 'number') {
       const parts = splitSegmentAcrossMidnights(
         { ...(active as SplitSegmentShape), id: active.id },
         now.toMillis(),
         timezone,
       );
-      if (parts.length > 1) {
-        // Close the final (still-open) portion at the punch-out instant.
-        const last = parts[parts.length - 1];
-        const closedLast = closeActiveSegment(last as TimeSegment, ptTime, now.toMillis());
-        splitSegments = [...parts.slice(0, -1), closedLast] as TimeSegment[];
-        closedSeg = closedLast;
+      if (parts.length > 1 && parts[0].localDate === workDate) {
+        splitParts = parts;
       }
     }
-    if (!splitSegments) {
-      closedSeg = closeActiveSegment(active, ptTime, now.toMillis());
+
+    if (!splitParts) {
+      // Single-day close (or legacy no-timezone path): close in place on the
+      // same doc, unchanged behavior.
+      const closedSeg = closeActiveSegment(active, ptTime, now.toMillis());
+      const finalSegments = [...archived, closedSeg].map((s) => stripUndefined(s));
+      const newTotal = preTotal + (closedSeg.workMinutes || 0);
+
+      tx.update(ref, {
+        clockOutManual: ptTime,
+        clockOutSystemTime: now,
+        clockOutSystem: now.toMillis(),
+        complete: true,
+        currentStep: 4,
+        dayComplete: true,
+        completedAt: now.toMillis(),
+        segments: finalSegments,
+        totalWorkMinutes: newTotal,
+        updatedAt: now,
+        updatedBy: userId,
+      });
+
+      return { entryId, closedSeg, finalSegments, newTotal };
     }
 
-    const archived = (existing?.segments || []).filter((s: TimeSegment) => s.id !== active.id);
-    const finalSegments = [...archived, ...(splitSegments ?? [closedSeg!])].map((s) => stripUndefined(s));
+    // --- Cross-midnight split path ----------------------------------------
+    // Close the final (still-open) portion at the actual punch-out instant.
+    const lastPart = splitParts[splitParts.length - 1];
+    const closedLast = closeActiveSegment(lastPart as TimeSegment, ptTime, now.toMillis());
+    const allParts = [...splitParts.slice(0, -1), closedLast];
 
-    const preTotal = (existing?.totalWorkMinutes as number) || 0;
-    const addedMinutes = splitSegments
-      ? splitSegments.reduce((sum, s) => sum + (s.workMinutes || 0), 0)
-      : (closedSeg!.workMinutes || 0);
-    const newTotal = preTotal + addedMinutes;
+    // Firestore transactions require ALL reads before ANY write: fetch the
+    // target docs for every portion beyond the first (which stays on the
+    // original punch-in doc).
+    const targetDocs: { date: string; ref: ReturnType<typeof doc>; exists: boolean; data: DocumentData | undefined }[] = [];
+    for (let i = 1; i < allParts.length; i++) {
+      const date = allParts[i].localDate!;
+      const r = doc(db, 'timeEntries', `${userId}_${date}`);
+      const s = await tx.get(r);
+      targetDocs.push({ date, ref: r, exists: s.exists(), data: s.exists() ? s.data() : undefined });
+    }
 
+    // Original doc: keep the Day-1 portion (merged with any prior archived
+    // segments). Top-level fields mirror THAT portion (not the full
+    // cross-midnight span), so mapEntry no longer synthesizes a spanning
+    // "current" that double-counts or renders as a phantom shift.
+    const firstPart = allParts[0];
+    const docASegments = [...archived, firstPart].map((s) => stripUndefined(s));
+    const docATotal = preTotal + (firstPart.workMinutes || 0);
     tx.update(ref, {
-      clockOutManual: ptTime,
-      clockOutSystemTime: now,
-      clockOutSystem: now.toMillis(),
+      clockInManual: firstPart.clockInManual,
+      clockOutManual: firstPart.clockOutManual,
+      clockOutSystemTime: firstPart.clockOutSystem ? Timestamp.fromMillis(firstPart.clockOutSystem) : now,
+      clockOutSystem: firstPart.clockOutSystem ?? now.toMillis(),
+      lunchOutManual: firstPart.lunchOutManual ?? null,
+      lunchInManual: firstPart.lunchInManual ?? null,
+      skipLunch: !!firstPart.skipLunch,
       complete: true,
       currentStep: 4,
       dayComplete: true,
-      completedAt: now.toMillis(),
-      segments: finalSegments,
-      totalWorkMinutes: newTotal,
+      completedAt: firstPart.clockOutSystem ?? now.toMillis(),
+      segments: docASegments,
+      totalWorkMinutes: docATotal,
       updatedAt: now,
       updatedBy: userId,
     });
 
-    return { entryId, closedSeg, finalSegments, newTotal };
+    // Day-2+ docs: one per local date, each closed with its own portion.
+    for (let i = 1; i < allParts.length; i++) {
+      const part = allParts[i];
+      const t = targetDocs[i - 1];
+      const existingSegs = t.exists && Array.isArray(t.data?.segments) ? (t.data!.segments as TimeSegment[]) : [];
+      const existingTotal = t.exists ? ((t.data?.totalWorkMinutes as number) || 0) : 0;
+      const payload: Record<string, unknown> = {
+        userId,
+        workDate: t.date,
+        clockInManual: part.clockInManual,
+        clockInSystemTime: part.clockInSystem ? Timestamp.fromMillis(part.clockInSystem) : now,
+        clockInSystem: part.clockInSystem ?? now.toMillis(),
+        clockOutManual: part.clockOutManual,
+        clockOutSystemTime: part.clockOutSystem ? Timestamp.fromMillis(part.clockOutSystem) : now,
+        clockOutSystem: part.clockOutSystem ?? now.toMillis(),
+        lunchOutManual: part.lunchOutManual ?? null,
+        lunchInManual: part.lunchInManual ?? null,
+        skipLunch: !!part.skipLunch,
+        currentStep: 4,
+        complete: true,
+        dayComplete: true,
+        completedAt: part.clockOutSystem ?? now.toMillis(),
+        segments: [...existingSegs, stripUndefined(part)],
+        totalWorkMinutes: existingTotal + (part.workMinutes || 0),
+        status: 'active',
+        timezoneAtCreation: timezone,
+        updatedAt: now,
+        updatedBy: userId,
+      };
+      if (!t.exists) {
+        payload.createdAt = now;
+        payload.createdBy = userId;
+      }
+      tx.set(t.ref, payload, { merge: true });
+    }
+
+    return { entryId, closedSeg: closedLast, finalSegments: docASegments, newTotal: docATotal };
   }),
     { label: 'punchOut', retries: 3 },
   );

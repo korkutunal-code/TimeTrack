@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { ArrowLeft, AlertTriangle, Clock, Calendar, Target, Briefcase, ChevronLeft, ChevronRight, Filter, X, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatHoursHMM, getEmployeeTimezone } from '../../../utils/timeCalculations';
-import { displayTimeForView } from '../../../utils/timeView';
+import { displayTimeForView, explodeDocsBySegmentLocalDate } from '../../../utils/timeView';
 import { TimeAdjustmentModal } from './TimeAdjustmentModal';
 
 interface HistoryViewProps {
@@ -103,6 +103,10 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
         // PT date. Legacy docs without a status field default to 'active'
         // in mapEntry, so historical data is preserved.
         data = data.filter((e) => e.status !== 'voided' && e.status !== 'archived');
+        // Attribute pre-fix cross-midnight split segments to their own local
+        // dates: a 23:32→00:28 shift stored on the 07/29 doc renders as two
+        // rows — 23:32→23:59 under 07/29 and 00:00→00:28 under 07/30.
+        data = explodeDocsBySegmentLocalDate(data);
       } else {
         // No range (custom not yet applied) — show nothing
         data = [];

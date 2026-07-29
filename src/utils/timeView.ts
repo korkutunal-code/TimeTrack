@@ -66,3 +66,86 @@ export function displayTimeForView(
   }
   return manualFallback;
 }
+
+// ---------------------------------------------------------------------------
+// Per-local-date explosion (cross-midnight split attribution)
+// ---------------------------------------------------------------------------
+
+export interface ExplodableSegment {
+  id?: string;
+  localDate?: string;
+  workMinutes?: number;
+  complete?: boolean;
+  clockInManual?: string;
+  clockOutManual?: string;
+  clockInSystem?: number;
+  clockOutSystem?: number;
+}
+
+export interface ExplodableDoc {
+  id?: string;
+  userId?: string;
+  date?: string;
+  workDate?: string;
+  segments?: ExplodableSegment[];
+  currentSegment?: ExplodableSegment | null;
+  clockInManual?: string;
+  clockOutManual?: string;
+  clockInSystem?: number;
+  clockOutSystem?: number;
+  complete?: boolean;
+  totalWorkMinutes?: number;
+  totalHours?: number;
+}
+
+/**
+ * Split a doc whose persisted segments carry attributed `localDate`s (written
+ * by the automatic local-midnight split) into one synthetic doc per local
+ * calendar date. This repairs the pre-fix cross-midnight shape, where a
+ * 23:32→00:28 shift was split into 23:32→23:59 + 00:00→00:28 but BOTH parts
+ * were stored on the punch-in day's doc — causing triple rows in the edit
+ * modal (the synthesized top-level "current" 23:32→00:28 appeared as a third
+ * shift) and single-day aggregation in payroll/history.
+ *
+ * Docs whose segments have no differing localDate are returned unchanged
+ * (zero impact on normal single-day or same-day split-shift docs). Works on
+ * hydrated TimeEntry objects and raw Firestore DocumentData alike.
+ */
+export function explodeDocBySegmentLocalDate<T extends ExplodableDoc>(doc: T): T[] {
+  const segs = doc.segments ?? [];
+  const fallbackDate = doc.workDate ?? doc.date;
+  const dates: string[] = [];
+  for (const s of segs) {
+    const d = s.localDate ?? fallbackDate;
+    if (d && !dates.includes(d)) dates.push(d);
+  }
+  if (dates.length <= 1) return [doc];
+  return dates.map((date) => {
+    const dateSegs = segs.filter((s) => (s.localDate ?? fallbackDate) === date);
+    const mins = dateSegs.reduce((sum, s) => sum + (s.workMinutes ?? 0), 0);
+    const first = dateSegs[0];
+    const lastClosed = [...dateSegs].reverse().find((s) => s.clockOutManual) ?? dateSegs[dateSegs.length - 1];
+    return {
+      ...doc,
+      id: doc.userId ? `${doc.userId}_${date}` : doc.id,
+      date,
+      workDate: date,
+      segments: dateSegs,
+      // Each exploded doc stands alone for its date; drop the synthesized
+      // top-level "current" view so it cannot appear as a phantom extra shift.
+      currentSegment: undefined,
+      clockInManual: first?.clockInManual,
+      clockOutManual: lastClosed?.clockOutManual,
+      clockInSystem: first?.clockInSystem,
+      clockOutSystem: lastClosed?.clockOutSystem,
+      complete: dateSegs.length > 0 && dateSegs.every((s) => s.complete === true),
+      totalWorkMinutes: mins,
+      totalHours: mins / 60,
+    } as T;
+  });
+}
+
+/** Explode a list of docs (see explodeDocBySegmentLocalDate). */
+export function explodeDocsBySegmentLocalDate<T extends ExplodableDoc>(docs: T[]): T[] {
+  return docs.flatMap((d) => explodeDocBySegmentLocalDate(d));
+}

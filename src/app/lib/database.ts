@@ -27,6 +27,12 @@ export interface TimeSegment {
   complete?: boolean;       // clockOut recorded
   taskId?: string;          // Dragme task id (optional)
   autoClosed?: boolean;     // set when watchdog auto-closes the segment
+  /** Local calendar date (YYYY-MM-DD) this segment is attributed to. Set by the
+   * automatic local-midnight split; absent on single-day segments (their date
+   * is the owning doc's workDate). */
+  localDate?: string;
+  /** Marks a segment produced by the automatic local-midnight split. */
+  splitFromMidnight?: boolean;
 }
 
 export interface TimeEntry {
@@ -222,6 +228,9 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
       // segment's actual persisted value instead.
       complete: s.complete === true,
       autoClosed: s.autoClosed === true,
+      // Local-midnight split attribution fields (present on split segments).
+      localDate: typeof s.localDate === 'string' ? s.localDate : undefined,
+      splitFromMidnight: s.splitFromMidnight === true,
     };
     if (s.taskId) out.taskId = s.taskId; // omit when not set; never write undefined
     return out;
@@ -345,7 +354,18 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
             s.clockInManual === current.clockInManual &&
             s.clockOutManual === current.clockOutManual,
         );
-        currentMins = coveredByArchived ? 0 : (current.workMinutes ?? 0);
+        // Split-chain coverage: the synthesized `current` (from the top-level
+        // dual-written fields, e.g. 23:32→00:28) spans the exact range already
+        // covered by a chain of persisted split segments (first.clockIn ==
+        // current.clockIn AND last.clockOut == current.clockOut, e.g.
+        // 23:32→23:59 + 00:00→00:28 from the local-midnight split). The
+        // persisted parts already carry the minutes — adding `current` too
+        // would double-count the day total (56+56=112 for a 56-minute shift).
+        const coveredBySplitChain =
+          archived.length > 0 &&
+          archived[0].clockInManual === current.clockInManual &&
+          archived[archived.length - 1].clockOutManual === current.clockOutManual;
+        currentMins = coveredByArchived || coveredBySplitChain ? 0 : (current.workMinutes ?? 0);
       }
     }
     entry.totalWorkMinutes = archivedMins + currentMins;

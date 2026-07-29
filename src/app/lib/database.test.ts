@@ -934,3 +934,78 @@ describe('mapEntry — S1 fallback must not falsely close an open split-shift se
     expect(entry.totalWorkMinutes).toBe(600);
   });
 });
+
+/**
+ * Regression: pre-fix cross-midnight split doc (23:32→00:28 bug).
+ * Both split parts were persisted on the punch-in day's doc while the
+ * top-level dual-written fields still spanned the full midnight range. The
+ * synthesized `current` (23:32→00:28) must NOT be double-counted on top of
+ * the persisted split parts (28+28), and the day must read as fully closed.
+ */
+describe('mapEntry — split-chain double-count defense (cross-midnight)', () => {
+  it('does NOT double-count the synthesized current spanning a persisted split chain', () => {
+    const data = {
+      userId: 'u1',
+      workDate: '2026-07-29',
+      clockInManual: '23:32',   // top-level spans the full shift
+      clockOutManual: '00:28',
+      dayComplete: true,
+      totalWorkMinutes: 56,     // stored value from punchOut
+      segments: [
+        {
+          id: 'seg_d1',
+          clockInManual: '23:32',
+          clockOutManual: '23:59',
+          workMinutes: 28,
+          complete: true,
+          splitFromMidnight: true,
+          localDate: '2026-07-29',
+        },
+        {
+          id: 'seg_d2',
+          clockInManual: '00:00',
+          clockOutManual: '00:28',
+          workMinutes: 28,
+          complete: true,
+          splitFromMidnight: true,
+          localDate: '2026-07-30',
+        },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-07-29', data as any);
+    // 56 (28+28 persisted parts), NOT 112 (which added the spanning current).
+    expect(entry.totalWorkMinutes).toBe(56);
+    expect(entry.totalHours).toBeCloseTo(56 / 60, 5);
+    // Both persisted parts hydrated with their split-attribution fields.
+    expect(entry.segments).toHaveLength(2);
+    expect(entry.segments?.[0].localDate).toBe('2026-07-29');
+    expect(entry.segments?.[1].localDate).toBe('2026-07-30');
+    expect(entry.segments?.[0].splitFromMidnight).toBe(true);
+    // Fully closed — no active/open segment anywhere.
+    expect(getActiveSegment(entry)).toBeNull();
+    expect(hasOpenSegment(entry)).toBe(false);
+  });
+
+  it('normal same-day split-shift doc is unaffected by the split-chain check', () => {
+    // Two closed same-day shifts; top-level mirrors the LAST shift. The chain
+    // check (first.clockIn == current.clockIn) must not fire — the exact-match
+    // dual-write dedup already covers `current`.
+    const data = {
+      userId: 'u1',
+      workDate: '2026-07-29',
+      clockInManual: '13:00',
+      clockOutManual: '17:00',
+      dayComplete: true,
+      totalWorkMinutes: 480,
+      segments: [
+        { id: 'seg_1', clockInManual: '08:00', clockOutManual: '12:00', workMinutes: 240, complete: true },
+        { id: 'seg_2', clockInManual: '13:00', clockOutManual: '17:00', workMinutes: 240, complete: true },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-07-29', data as any);
+    expect(entry.totalWorkMinutes).toBe(480);
+    expect(getActiveSegment(entry)).toBeNull();
+  });
+});

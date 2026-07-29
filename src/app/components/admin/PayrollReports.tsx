@@ -26,7 +26,7 @@ import { computeSegmentWorkMinutes } from '../../lib/segmentOps';
 import type { TimeSegment } from '../../lib/database';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
-import { type TimeViewMode, displayTimeForView } from '../../../utils/timeView';
+import { type TimeViewMode, displayTimeForView, explodeDocsBySegmentLocalDate } from '../../../utils/timeView';
 
 interface PayrollReportsProps {
   allUsers: User[];
@@ -262,9 +262,16 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
           return { ...e, segments: rebuiltSegs, totalWorkMinutes: segTotal, totalHours: segTotal / 60 };
         });
 
+      // Attribute pre-fix cross-midnight split segments to their own local
+      // dates (explode 23:32→00:28 into a 07/29 doc with 23:32→23:59 and a
+      // 07/30 doc with 00:00→00:28) so payroll calculates and groups the
+      // post-midnight portion under the correct day instead of aggregating
+      // the whole shift under the punch-in date.
+      const dateAttributedEntries = explodeDocsBySegmentLocalDate(rawEntries);
+
       // Group by employee and calculate biweekly overtime totals (California rules)
       const byUser = new Map<string, OvertimeEntry[]>();
-      rawEntries.forEach(e => {
+      dateAttributedEntries.forEach(e => {
         const uid = String(e.userId || '');
         if (!byUser.has(uid)) byUser.set(uid, []);
         byUser.get(uid)!.push(e as OvertimeEntry);
