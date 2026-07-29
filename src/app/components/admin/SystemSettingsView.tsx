@@ -214,7 +214,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                 </label>
               </div>
 
-              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('enable_lunch_reminder')}`}>
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('enable_lunch_reminder') || fieldHighlight('lunch_reminder_time')}`}>
                 <label className="flex items-center gap-2">
                   <Checkbox
                     checked={systemSettings.enable_lunch_reminder}
@@ -231,7 +231,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                 <p className="text-xs text-slate-400">If they haven't logged lunch out. Pacific time.</p>
               </div>
 
-              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('enable_clockout_reminder')}`}>
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('enable_clockout_reminder') || fieldHighlight('clockout_reminder_time')}`}>
                 <label className="flex items-center gap-2">
                   <Checkbox
                     checked={systemSettings.enable_clockout_reminder}
@@ -248,7 +248,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                 <p className="text-xs text-slate-400">If still clocked in. Pacific time.</p>
               </div>
 
-              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('enable_longshift_reminder')}`}>
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('enable_longshift_reminder') || fieldHighlight('longshift_threshold_hours')}`}>
                 <label className="flex items-center gap-2">
                   <Checkbox
                     checked={systemSettings.enable_longshift_reminder}

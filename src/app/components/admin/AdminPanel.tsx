@@ -449,7 +449,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   };
 
   const renderWorkModelPill = (user: User) => {
-    const label = resolveWorkModelLabel(user, workModels);
+    const label = resolveWorkModelLabel(user, workModels) || 'Select Model';
     const remote = label === 'Remote';
     const hasCustom = !!user.workModelOverride?.hasCustomRules;
     return (
@@ -1118,10 +1118,10 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Employee</Label>
+                <Label>User</Label>
                 <Select value={correctionUserId} onValueChange={setCorrectionUserId}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select employee" />
+                    <SelectValue placeholder="Select user" />
                   </SelectTrigger>
                   <SelectContent>
                     {allUsers.slice().sort((a, b) => a.name.localeCompare(b.name)).map(u => (
