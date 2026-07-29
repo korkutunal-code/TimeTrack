@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { authService, User } from './lib/auth';
 import { dbService } from './lib/database';
 import { LoginPage } from './components/LoginPage';
@@ -27,7 +27,7 @@ import { UserAvatar } from './components/ui/user-avatar';
 import { TimeZoneSelector } from './components/ui/time-zone-selector';
 import { TimezoneViewToggle } from './components/ui/timezone-view-toggle';
 import type { TimeViewMode } from '../utils/timeView';
-import { DEFAULT_DISPLAY_TIMEZONE } from './lib/timezones';
+import { DEFAULT_DISPLAY_TIMEZONE, AUTO_TIMEZONE, timezoneToPersist } from './lib/timezones';
 import { Save, RotateCcw, ArrowLeft } from 'lucide-react';
 
 /** localStorage key for the persisted display-timezone choice ('auto' or IANA id). */
@@ -40,6 +40,7 @@ import {
   DropdownMenuTrigger,
 } from './components/ui/dropdown-menu';
 import { Toaster } from './components/ui/sonner';
+import { toast } from 'sonner';
 import { LogOut, Clock, Users, Settings, FileText, Search, TrendingUp, FileWarning, Sliders } from 'lucide-react';
 import { QABar } from './components/QABar';
 import { ReportProblemButton } from './components/ReportProblemButton';
@@ -51,15 +52,53 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
-  // Display-only time zone for the punch screen's live date/time/zone label.
-  // Pure UI state — never affects storage or calculations (AGENTS.md §2).
-  // The value is either the 'auto' sentinel (tracks the OS timezone, the
-  // default) or a concrete IANA id (manual override). Persisted to
-  // localStorage so the choice survives reloads; 'auto' re-resolves the OS
-  // TZ on each load so traveling users follow their device clock.
+  // Header time zone selector value. Either the 'auto' sentinel (tracks the
+  // OS timezone, the default) or a concrete IANA id (manual override). The
+  // selector is the employee's control over their `user.timezone`: changing it
+  // persists the resolved IANA zone to Firestore, which drives entry doc ids,
+  // the local-midnight split, week boundaries, and per-local-date totals.
   const [displayTimezone, setDisplayTimezoneState] = useState<string>(
     () => localStorage.getItem(DISPLAY_TIMEZONE_STORAGE_KEY) || DEFAULT_DISPLAY_TIMEZONE,
   );
+
+  // Persist the resolved concrete IANA zone to the employee's profile and
+  // update the active app context immediately so clockService / shift
+  // splitting / doc id creation / history pick up the new zone without a
+  // reload. `selectorValue` is the raw selector value ('auto' or an IANA id).
+  const syncTimezoneToProfile = useCallback(
+    async (selectorValue: string, opts?: { silent?: boolean }) => {
+      if (!currentUser) return;
+      // Only the header selector (non-admin) drives profile tz this way;
+      // admins manage their tz via AdminPanel.
+      if (currentUser.role === 'admin') return;
+      const zone = timezoneToPersist(selectorValue, currentUser.timezone);
+      if (!zone) return; // already in sync — no write needed
+      // Optimistic context update so downstream consumers re-derive
+      // immediately; revert on failure.
+      const prevTz = currentUser.timezone;
+      setCurrentUser((prev) => (prev ? { ...prev, timezone: zone } : prev));
+      setAllUsers((prev) =>
+        prev.map((u) => (u.uid === currentUser.uid ? { ...u, timezone: zone } : u)),
+      );
+      try {
+        await dbService.updateUser(currentUser.uid, { timezone: zone });
+        if (!opts?.silent) {
+          toast.success(`Time zone updated to ${zone}`);
+        }
+      } catch (e: unknown) {
+        // Revert the optimistic update; the selector's display value still
+        // reflects the choice, but calculations stay on the stored zone until
+        // the write succeeds.
+        setCurrentUser((prev) => (prev ? { ...prev, timezone: prevTz } : prev));
+        setAllUsers((prev) =>
+          prev.map((u) => (u.uid === currentUser.uid ? { ...u, timezone: prevTz } : u)),
+        );
+        toast.error('Could not save time zone: ' + ((e as Error).message || String(e)));
+      }
+    },
+    [currentUser],
+  );
+
   const setDisplayTimezone = (tz: string) => {
     setDisplayTimezoneState(tz);
     try {
@@ -68,7 +107,20 @@ export default function App() {
       // localStorage may be unavailable (private mode / quota); the in-memory
       // choice still works for the session.
     }
+    // Persist the resolved zone to the employee's profile (manual selection).
+    void syncTimezoneToProfile(tz);
   };
+
+  // Auto-detection sync: on load, when "Auto" is selected and the detected OS
+  // time zone differs from the stored `user.timezone`, sync the profile so the
+  // employee's calculations follow their device (e.g. after traveling). Silent
+  // — no toast on the common load path.
+  useEffect(() => {
+    if (!currentUser || currentUser.role === 'admin') return;
+    if (displayTimezone !== AUTO_TIMEZONE) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void syncTimezoneToProfile(AUTO_TIMEZONE, { silent: true });
+  }, [currentUser, displayTimezone, syncTimezoneToProfile]);
 
   const testMode =
     import.meta.env.VITE_TEST_MODE === 'true' ||

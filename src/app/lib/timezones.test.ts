@@ -1,6 +1,7 @@
-// Display-only timezone resolver tests. These cover the 'auto' sentinel
-// behavior (OS-TZ tracking + re-resolution) and the persistence contract.
-// All purely display-layer; none touch the canonical PT payroll TZ.
+// Timezone resolver tests. These cover the 'auto' sentinel behavior
+// (OS-TZ tracking + re-resolution), the live-clock formatting, and the
+// profile-sync decision (timezoneToPersist) that persists the employee's
+// selected/resolved zone to user.timezone.
 
 import {
   AUTO_TIMEZONE,
@@ -9,6 +10,7 @@ import {
   resolveDisplayTimezone,
   getDisplayClock,
   formatInstantHHMM,
+  timezoneToPersist,
 } from './timezones';
 
 describe('timezones — auto / display resolvers', () => {
@@ -71,5 +73,34 @@ describe('timezones — auto / display resolvers', () => {
     expect(formatInstantHHMM(Date.now(), 'America/Los_Angeles')).toMatch(
       /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
     );
+  });
+});
+
+describe('timezoneToPersist — profile sync decision', () => {
+  it('returns the concrete id for a manual selection that differs from stored', () => {
+    expect(timezoneToPersist('Europe/Istanbul', 'America/Los_Angeles')).toBe('Europe/Istanbul');
+  });
+
+  it('returns null when the manual selection already matches the stored zone (no write)', () => {
+    expect(timezoneToPersist('Europe/Istanbul', 'Europe/Istanbul')).toBeNull();
+  });
+
+  it("resolves 'auto' to the OS zone and returns it when it differs from stored", () => {
+    const osZone = getOSTimezone();
+    // Use a zone guaranteed to differ from the OS zone for the "differs" case.
+    const otherZone = osZone === 'America/Los_Angeles' ? 'Europe/Istanbul' : 'America/Los_Angeles';
+    expect(timezoneToPersist(AUTO_TIMEZONE, otherZone)).toBe(osZone);
+  });
+
+  it("returns null when 'auto' resolves to the same zone already stored (no write)", () => {
+    const osZone = getOSTimezone();
+    expect(timezoneToPersist(AUTO_TIMEZONE, osZone)).toBeNull();
+  });
+
+  it('returns null when stored zone is undefined only if the resolved zone is empty', () => {
+    // A fresh profile (no stored tz) with a manual selection should persist.
+    expect(timezoneToPersist('America/New_York', undefined)).toBe('America/New_York');
+    // Auto with no stored tz persists the OS zone.
+    expect(timezoneToPersist(AUTO_TIMEZONE, undefined)).toBe(getOSTimezone());
   });
 });

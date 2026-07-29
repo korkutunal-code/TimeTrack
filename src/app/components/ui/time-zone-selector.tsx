@@ -13,14 +13,17 @@ interface TimeZoneSelectorProps {
 }
 
 /**
- * Display-only time zone selector for the header.
+ * Time zone selector for the header.
  *
  * - An "Auto" option sits at the top of the list and is the default. It tracks
  *   the OS/device timezone (re-resolved on each load), so traveling users who
  *   update their device clock see local time without re-selecting. Selecting
  *   any other option is treated as a manual override.
- * - Changing the value only affects how the date/time/zone label is displayed
- *   on screen; it does not touch backend data or calculations (AGENTS.md §2).
+ * - Changing the value persists the resolved IANA zone to the employee's
+ *   `users/{uid}.timezone` (via the parent handler in App.tsx), which drives
+ *   entry doc ids, the local-midnight split, week boundaries, and per-local-
+ *   date totals. In "Auto" mode the OS zone is synced on load when it differs
+ *   from the stored value.
  *
  * The collapsed trigger shows ONLY the UTC offset (e.g. "UTC-08:00") — or
  * "Auto" when auto is selected — to keep it narrow next to the avatar. The

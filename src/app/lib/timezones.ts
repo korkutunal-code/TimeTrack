@@ -1,11 +1,12 @@
-// Display-only timezone options for the header selector.
+// Timezone options + helpers for the header selector.
 //
-// IMPORTANT (AGENTS.md §2 Guardrails): This list and the `getDisplayClock`
-// helper are used PURELY for UI display (the live date/time/zone label shown
-// on the punch screen). They do NOT affect payroll math, storage, workDate,
-// segment timestamps, or any value sent to the backend — all of which remain
-// canonically in America/Los_Angeles. Selecting a zone here only changes what
-// the user *sees* on this screen.
+// The header TimeZoneSelector is the employee's control over their
+// `user.timezone` (persisted to Firestore via dbService.updateUser): selecting
+// a concrete zone writes that IANA id, and "Auto" follows the OS timezone
+// (synced on load). The stored `user.timezone` then drives entry doc ids,
+// the local-midnight split, week boundaries, and per-local-date totals
+// (.kilo/rules/timezone-enforcement.md). Admin payroll controls (Lock
+// Payroll Period, Exclude Records, OT buckets) remain in America/Los_Angeles.
 
 export interface TimeZoneOption {
   /** IANA timezone id used for Intl.DateTimeFormat formatting (handles DST). */
@@ -121,12 +122,35 @@ export function formatInstantHHMM(epochMs: number, timeZone: string): string {
 }
 
 /**
- * Compute the current date/time strings for DISPLAY ONLY in the given zone.
+ * Decide what concrete IANA zone (if any) should be persisted to the user
+ * profile based on the header selector's current value. Used by the timezone
+ * sync wiring (manual selection + auto-detection on load) so the employee's
+ * `user.timezone` — which drives entry doc ids, the local-midnight split,
+ * week boundaries, and per-local-date totals — stays in lockstep with their
+ * selector / device.
+ *
+ * - A concrete selection (e.g. "Europe/Istanbul") is persisted as-is.
+ * - The 'auto' sentinel resolves to the current OS timezone (re-read each
+ *   call, so it follows device TZ changes).
+ * - Returns `null` when the resolved zone already matches the stored value
+ *   (no Firestore write needed), or when the resolved zone is empty.
+ */
+export function timezoneToPersist(
+  selectorValue: string,
+  storedTimezone: string | undefined,
+): string | null {
+  const concrete = resolveDisplayTimezone(selectorValue);
+  if (!concrete) return null;
+  if (concrete === storedTimezone) return null;
+  return concrete;
+}
+
+/**
+ * Compute the current date/time strings for the given zone.
  * Accepts either the 'auto' sentinel (resolved to the OS TZ) or a concrete
  * IANA id. Reads the live instant (new Date()) and formats via
- * Intl.DateTimeFormat. Has no effect on stored data or calculations. Mirrors
- * the PT helpers' format (en-CA date, en-US 24h time) so the visual style
- * stays consistent.
+ * Intl.DateTimeFormat. Mirrors the PT helpers' format (en-CA date, en-US 24h
+ * time) so the visual style stays consistent.
  */
 export function getDisplayClock(timeZone: string): DisplayClock {
   const resolved = resolveDisplayTimezone(timeZone);
