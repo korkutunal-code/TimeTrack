@@ -49,6 +49,29 @@ const STATUS_OPTIONS = [
   { value: 'Inactive', label: 'Inactive' },
 ];
 
+/**
+ * Resolve a user's effective work-model label from a single canonical source.
+ *
+ * A user has two parallel work-model fields: the legacy `workModel` string
+ * ('On-site' / 'Remote') and the newer `workModelId` FK into the workModels
+ * collection. Different write paths update only one of them (the override
+ * modal writes `workModelId` only; the quick toggle writes `workModel` only),
+ * so they can drift. Both the filter and the display pill MUST read the same
+ * resolved label or they disagree — which manifested as a user whose model was
+ * changed via the override modal still appearing under their old model in the
+ * filter (the pill read the fresh `workModelId`; the filter read the stale
+ * `workModel` string).
+ *
+ * Precedence: `workModelId` lookup wins (it's the newer, authoritative FK);
+ * falls back to the legacy `workModel` string; then '' (so the filter's
+ * default-of-'On-site' / the pill's 'Select Model' each apply their own
+ * fallback downstream).
+ */
+function resolveWorkModelLabel(user: User, workModels: WorkModelDef[]): string {
+  const byId = user.workModelId ? workModels.find(m => m.id === user.workModelId) : undefined;
+  return byId?.name || user.workModel || '';
+}
+
 // Customizable columns in the Manage Users table. "User" is intentionally
 // excluded — it is always visible and has no explicit width so it auto-fills
 // all remaining horizontal space under `table-fixed`. Badge/action columns use
@@ -426,8 +449,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   };
 
   const renderWorkModelPill = (user: User) => {
-    const workModel = workModels.find(m => m.id === user.workModelId);
-    const label = workModel?.name || user.workModel || 'Select Model';
+    const label = resolveWorkModelLabel(user, workModels);
     const remote = label === 'Remote';
     const hasCustom = !!user.workModelOverride?.hasCustomRules;
     return (
@@ -672,7 +694,15 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   };
 
   const filteredUsers = allUsers.filter(user => {
-    const matchesWorkModel = selectedWorkModels.includes(user.workModel || 'On-site');
+    // Resolve the effective work model the SAME way renderWorkModelPill does
+    // (workModelId → workModels name lookup, falling back to the legacy
+    // workModel string). Previously the filter read only `user.workModel`,
+    // which the WorkModelOverrideModal never writes — so changing a user's
+    // model via that modal updated the pill but left the filter stale, and a
+    // user kept appearing under their old model. Reading one canonical label
+    // keeps the filter and the pill in sync regardless of which field changed.
+    const effectiveWorkModel = resolveWorkModelLabel(user, workModels) || 'On-site';
+    const matchesWorkModel = selectedWorkModels.includes(effectiveWorkModel);
     const matchesRole = selectedRoles.includes(user.role);
     const matchesStatus = selectedStatuses.includes(user.active ? 'Active' : 'Inactive');
     return matchesWorkModel && matchesRole && matchesStatus;
