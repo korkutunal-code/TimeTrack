@@ -74,9 +74,6 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
   const [tasks, setTasks] = useState<DragmeTask[]>([]);
   const [taskId, setTaskId] = useState<string>('');
 
-  // Shift safety / watchdog
-  const MAX_SHIFT_HOURS = 12;
-
   // Correction request modal state
   const [correctionModalOpen, setCorrectionModalOpen] = useState(false);
   const [correctionIssueType, setCorrectionIssueType] = useState('');
@@ -123,69 +120,6 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
       }
     })();
   }, []);
-
-  // Auto-close watchdog: if an open segment exceeds MAX_SHIFT_HOURS,
-  // trigger clock out automatically capped at clock-in + MAX_SHIFT_HOURS.
-  useEffect(() => {
-    if (!entry || entry.complete || !entry.clockInSystem) return;
-    const interval = setInterval(async () => {
-      if (!entry.clockInSystem) return;
-      const elapsedMs = Date.now() - entry.clockInSystem;
-      if (elapsedMs > MAX_SHIFT_HOURS * 60 * 60 * 1000 && !entry.clockOutManual) {
-        const capMs = entry.clockInSystem + MAX_SHIFT_HOURS * 60 * 60 * 1000;
-        // S7: format the cap instant in canonical America/Los_Angeles (not
-        // runtime-local getHours()) so the stored clockOutManual matches the
-        // PT wall-clock — AGENTS.md §2. Previously used new Date(capMs).getHours()
-        // which on a UTC server wrote a PT time off by up to 8 hours.
-        const cappedTime = new Intl.DateTimeFormat('en-US', {
-          timeZone: 'America/Los_Angeles',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-        }).format(new Date(capMs));
-        // S7: dual-write the closed segment + totalWorkMinutes alongside the
-        // root fields so the doc is never left divergent (root clockOut set,
-        // segments[] stale / absent). Uses the canonical closeActiveSegment
-        // math (S6 wrap + lunch deduction). 'append' preserves any prior
-        // archived split-shift segments.
-        const closePatch = buildConsistentClosePatch({
-          clockIn: entry.clockInManual || '00:00',
-          clockOut: cappedTime,
-          skipLunch: !!entry.skipLunch,
-          lunchOut: entry.skipLunch ? undefined : (entry.lunchOutManual || undefined),
-          lunchIn: entry.skipLunch ? undefined : (entry.lunchInManual || undefined),
-          clockOutSystem: capMs,
-          clockInSystem: entry.clockInSystem,
-          existingSegments: entry.segments,
-          mode: 'append',
-        });
-        const now = Timestamp.now();
-        try {
-          await updateDoc(doc(db, 'timeEntries', `${user.uid}_${today}`), {
-            clockOutManual: cappedTime,
-            clockOutSubmitted: true,
-            clockOutSystemTime: now,
-            clockOutSystem: capMs,
-            complete: true,
-            dayComplete: true,
-            currentStep: 4,
-            completedAt: now,
-            segments: closePatch.segments,
-            totalWorkMinutes: closePatch.totalWorkMinutes,
-            autoClosed: true,
-            updatedAt: now,
-            updatedBy: user.uid,
-          });
-          toast.warning(`Shift auto-closed after ${MAX_SHIFT_HOURS}h`);
-          await initLoad();
-        } catch {
-          // silent retry on next tick
-        }
-      }
-    }, 60_000);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entry?.clockInSystem, entry?.complete, entry?.clockOutManual]);
 
   async function initLoad() {
     setLoading(true);
