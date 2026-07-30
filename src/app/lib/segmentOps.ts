@@ -147,12 +147,51 @@ export function computeSegmentWorkMinutes(
 }
 
 /**
+ * Fresh duration for a COMPLETE segment from its (corrected) timestamps, used by
+ * the write-side `recalculateEntryTotals`.
+ *
+ * Prefers the system span (clockInSystem→clockOutSystem): after an edit the
+ * `*System` epochs were just derived from the manual times by
+ * `recomputeSegmentSystemTimestamps`, so the span IS the intended duration
+ * (including a ≤1-minute clock-in/out edit that the stored value would wrongly
+ * absorb via the hybrid's 1-min tolerance). For unedited segments it's the true
+ * punch span, which keeps split-boundary second precision (23:32:00→23:59:59 = 28
+ * min, matching the stored value).
+ *
+ * Unlike the read-side `computeSegmentWorkMinutes`, this NEVER returns a stale
+ * stored `workMinutes` that predates an edit. Falls back to the manual heuristic
+ * when there are no usable system timestamps, then the stored value.
+ */
+function computeFreshClosedSegmentMinutes(seg: TimeSegment): number {
+  const skipLunch = seg.skipLunch === true;
+  const inSys = typeof seg.clockInSystem === 'number' ? seg.clockInSystem : undefined;
+  const outSys = typeof seg.clockOutSystem === 'number' ? seg.clockOutSystem : undefined;
+  if (inSys !== undefined && outSys !== undefined && outSys >= inSys) {
+    const grossMin = Math.round((outSys - inSys) / (1000 * 60));
+    let lunch = 0;
+    if (!skipLunch) {
+      lunch = lunchMinutesFromSystem(seg);
+      if (lunch === 0 && (seg.lunchOutManual || seg.lunchInManual)) {
+        const inM = timeToMinutes(seg.clockInManual);
+        if (!Number.isNaN(inM)) lunch = lunchMinutesFromManual(seg, inM);
+      }
+    }
+    return Math.max(0, grossMin - lunch);
+  }
+  // No usable system span: manual heuristic (single-day wrap + lunch), else the
+  // stored value (cleared here so the hybrid skips its "keep stored" tier).
+  return computeSegmentWorkMinutes({ ...seg, workMinutes: undefined });
+}
+
+/**
  * Canonical WRITE-side entry-totals recalculation (SSOT). Given a doc's
- * segments (with manual punch fields already updated by an edit), recompute
- * each complete segment's `workMinutes` via `computeSegmentWorkMinutes` (hybrid)
- * and derive the day `totalWorkMinutes` / `totalHours` — the values to persist
- * atomically alongside the edited segments so stored fields never lag the
- * manual punch times.
+ * segments (with manual punch fields already updated by an edit AND their
+ * `*System` epochs refreshed by `recomputeSegmentSystemTimestamps`), recompute
+ * each complete segment's `workMinutes` from the corrected timestamps and derive
+ * the day `totalWorkMinutes` / `totalHours` — the values to persist atomically
+ * alongside the edited segments so stored fields never lag the manual punch
+ * times. Recomputes fresh from the timestamps (never keeps a stale stored value),
+ * so even a 1-minute edit propagates to the total.
  *
  * Open segments (no clock-out) keep their stored/undefined workMinutes; their
  * live minutes are computed separately at read time.
@@ -163,7 +202,7 @@ export function recalculateEntryTotals(segments: TimeSegment[]): {
   totalHours: number;
 } {
   const recomputed = segments.map((s) =>
-    s.complete && s.clockOutManual ? { ...s, workMinutes: computeSegmentWorkMinutes(s) } : s,
+    s.complete && s.clockOutManual ? { ...s, workMinutes: computeFreshClosedSegmentMinutes(s) } : s,
   );
   const totalWorkMinutes = recomputed.reduce(
     (sum, s) => sum + (s.complete ? s.workMinutes || 0 : 0),

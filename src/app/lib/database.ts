@@ -3,7 +3,7 @@ import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { db } from './firebase';
 import type { User } from './auth';
 import { stripUndefined, buildConsistentClosePatch, closeActiveSegment, computeSegmentWorkMinutes, recalculateEntryTotals, recomputeSegmentSystemTimestamps, fieldToSystemField } from './segmentOps';
-import { deriveSegmentWorkMinutes, epochFromLocalWallTime } from '../../utils/timeCalculations';
+import { deriveSegmentWorkMinutes, epochFromLocalWallTime, getEmployeeTimezone } from '../../utils/timeCalculations';
 import { auditLogService } from '../../services/auditLogService';
 import { fetchGlobalSettings } from '../../services/systemSettingsService';
 
@@ -1405,65 +1405,63 @@ class DatabaseService {
     const before = mapEntry(entryId, beforeSnap.data());
     const beforeFieldVal = before[field] ?? null;
 
-    // 5) Build the after view + dual-write segments via S7 helper.
+    // 5) Locate the target shift and apply the correction IN-PLACE. A correction
+    // request updates an EXISTING shift's boundary — it must never append a new
+    // segment or split the shift. (The previous buildConsistentClosePatch('append')
+    // approach created a duplicate "Shift 2" and stamped cross-midnight epochs
+    // that inflated its Payroll duration.)
     const after: TimeEntry = { ...before, [field]: value };
-    let segments = before.segments ? before.segments.map((s) => ({ ...s })) : [];
     const hasClockOut = !!after.clockOutManual;
 
-    // Recompute the corrected boundary's *System epoch from the approved manual
-    // time (the SSOT for instants) instead of leaving it stale (or stamping
-    // "now"). Displays (Payroll rows, Team view) prefer *System, so an approved
-    // correction must persist the corrected instant — not the old punch or the
-    // approval moment. Requires the employee's tz + entry date to interpret
-    // HH:MM; cross-midnight aware (wrap relative to the shift's clockIn).
+    // Resolve the employee's canonical timezone (user.timezone, OS fallback) so
+    // the requested HH:MM is interpreted in the correct local zone.
     const empUserSnap = await getDoc(doc(db, 'users', request.employee_id));
-    const empTz = empUserSnap.exists() ? (empUserSnap.data().timezone as string | undefined) : undefined;
-    const anchorDate = before.date ?? before.workDate;
+    const empTz = getEmployeeTimezone(empUserSnap.exists() ? (empUserSnap.data().timezone as string | undefined) : undefined);
 
-    // The recomputed closed/active segment (with all four *System boundaries
-    // refreshed from the corrected manual times). Matches the direct Admin/Team
-    // correction flows. Only computed when the employee's tz is known.
-    let sysSeg: TimeSegment | null = null;
+    const persistedSegs = before.segments ? before.segments.map((s) => ({ ...s })) : [];
+    const currentSeg = before.currentSegment ?? null;
 
-    if (hasClockOut && after.clockInManual) {
-      const closePatch = buildConsistentClosePatch({
-        clockIn: after.clockInManual,
-        clockOut: after.clockOutManual,
-        skipLunch: !!after.skipLunch,
-        lunchOut: after.skipLunch ? undefined : (after.lunchOutManual || undefined),
-        lunchIn: after.skipLunch ? undefined : (after.lunchInManual || undefined),
-        clockOutSystem: before.clockOutSystem ?? Date.now(),
-        clockInSystem: before.clockInSystem,
-        existingSegments: segments,
-        // 'append' preserves prior archived split-shift segments. 'replace'
-        // would collapse them, destroying other shifts' segments + totals.
-        mode: 'append',
-      });
-      // buildConsistentClosePatch only stamps clockOutSystem (with the stale
-      // before value for non-clockOut edits) and never sets clockIn/lunch
-      // *System. Recompute ALL four boundaries of the closed segment from the
-      // corrected manual times so Payroll rows / Team view show the corrected
-      // instants instead of inherited stale values.
-      sysSeg = empTz
-        ? recomputeSegmentSystemTimestamps(closePatch.closedSegment, anchorDate, empTz)
-        : null;
-      const finalClosed = sysSeg ?? closePatch.closedSegment;
-      segments = closePatch.segments.map((s) =>
-        (s.id === closePatch.closedSegment.id ? (stripUndefined(finalClosed) as TimeSegment) : s),
-      );
-      after.totalWorkMinutes = closePatch.totalWorkMinutes;
-      after.totalHours = closePatch.totalWorkMinutes / 60;
+    // Target the shift the root legacy fields mirror (the current / most-recent
+    // shift). Prefer the persisted segment whose clockIn matches the root
+    // clockIn (same shift, dual-write); fall back to the last persisted
+    // segment; else the synthesized current view (legacy doc with no segments).
+    let targetIdx = before.clockInManual
+      ? persistedSegs.findIndex((s) => s.clockInManual === before.clockInManual)
+      : -1;
+    if (targetIdx < 0 && persistedSegs.length > 0) targetIdx = persistedSegs.length - 1;
+    const targetBase = targetIdx >= 0 ? persistedSegs[targetIdx] : currentSeg;
+    if (!targetBase) throw new Error('No shift found to correct on this entry.');
+    const anchorDate = targetBase.localDate ?? before.date ?? before.workDate;
+
+    // Apply the single-field correction IN-PLACE and recompute ALL four *System
+    // epochs from the corrected manual times on the shift's local calendar date
+    // (cross-midnight wrap-aware: an evening time like 16:00 stays on the same
+    // date — no next-day epoch rollover). This keeps Payroll rows / Team view
+    // (which prefer *System) in lock-step with the corrected manual times.
+    let segments: TimeSegment[];
+    let editedSeg: TimeSegment;
+    if (targetIdx >= 0) {
+      editedSeg = recomputeSegmentSystemTimestamps({ ...persistedSegs[targetIdx], [field]: value }, anchorDate, empTz);
+      segments = persistedSegs.map((s, i) => (i === targetIdx ? editedSeg : s));
     } else {
-      const activeIdx = segments.findIndex((s) => !s.complete);
-      if (activeIdx >= 0) {
-        // Recompute the open segment's *System boundaries from the corrected
-        // manual times (only boundaries with a manual value are recomputed).
-        sysSeg = empTz
-          ? recomputeSegmentSystemTimestamps({ ...segments[activeIdx], [field]: value }, anchorDate, empTz)
-          : null;
-        segments[activeIdx] = sysSeg ?? { ...segments[activeIdx], [field]: value };
-      }
+      // Legacy doc (no persisted segments[]): persist the corrected current view
+      // as the single (first) segment — not a duplicate.
+      editedSeg = recomputeSegmentSystemTimestamps(
+        { ...currentSeg, id: `seg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`, [field]: value },
+        anchorDate,
+        empTz,
+      );
+      segments = [editedSeg];
     }
+
+    // SSOT: recompute every complete segment's workMinutes + the day totals from
+    // the corrected timestamps, so stored totalWorkMinutes/totalHours exactly
+    // match the edited span (e.g. 16:00→16:45 = 45 min = 0.75 h, no drift).
+    const recalc = recalculateEntryTotals(segments);
+    segments = recalc.segments;
+    after.totalWorkMinutes = recalc.totalWorkMinutes;
+    after.totalHours = recalc.totalHours;
+    const sysSeg = recalc.segments.find((s) => s.id === editedSeg.id) ?? editedSeg;
 
     // 6) Audit FIRST (mandatory, non-bypassable). Admin action.
     await auditLogService.logTimeCorrection({

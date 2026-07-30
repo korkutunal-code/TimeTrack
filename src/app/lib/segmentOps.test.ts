@@ -185,4 +185,49 @@ describe('recomputeSegmentSystemTimestamps — edit *System sync (SSOT)', () => 
     expect(recomputeSegmentSystemTimestamps(seg, undefined, 'UTC')).toBe(seg);
     expect(recomputeSegmentSystemTimestamps(seg, '2026-07-30', undefined)).toBe(seg);
   });
+
+  // Regression for the resolveCorrectionRequest bug: approving a Clock In
+  // correction (16:01 → 16:00) previously stamped cross-midnight / wrong-date
+  // epochs on a duplicate segment, inflating its Payroll duration to 14+ hours
+  // while the manual read 16:01–16:45. With the in-place edit + recompute +
+  // recalculateEntryTotals, the shift stays on one date with the exact span.
+  it('correcting clockIn 16:01→16:00 keeps the shift on one date with exact duration (no inflation)', () => {
+    const tz = 'America/Los_Angeles';
+    // Shift originally 16:01–16:45 on 2026-07-29; the correction sets clockIn to
+    // 16:00 (manual updated, system epochs still the stale originals).
+    const seg: TimeSegment = {
+      id: 's1',
+      clockInManual: '16:00', clockOutManual: '16:45',
+      clockInSystem: Date.UTC(2026, 6, 29, 23, 1, 0),  // stale original 16:01 PDT
+      clockOutSystem: Date.UTC(2026, 6, 29, 23, 45, 0), // stale original 16:45 PDT
+      workMinutes: 44,
+      complete: true,
+    };
+    const recomputed = recomputeSegmentSystemTimestamps(seg, '2026-07-29', tz);
+    const { segments, totalWorkMinutes, totalHours } = recalculateEntryTotals([recomputed]);
+    // Duration is exactly 45 min (16:00→16:45 = 0.75 h) — not 44 (stale), not
+    // 14+ hours (epoch drift).
+    expect(totalWorkMinutes).toBe(45);
+    expect(totalHours).toBeCloseTo(0.75, 5);
+    // The *System epochs stay on the same calendar date — a 45-minute span, no
+    // next-day rollover from the evening times.
+    expect(segments[0].clockOutSystem! - segments[0].clockInSystem!).toBe(45 * 60 * 1000);
+    expect(hhmmInZone(segments[0].clockInSystem!, tz)).toBe('16:00');
+    expect(hhmmInZone(segments[0].clockOutSystem!, tz)).toBe('16:45');
+  });
+
+  // Guard against the epoch-wrapping bug class: an evening clockOut (e.g. 16:45)
+  // must not roll into the next day's UTC date when the shift is same-day.
+  it('evening same-day times do not roll into the next UTC date', () => {
+    const tz = 'America/Los_Angeles';
+    const seg: TimeSegment = {
+      id: 's1', clockInManual: '16:00', clockOutManual: '16:45', complete: true,
+    };
+    const out = recomputeSegmentSystemTimestamps(seg, '2026-07-29', tz);
+    // 16:00 PDT = 23:00 UTC same day; 16:45 PDT = 23:45 UTC same day (PDT is UTC-7
+    // in July, so local evening times map to the SAME UTC date, not the next).
+    expect(out.clockOutSystem! - out.clockInSystem!).toBe(45 * 60 * 1000);
+    expect(new Date(out.clockInSystem!).getUTCDate()).toBe(29);
+    expect(new Date(out.clockOutSystem!).getUTCDate()).toBe(29);
+  });
 });
