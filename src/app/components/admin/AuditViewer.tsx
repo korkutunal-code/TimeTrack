@@ -124,9 +124,15 @@ export function AuditViewer({ allUsers, timeViewMode = 'local' }: AuditViewerPro
         };
       });
 
-      const filtered = suspiciousOnly
+      const filtered = (suspiciousOnly
         ? auditResults.filter(r => r.flags.length > 0)
-        : auditResults;
+        : auditResults
+        // Re-sort newest-first after the cross-midnight explosion. The
+        // explosion returns a split doc's parts in ASCENDING localDate order
+        // (Day 1 then Day 2), which left the earlier date above the later date
+        // (07/29 above 07/30). Sort by date descending so the later day-portion
+        // lands above the earlier, matching HistoryView / Team.
+      ).sort((a, b) => b.entry.date.localeCompare(a.entry.date));
 
       setResults(filtered);
       toast.success(`Found ${filtered.length} entries`);

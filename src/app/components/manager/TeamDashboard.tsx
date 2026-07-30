@@ -123,6 +123,13 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
       filtered = filtered.filter(e => e.flags && e.flags.length > 0);
     }
 
+    // Re-sort newest-first after the cross-midnight explosion. The explosion
+    // returns a split doc's parts in ASCENDING localDate order (Day 1 then
+    // Day 2), which left the earlier date above the later date (07/29 above
+    // 07/30). Matching HistoryView / shiftRows, sort by date descending so the
+    // later day-portion (and any same-date real docs) land above the earlier.
+    filtered.sort((a, b) => b.date.localeCompare(a.date));
+
     return filtered;
   }, [entries, selectedUserId, startDate, endDate, status, allUsers, exclusionCutoff]);
 
