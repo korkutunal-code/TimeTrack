@@ -235,6 +235,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
           segmentId: editing.segmentId,
           clockOut: editValue.trim(),
           reason: editReason.trim(),
+          timezone: employeeTz,
         });
         toast.success('Shift closed successfully.');
       } else if (editing.mode === 'endLunch') {
@@ -248,6 +249,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
           segmentId: editing.segmentId,
           lunchIn: editValue.trim(),
           reason: editReason.trim(),
+          timezone: employeeTz,
         });
         toast.success('Lunch ended successfully.');
       } else {
@@ -260,6 +262,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
           field: editing.field,
           value: editValue.trim(),
           reason: editReason.trim(),
+          timezone: employeeTz,
         });
         toast.success('Time updated.');
       }

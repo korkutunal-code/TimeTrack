@@ -14,6 +14,7 @@ import {
   closeActiveSegment,
   applyLunchToSegment,
   stripUndefined,
+  computeSegmentWorkMinutes,
 } from '../app/lib/database';
 import {
   getCurrentPTDate,
@@ -529,7 +530,10 @@ export async function getPunchStatus(userId: string, timezone?: string): Promise
   if (entry?.segments?.length) {
     for (const s of entry.segments) {
       if (s.complete) {
-        workMinutes += s.workMinutes || 0;
+        // SSOT: recompute via computeSegmentWorkMinutes (hybrid) so an edited
+        // shift's total reflects the manual punch times, not stale stored
+        // workMinutes / system timestamps.
+        workMinutes += computeSegmentWorkMinutes(s);
         if (s.lunchOutManual && s.lunchInManual && !s.skipLunch) {
           const lo = timeStringToMinutes(s.lunchOutManual);
           const li = timeStringToMinutes(s.lunchInManual);

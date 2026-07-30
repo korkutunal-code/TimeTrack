@@ -438,7 +438,9 @@ import {
     getLocalTimeHHMM,
     getTimezoneAbbreviation,
     formatInstantLocalHHMMAbbr,
+    epochFromLocalWallTime,
 } from './timeCalculations';
+import { hhmmInZone } from './timeView';
 
 describe('employee-local timezone helpers', () => {
     describe('getEmployeeTimezone', () => {
@@ -482,6 +484,42 @@ describe('employee-local timezone helpers', () => {
             expect(out).toContain('11:32');
             expect(out).toContain('UTC+3');
             expect(out).not.toContain('GMT');
+        });
+    });
+
+    describe('epochFromLocalWallTime — manual edit *System recompute', () => {
+        it('converts a PDT wall time to the correct epoch (UTC-7 in July)', () => {
+            // 2026-07-30 09:00 PDT = 16:00 UTC
+            const ms = epochFromLocalWallTime('09:00', '2026-07-30', 'America/Los_Angeles');
+            expect(ms).toBe(Date.UTC(2026, 6, 30, 16, 0, 0));
+            // round-trip: format back to PDT HH:MM
+            expect(hhmmInZone(ms!, 'America/Los_Angeles')).toBe('09:00');
+        });
+
+        it('converts an IST wall time (UTC+5:30)', () => {
+            // 2026-07-30 09:00 IST = 03:30 UTC
+            const ms = epochFromLocalWallTime('09:00', '2026-07-30', 'Asia/Kolkata');
+            expect(ms).toBe(Date.UTC(2026, 6, 30, 3, 30, 0));
+        });
+
+        it('treats a punch earlier than clockIn as the next calendar day (cross-midnight)', () => {
+            // clockIn 23:00, clockOut 02:00 -> clockOut is on 2026-07-31 02:00 PDT
+            const ms = epochFromLocalWallTime('02:00', '2026-07-30', 'America/Los_Angeles', '23:00');
+            expect(ms).toBe(Date.UTC(2026, 6, 31, 9, 0, 0)); // 07-31 02:00 PDT = 09:00 UTC
+        });
+
+        it('keeps a same-day punch on the anchor date (no false wrap)', () => {
+            const ms = epochFromLocalWallTime('17:00', '2026-07-30', 'America/Los_Angeles', '09:00');
+            expect(ms).toBe(Date.UTC(2026, 6, 31, 0, 0, 0)); // 07-30 17:00 PDT = 00:00 UTC 07-31
+        });
+
+        it('returns undefined when the manual string or date is absent', () => {
+            expect(epochFromLocalWallTime(undefined, '2026-07-30', 'UTC')).toBeUndefined();
+            expect(epochFromLocalWallTime('09:00', undefined, 'UTC')).toBeUndefined();
+        });
+
+        it('returns undefined for a malformed HH:MM', () => {
+            expect(epochFromLocalWallTime('not-a-time', '2026-07-30', 'UTC')).toBeUndefined();
         });
     });
 });

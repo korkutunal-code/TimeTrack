@@ -12,6 +12,7 @@
  */
 
 import type { TimeEntry, TimeSegment } from './database';
+import { epochFromLocalWallTime } from '../../utils/timeCalculations';
 
 /**
  * Strip undefined values from an object. Firestore rejects any field with
@@ -66,23 +67,27 @@ function lunchMinutesFromManual(seg: TimeSegment, inM: number): number {
 }
 
 /**
- * Compute worked minutes for a (closed) segment from its timestamps.
+ * Compute worked minutes for a (closed) segment — the single canonical
+ * segment-minutes source of truth (SSOT) for both write-side recalculation and
+ * read-side reports.
  *
- * Primary source: the `clockInSystem` / `clockOutSystem` epoch-ms fields, which
- * capture the true wall-clock span and correctly handle multi-day shifts (a
- * 48-72h span, a forgotten clock-out closed days later, etc.). The legacy
- * "HH:MM" manual-string heuristic capped at a single +1440 wrap and silently
- * under-reported any shift longer than 24h.
+ * Resolution order (never measures raw un-updated system timestamps alone):
+ * 1. Stored `workMinutes` when it AGREES with the manual signal (within 1 min).
+ *    This absorbs the second-truncation at split boundaries (a 23:59:59 close
+ *    stored as '23:59') and preserves the accurate system-derived value for
+ *    fresh closes / split parts.
+ * 2. Manual-derived minutes (clockInManual→clockOutManual, single-day
+ *    cross-midnight wrap aware, manual lunch) when stored is ABSENT or has
+ *    DIVERGED. A manual edit updates ONLY the *Manual strings — the stored
+ *    workMinutes and the system timestamps go stale — so a divergent stored
+ *    value means "this segment was edited; trust the manual times."
+ * 3. System-timestamp span (clockInSystem→clockOutSystem) when the manual punch
+ *    times are absent (legacy/manual-less rows).
+ * 4. Stored value as a last resort.
  *
- * Lunch is subtracted from the gross system span: system lunch timestamps when
- * present, otherwise the manual lunch times (single-day heuristic).
- *
- * For manual-only segments (no system timestamps) the single-day wrap is the
- * best achievable without a calendar date — multi-day spans cannot be detected
- * from "HH:MM" strings alone, and the stored workMinutes is the final fallback.
- *
- * Used by closeActiveSegment (on close) and by report-time normalization of
- * already-persisted segments whose stored workMinutes may predate this fix.
+ * Used by closeActiveSegment (on close), buildConsistentClosePatch, the
+ * direct-edit write paths, mapEntry's day-total, and report-time
+ * normalization — so an edit propagates identically to every view.
  *
  * @param seg                  the segment (complete or about to be closed)
  * @param clockOutSystemOverride  when closing, the fresh clock-out epoch-ms not yet on seg
@@ -92,11 +97,39 @@ export function computeSegmentWorkMinutes(
   clockOutSystemOverride?: number,
 ): number {
   const skipLunch = seg.skipLunch === true;
+  const inManual = seg.clockInManual;
+  const outManual = seg.clockOutManual;
   const inSys = typeof seg.clockInSystem === 'number' ? seg.clockInSystem : undefined;
   const outSys = typeof clockOutSystemOverride === 'number'
     ? clockOutSystemOverride
     : (typeof seg.clockOutSystem === 'number' ? seg.clockOutSystem : undefined);
 
+  // Manual-derived minutes (the employee/admin-intended span). After a manual
+  // edit only the *Manual strings change, so this is the signal that reveals
+  // whether the stored workMinutes is still valid.
+  let manualMins: number | undefined;
+  if (inManual && outManual) {
+    const inM = timeToMinutes(inManual);
+    const outM = timeToMinutes(outManual);
+    if (!Number.isNaN(inM) && !Number.isNaN(outM)) {
+      const effOut = outM < inM ? outM + 24 * 60 : outM;
+      let work = Math.max(0, effOut - inM);
+      if (!skipLunch && seg.lunchOutManual && seg.lunchInManual) {
+        work = Math.max(0, work - lunchMinutesFromManual(seg, inM));
+      }
+      manualMins = work;
+    }
+  }
+
+  const stored = typeof seg.workMinutes === 'number' ? seg.workMinutes : undefined;
+
+  // 1) Stored when consistent with the manual signal (accurate + unedited).
+  if (stored !== undefined && manualMins !== undefined && Math.abs(stored - manualMins) <= 1) {
+    return stored;
+  }
+  // 2) Manual-derived when stored is absent or has diverged (edited shift).
+  if (manualMins !== undefined) return manualMins;
+  // 3) System-timestamp span when manual punch times are absent.
   if (inSys !== undefined && outSys !== undefined && outSys >= inSys) {
     const grossMin = Math.round((outSys - inSys) / (1000 * 60));
     let lunch = 0;
@@ -109,15 +142,34 @@ export function computeSegmentWorkMinutes(
     }
     return Math.max(0, grossMin - lunch);
   }
+  // 4) Stored value as a last resort.
+  return stored ?? 0;
+}
 
-  // Manual-only fallback: single-day wrap heuristic (legacy behavior).
-  const inM = timeToMinutes(seg.clockInManual || '00:00');
-  const outM = timeToMinutes(seg.clockOutManual || '');
-  if (Number.isNaN(inM) || Number.isNaN(outM)) return seg.workMinutes ?? 0;
-  const effOutM = outM < inM ? outM + 24 * 60 : outM;
-  let workMin = Math.max(0, effOutM - inM);
-  if (!skipLunch) workMin = Math.max(0, workMin - lunchMinutesFromManual(seg, inM));
-  return workMin;
+/**
+ * Canonical WRITE-side entry-totals recalculation (SSOT). Given a doc's
+ * segments (with manual punch fields already updated by an edit), recompute
+ * each complete segment's `workMinutes` via `computeSegmentWorkMinutes` (hybrid)
+ * and derive the day `totalWorkMinutes` / `totalHours` — the values to persist
+ * atomically alongside the edited segments so stored fields never lag the
+ * manual punch times.
+ *
+ * Open segments (no clock-out) keep their stored/undefined workMinutes; their
+ * live minutes are computed separately at read time.
+ */
+export function recalculateEntryTotals(segments: TimeSegment[]): {
+  segments: TimeSegment[];
+  totalWorkMinutes: number;
+  totalHours: number;
+} {
+  const recomputed = segments.map((s) =>
+    s.complete && s.clockOutManual ? { ...s, workMinutes: computeSegmentWorkMinutes(s) } : s,
+  );
+  const totalWorkMinutes = recomputed.reduce(
+    (sum, s) => sum + (s.complete ? s.workMinutes || 0 : 0),
+    0,
+  );
+  return { segments: recomputed, totalWorkMinutes, totalHours: totalWorkMinutes / 60 };
 }
 
 /** Close an open segment with clock-out + compute its workMinutes (lunch-aware). */
@@ -125,7 +177,7 @@ export function closeActiveSegment(
   seg: TimeSegment,
   clockOutManual: string,
   clockOutSystem: number,
-  skipLunch = false
+  skipLunch = false,
 ): TimeSegment {
   if (seg.complete) return seg; // idempotent
 
@@ -286,4 +338,69 @@ export function buildConsistentClosePatch(args: {
     archived.reduce((sum, s) => sum + (s.workMinutes || 0), 0) + (closedSeg.workMinutes || 0);
 
   return { segments, totalWorkMinutes, closedSegment: closedSeg };
+}
+
+/**
+ * Map a `*Manual` field name to its `*System` epoch counterpart.
+ * Returns undefined for unknown fields.
+ */
+export function fieldToSystemField(
+  field: 'clockInManual' | 'lunchOutManual' | 'lunchInManual' | 'clockOutManual',
+): 'clockInSystem' | 'lunchOutSystem' | 'lunchInSystem' | 'clockOutSystem' | undefined {
+  switch (field) {
+    case 'clockInManual': return 'clockInSystem';
+    case 'lunchOutManual': return 'lunchOutSystem';
+    case 'lunchInManual': return 'lunchInSystem';
+    case 'clockOutManual': return 'clockOutSystem';
+    default: return undefined;
+  }
+}
+
+/**
+ * Recompute a segment's `*System` epoch timestamps from its `*Manual` strings,
+ * anchored to the segment's local calendar date in the employee's timezone.
+ *
+ * This keeps `*System` (the SSOT for instants) in sync with `*Manual` after a
+ * manual edit. Without it, displays that prefer `*System` (Payroll Report time
+ * rows, Team view) render the stale pre-edit instant while the recomputed
+ * totals render the edited value — the "totals correct, time rows wrong" split.
+ *
+ * All four boundaries are recomputed (not just the edited one) because editing
+ * clockIn can flip the cross-midnight wrap relationship for clockOut/lunch,
+ * which would otherwise leave those `*System` instants on the wrong day. Only
+ * fields that have a `*Manual` value are recomputed; absent boundaries keep
+ * their existing `*System` (or stay undefined).
+ *
+ * @param seg         the segment (manual fields already updated by the edit)
+ * @param anchorDate  the segment's local YYYY-MM-DD (seg.localDate or entry date)
+ * @param timezone    the employee's IANA zone (required to interpret HH:MM)
+ */
+export function recomputeSegmentSystemTimestamps(
+  seg: TimeSegment,
+  anchorDate: string | undefined,
+  timezone: string | undefined | null,
+): TimeSegment {
+  if (!anchorDate || !timezone) return seg;
+  const clockIn = seg.clockInManual;
+  const out: TimeSegment = { ...seg };
+
+  // clockIn is the anchor — on its own date, no wrap.
+  if (clockIn) {
+    const ms = epochFromLocalWallTime(clockIn, anchorDate, timezone);
+    if (typeof ms === 'number') out.clockInSystem = ms;
+  }
+  // lunch/clock-out are wrap-aware relative to the segment's clockIn.
+  if (seg.lunchOutManual) {
+    const ms = epochFromLocalWallTime(seg.lunchOutManual, anchorDate, timezone, clockIn);
+    if (typeof ms === 'number') out.lunchOutSystem = ms;
+  }
+  if (seg.lunchInManual) {
+    const ms = epochFromLocalWallTime(seg.lunchInManual, anchorDate, timezone, clockIn);
+    if (typeof ms === 'number') out.lunchInSystem = ms;
+  }
+  if (seg.clockOutManual) {
+    const ms = epochFromLocalWallTime(seg.clockOutManual, anchorDate, timezone, clockIn);
+    if (typeof ms === 'number') out.clockOutSystem = ms;
+  }
+  return out;
 }

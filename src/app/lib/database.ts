@@ -2,8 +2,8 @@ import { collection, doc, getDoc, getDocs, orderBy, query, Timestamp, updateDoc,
 import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { db } from './firebase';
 import type { User } from './auth';
-import { stripUndefined, buildConsistentClosePatch, closeActiveSegment } from './segmentOps';
-import { deriveSegmentWorkMinutes } from '../../utils/timeCalculations';
+import { stripUndefined, buildConsistentClosePatch, closeActiveSegment, computeSegmentWorkMinutes, recalculateEntryTotals, recomputeSegmentSystemTimestamps, fieldToSystemField } from './segmentOps';
+import { deriveSegmentWorkMinutes, epochFromLocalWallTime } from '../../utils/timeCalculations';
 import { auditLogService } from '../../services/auditLogService';
 import { fetchGlobalSettings } from '../../services/systemSettingsService';
 
@@ -185,16 +185,16 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
     userId: String(data.userId || ''),
     date,
     clockInManual: data.clockInManual || undefined,
-    clockInSystem: tsToMillis(data.clockInSystemTime),
+    clockInSystem: tsToMillis(data.clockInSystemTime ?? data.clockInSystem),
     lunchOutManual: data.lunchOutManual || undefined,
-    lunchOutSystem: tsToMillis(data.lunchOutSystemTime),
+    lunchOutSystem: tsToMillis(data.lunchOutSystemTime ?? data.lunchOutSystem),
     lunchInManual: data.lunchInManual || undefined,
-    lunchInSystem: tsToMillis(data.lunchInSystemTime),
+    lunchInSystem: tsToMillis(data.lunchInSystemTime ?? data.lunchInSystem),
     clockOutManual: data.clockOutManual || undefined,
     lunch_reminder_sent_at: data.lunch_reminder_sent_at || null,
     clockout_reminder_sent_at: data.clockout_reminder_sent_at || null,
     longshift_reminder_sent_at: data.longshift_reminder_sent_at || null,
-    clockOutSystem: tsToMillis(data.clockOutSystemTime),
+    clockOutSystem: tsToMillis(data.clockOutSystemTime ?? data.clockOutSystem),
     skipLunch,
     totalWorkMinutes: typeof data.totalWorkMinutes === 'number' ? data.totalWorkMinutes : undefined,
     regularMinutes: typeof data.regularMinutes === 'number' ? data.regularMinutes : undefined,
@@ -344,63 +344,15 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
   // Expose the current segment on the entry for UI consumers.
   entry.currentSegment = current;
 
-  // Override day-level hours to include all archived segments too.
-  if (archived.length > 0) {
-    const archivedMins = archived.reduce((s, x) => s + (x.workMinutes || 0), 0);
-    // The synthesized `current` (built from the top-level legacy fields) is a
-    // *view* of the most-recent shift. In the ClockPunch flow that shift is
-    // ALSO persisted as the last element of `archived` (dual-write), so adding
-    // `current.workMinutes` again double-counts it — a 37-minute single shift
-    // would render as "1:14" (74 min) in TodayEntry/HistoryView. In the
-    // TodayEntry flow, the current shift lives ONLY in top-level fields (not
-    // in segments[]) and must be added. Detect the dual-write case by checking
-    // whether any archived seg covers the same shift as `current`.
-    let currentMins = 0;
-    if (current) {
-      if (!current.complete) {
-        // Open shift — not yet in archived, so its (live) minutes count once.
-        currentMins = current.workMinutes ?? 0;
-      } else {
-        const coveredByArchived = archived.some(
-          (s) =>
-            s.clockInManual === current.clockInManual &&
-            s.clockOutManual === current.clockOutManual,
-        );
-        // Split-chain coverage: the synthesized `current` (from the top-level
-        // dual-written fields, e.g. 23:32→00:28) spans the exact range already
-        // covered by a chain of persisted split segments (first.clockIn ==
-        // current.clockIn AND last.clockOut == current.clockOut, e.g.
-        // 23:32→23:59 + 00:00→00:28 from the local-midnight split). The
-        // persisted parts already carry the minutes — adding `current` too
-        // would double-count the day total (56+56=112 for a 56-minute shift).
-        const coveredBySplitChain =
-          archived.length > 0 &&
-          archived[0].clockInManual === current.clockInManual &&
-          archived[archived.length - 1].clockOutManual === current.clockOutManual;
-        currentMins = coveredByArchived || coveredBySplitChain ? 0 : (current.workMinutes ?? 0);
-      }
-    }
-    entry.totalWorkMinutes = archivedMins + currentMins;
-    entry.totalHours = entry.totalWorkMinutes / 60;
-  }
-
-  // S2: Display-fallback for closed shifts missing stored totals. A complete
-  // entry with clock-in/out but no persisted totalWorkMinutes (legacy doc or
-  // dual-write gap) would otherwise render "Incomplete" in HistoryView's
-  // Total Hours cell. Derive from the manual fields so a valid closed shift
-  // always shows a real total. NOTE: this mirrors calculateTotalHours, which
-  // does not yet handle cross-midnight wraps — that is tracked separately
-  // (S6) and is not made worse here.
-  if (
-    entry.complete &&
-    entry.clockInManual &&
-    entry.clockOutManual &&
-    entry.totalWorkMinutes === undefined
-  ) {
-    const derivedMins = calculateTotalHours(entry) * 60;
-    entry.totalWorkMinutes = derivedMins;
-    entry.totalHours = derivedMins / 60;
-  }
+  // SSOT: derive the day total via the single canonical reader (getEntryTotals)
+  // so every view — History/Team/Audit (mapEntry) and Payroll (rebuild) — shows
+  // identical, edit-current totals. It recomputes each segment via the hybrid
+  // computeSegmentWorkMinutes (manual-primary when the stored value has
+  // diverged), so a within-24h manual edit propagates immediately instead of
+  // being shadowed by stale stored workMinutes / system timestamps.
+  const totals = getEntryTotals(entry);
+  entry.totalWorkMinutes = totals.totalWorkMinutes;
+  entry.totalHours = totals.totalHours;
 
   // Flags are not stored in Firestore by default; compute basic flags for UI
   entry.flags = calculateFlags(entry);
@@ -418,6 +370,10 @@ export {
   getActiveSegment,
   hasOpenSegment,
   buildConsistentClosePatch,
+  computeSegmentWorkMinutes,
+  recalculateEntryTotals,
+  recomputeSegmentSystemTimestamps,
+  fieldToSystemField,
 } from './segmentOps';
 
 function timeToMinutes(time: string): number {
@@ -443,6 +399,64 @@ export function calculateTotalHours(entry: Partial<TimeEntry>): number {
     totalMinutes -= Math.max(0, effLi - effLo);
   }
   return Math.max(0, totalMinutes / 60);
+}
+
+/**
+ * Canonical READ-side entry totals (SSOT). Derives `totalWorkMinutes` and
+ * `totalHours` strictly from the canonical segments[] / manual punch fields,
+ * recomputing each segment via `computeSegmentWorkMinutes` (hybrid: stored when
+ * consistent with the manual signal, else the manual punch times). It NEVER
+ * measures raw un-updated `clockInSystem`/`clockOutSystem` timestamps alone —
+ * those go stale after a manual edit, so the manual punch fields are the
+ * source of truth for whether the stored value is still valid.
+ *
+ * All views (History/Team/Audit via mapEntry, Payroll via rebuild, and the
+ * summary cards) consume this so an edit propagates identically everywhere.
+ *
+ * @param entry  a hydrated TimeEntry (segments + currentSegment set), or a
+ *               partial with top-level manual fields for the no-segments case.
+ */
+export function getEntryTotals(entry: Partial<TimeEntry>): { totalWorkMinutes: number; totalHours: number } {
+  const segs = entry.segments ?? [];
+  const current = entry.currentSegment ?? null;
+
+  // No persisted segments: keep the stored total, or derive from the top-level
+  // manual punch fields (wrap-aware) when it is missing.
+  if (segs.length === 0) {
+    if (entry.totalWorkMinutes !== undefined) {
+      return { totalWorkMinutes: entry.totalWorkMinutes, totalHours: entry.totalWorkMinutes / 60 };
+    }
+    if (entry.complete && entry.clockInManual && entry.clockOutManual) {
+      const mins = calculateTotalHours(entry) * 60;
+      return { totalWorkMinutes: mins, totalHours: mins / 60 };
+    }
+    return { totalWorkMinutes: 0, totalHours: 0 };
+  }
+
+  // Recompute each persisted segment via the hybrid SSOT segment function.
+  const archivedMins = segs.reduce((sum, s) => sum + computeSegmentWorkMinutes(s), 0);
+
+  // Synthesized current (from top-level) — add only when NOT already covered by
+  // a persisted segment (dual-write / split-chain dedup), else it double-counts.
+  let currentMins = 0;
+  if (current) {
+    if (current.complete) {
+      const coveredExact = segs.some(
+        (s) => s.clockInManual === current.clockInManual && s.clockOutManual === current.clockOutManual,
+      );
+      const coveredSplitChain =
+        segs[0].clockInManual === current.clockInManual &&
+        segs[segs.length - 1].clockOutManual === current.clockOutManual;
+      currentMins = coveredExact || coveredSplitChain ? 0 : current.workMinutes ?? 0;
+    } else {
+      // Open shift — live minutes (current.workMinutes is undefined for open,
+      // so this contributes 0 to the persisted day total until clock-out).
+      currentMins = current.workMinutes ?? 0;
+    }
+  }
+
+  const total = archivedMins + currentMins;
+  return { totalWorkMinutes: total, totalHours: total / 60 };
 }
 
 export function calculateFlags(entry: TimeEntry): string[] {
@@ -776,8 +790,16 @@ class DatabaseService {
     field: 'clockInManual' | 'lunchOutManual' | 'lunchInManual' | 'clockOutManual';
     value: string;
     reason: string;
+    /**
+     * The employee's IANA timezone. Required to recompute the `*System` epoch
+     * timestamps from the edited `*Manual` strings so the system instant (the
+     * SSOT for display) stays in sync with the manual edit. When omitted, the
+     * `*System` fields are left stale (pre-fix behaviour) — pass it from the
+     * caller (the employee owns the entry, so the caller's tz is correct).
+     */
+    timezone?: string;
   }): Promise<TimeEntry> {
-    const { userId, actorName, entryId, segmentId, field, value, reason } = args;
+    const { userId, actorName, entryId, segmentId, field, value, reason, timezone } = args;
     const trimmedReason = (reason || '').trim();
     if (!trimmedReason) throw new Error('A reason is required to adjust a time.');
 
@@ -806,24 +828,22 @@ class DatabaseService {
 
     const beforeFieldVal = targetSeg[field] ?? null;
 
-    // Build the edited segment.
-    const editedSeg: TimeSegment = { ...targetSeg, [field]: value };
+    // Anchor date for recomputing *System from the edited *Manual: prefer the
+    // segment's attributed local date (set by the midnight splitter for
+    // cross-midnight parts), else the entry's calendar date.
+    const anchorDate = targetSeg.localDate ?? before.date ?? before.workDate;
 
-    // If complete, recompute workMinutes (S6 cross-midnight-aware).
-    if (editedSeg.complete && editedSeg.clockOutManual) {
-      const openForRecompute: TimeSegment = {
-        ...editedSeg,
-        complete: false,
-        workMinutes: undefined,
-      };
-      const recomputed = closeActiveSegment(
-        openForRecompute,
-        editedSeg.clockOutManual,
-        editedSeg.clockOutSystem ?? 0,
-        editedSeg.skipLunch ?? false,
-      );
-      editedSeg.workMinutes = recomputed.workMinutes;
-    }
+    // Build the edited segment with the new manual value AND recomputed *System
+    // epoch timestamps. Displays (Payroll rows, Team view) prefer *System as the
+    // SSOT for instants, so leaving it stale after a manual edit made them show
+    // the pre-edit time while the recomputed totals showed the edited value.
+    // Recomputing all four boundaries (not just the edited one) handles the
+    // case where editing clockIn flips the cross-midnight wrap for clockOut.
+    const editedSeg = recomputeSegmentSystemTimestamps(
+      { ...targetSeg, [field]: value },
+      anchorDate,
+      timezone,
+    );
 
     // Rebuild the segments array — update the target in-place if persisted,
     // or update the matching open segment if the target was the synthesized current.
@@ -835,20 +855,20 @@ class DatabaseService {
       const openIdx = persistedSegs.findIndex((s) => !s.complete);
       if (openIdx >= 0) {
         newSegments = persistedSegs.map((s, i) =>
-          i === openIdx
-            ? { ...s, [field]: value, ...(editedSeg.complete ? { workMinutes: editedSeg.workMinutes } : {}) }
-            : s,
+          (i === openIdx ? recomputeSegmentSystemTimestamps({ ...s, [field]: value }, anchorDate, timezone) : s),
         );
       } else {
         newSegments = [...persistedSegs, editedSeg];
       }
     }
 
-    // Recompute day total from all complete segments.
-    const totalWorkMinutes = newSegments.reduce(
-      (sum, s) => sum + (s.complete ? s.workMinutes || 0 : 0),
-      0,
-    );
+    // SSOT: recompute every complete segment's workMinutes + the day
+    // totalWorkMinutes/totalHours via the single canonical writer, so the
+    // persisted top-level fields stay in lock-step with the edited manual
+    // punch times (no stale totalWorkMinutes/totalHours after an edit).
+    const recalc = recalculateEntryTotals(newSegments);
+    newSegments = recalc.segments;
+    const totalWorkMinutes = recalc.totalWorkMinutes;
 
     // Update top-level field if the target mirrors it (current segment or
     // last persisted segment whose clockIn matches the root).
@@ -862,12 +882,26 @@ class DatabaseService {
     const patch: Record<string, unknown> = {
       segments: newSegments.map((s) => stripUndefined(s)),
       totalWorkMinutes,
+      totalHours: recalc.totalHours,
       status: 'corrected',
       updatedAt: Timestamp.now(),
       updatedBy: userId,
     };
     if (updateTopLevel) {
       patch[field] = value;
+      // Sync the matching top-level *System epoch too, so root and segment
+      // stay in lock-step (the root *System is read by Team view / mapEntry).
+      // Write BOTH the millis and the Firestore Timestamp: mapEntry's top-level
+      // read prefers *SystemTime, so without it the stale pre-edit Timestamp
+      // would shadow the recomputed millis.
+      const sysField = fieldToSystemField(field);
+      if (sysField) {
+        const sysVal = editedSeg[sysField];
+        if (typeof sysVal === 'number') {
+          patch[sysField] = sysVal;
+          patch[`${sysField}Time`] = Timestamp.fromMillis(sysVal);
+        }
+      }
     }
 
     // 1) Audit FIRST (mandatory, non-bypassable).
@@ -907,8 +941,15 @@ class DatabaseService {
     segmentId: string;
     clockOut: string; // HH:MM
     reason: string;
+    /**
+     * The employee's IANA timezone. Used to derive the `clockOutSystem` epoch
+     * from the manually-entered `clockOut` HH:MM (the SSOT for instants) so a
+     * retroactive close shows the entered time, not "now". Falls back to the
+     * current instant when omitted (pre-fix behaviour).
+     */
+    timezone?: string;
   }): Promise<TimeEntry> {
-    const { userId, actorName, entryId, segmentId, clockOut, reason } = args;
+    const { userId, actorName, entryId, segmentId, clockOut, reason, timezone } = args;
     const trimmedReason = (reason || '').trim();
     if (!trimmedReason) throw new Error('A reason is required to close a shift.');
 
@@ -956,11 +997,21 @@ class DatabaseService {
     const beforeFieldVal = targetSeg.clockOutManual ?? null;
     const now = Timestamp.now();
 
+    // Derive the clock-out epoch from the manually-entered HH:MM (the actual
+    // clock-out instant) instead of "now". Displays prefer clockOutSystem as
+    // the SSOT, so a retroactive close must persist the entered time — not the
+    // moment the employee clicked the button — or the Payroll/Team rows would
+    // show "now" while the total (from the manual) showed the entered span.
+    // Cross-midnight aware (wrap relative to the segment's clockIn).
+    const anchorDate = targetSeg.localDate ?? before.date ?? before.workDate;
+    const clockOutSystem =
+      epochFromLocalWallTime(clockOut, anchorDate, timezone, targetSeg.clockInManual) ?? now.toMillis();
+
     // Close the segment via the canonical helper (S6 wrap + lunch deduction).
     const closedSeg = closeActiveSegment(
       targetSeg,
       clockOut,
-      now.toMillis(),
+      clockOutSystem,
       targetSeg.skipLunch ?? false,
     );
 
@@ -999,8 +1050,8 @@ class DatabaseService {
     // 2) Mutate the timeEntries doc — close the shift + set completion flags.
     await updateDoc(doc(db, 'timeEntries', entryId), {
       clockOutManual: clockOut,
-      clockOutSystem: now.toMillis(),
-      clockOutSystemTime: now,
+      clockOutSystem,
+      clockOutSystemTime: Timestamp.fromMillis(clockOutSystem),
       segments: newSegments.map((s) => stripUndefined(s)),
       totalWorkMinutes,
       totalHours: totalWorkMinutes / 60,
@@ -1036,8 +1087,14 @@ class DatabaseService {
     segmentId: string;
     lunchIn: string; // HH:MM
     reason: string;
+    /**
+     * The employee's IANA timezone. Used to derive `lunchInSystem` from the
+     * manually-entered `lunchIn` HH:MM so a retroactive lunch-end shows the
+     * entered time, not "now". Falls back to the current instant when omitted.
+     */
+    timezone?: string;
   }): Promise<TimeEntry> {
-    const { userId, actorName, entryId, segmentId, lunchIn, reason } = args;
+    const { userId, actorName, entryId, segmentId, lunchIn, reason, timezone } = args;
     const trimmedReason = (reason || '').trim();
     if (!trimmedReason) throw new Error('A reason is required to end lunch.');
 
@@ -1077,11 +1134,19 @@ class DatabaseService {
     const beforeFieldVal = targetSeg.lunchInManual ?? null;
     const now = Timestamp.now();
 
+    // Derive the lunch-in epoch from the manually-entered HH:MM (the actual
+    // lunch-end instant) instead of "now". Cross-midnight aware (wrap relative
+    // to the segment's clockIn) so a lunch that ends after midnight lands on
+    // the correct day.
+    const anchorDate = targetSeg.localDate ?? before.date ?? before.workDate;
+    const lunchInSystem =
+      epochFromLocalWallTime(lunchIn, anchorDate, timezone, targetSeg.clockInManual) ?? now.toMillis();
+
     // Update the segment with lunchIn + system timestamp. Segment stays OPEN.
     const updatedSeg: TimeSegment = {
       ...targetSeg,
       lunchInManual: lunchIn,
-      lunchInSystem: now.toMillis(),
+      lunchInSystem,
       complete: false,
     };
 
@@ -1129,8 +1194,8 @@ class DatabaseService {
     };
     if (updateTopLevel) {
       patch.lunchInManual = lunchIn;
-      patch.lunchInSystemTime = now;
-      patch.lunchInSystem = now.toMillis();
+      patch.lunchInSystemTime = Timestamp.fromMillis(lunchInSystem);
+      patch.lunchInSystem = lunchInSystem;
     }
     await updateDoc(doc(db, 'timeEntries', entryId), patch);
 

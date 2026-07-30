@@ -412,3 +412,78 @@ export function formatInstantLocalHHMMAbbr(epochMs: number, timezone?: string): 
   }).format(new Date(epochMs));
   return `${time} ${getTimezoneAbbreviation(tz, new Date(epochMs))}`;
 }
+
+/**
+ * Convert a local wall-clock time (HH:MM on a given local calendar date in the
+ * given IANA timezone) to an epoch-millis instant. Used to recompute the
+ * `*System` epoch timestamps after a manual edit so they stay in sync with the
+ * edited `*Manual` strings.
+ *
+ * Per AGENTS.md the system timestamps are the single source of truth for
+ * instants, and admin/analysis displays (Payroll rows, Team view) prefer them
+ * over the manual HH:MM strings. A manual edit that only updates `*Manual`
+ * would leave `*System` stale, so the display would show the pre-edit instant
+ * while the recomputed totals showed the edited value — the split between
+ * "correct totals" and "wrong time-entry rows".
+ *
+ * Cross-midnight aware: when `wrapFrom` (the segment's clockIn HH:MM) is
+ * provided and `hhmm` is earlier in the day than `wrapFrom`, the punch is
+ * treated as occurring on the next calendar day (anchorDate + 1). This mirrors
+ * the single-day wrap heuristic used by `computeSegmentWorkMinutes` / the
+ * manual lunch math, so the recomputed instant is consistent with the
+ * manual-based duration calculations.
+ *
+ * DST note: wall times that fall in a spring-forward gap or fall-back overlap
+ * are resolved by Intl's standard offset arithmetic; an off-by-one-hour on the
+ * exact DST-transition wall time is an acceptable edge for a manual correction.
+ */
+export function epochFromLocalWallTime(
+  hhmm: string | undefined | null,
+  anchorDate: string | undefined | null,
+  timezone?: string | null,
+  wrapFrom?: string | null,
+): number | undefined {
+  if (!hhmm || !anchorDate) return undefined;
+  const [h, m] = String(hhmm).split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return undefined;
+  let [y, mo, d] = String(anchorDate).split('-').map(Number);
+  if (!y || !mo || !d) return undefined;
+
+  // Cross-midnight: a punch earlier in the day than the segment's clock-in
+  // fell on the next calendar day. Shift the anchor by +1 day (noon UTC anchor
+  // to avoid DST/midnight off-by-one).
+  if (wrapFrom) {
+    const [ih, im] = String(wrapFrom).split(':').map(Number);
+    if (!Number.isNaN(ih) && !Number.isNaN(im) && (h * 60 + m) < (ih * 60 + im)) {
+      const next = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0, 0));
+      next.setUTCDate(next.getUTCDate() + 1);
+      y = next.getUTCFullYear();
+      mo = next.getUTCMonth() + 1;
+      d = next.getUTCDate();
+    }
+  }
+
+  const tz = getEmployeeTimezone(timezone);
+  // 1) The instant if the wall time were interpreted as UTC.
+  const asIfUtc = Date.UTC(y, mo - 1, d, h, m, 0, 0);
+  // 2) What the zone's wall clock actually reads at that instant.
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(asIfUtc));
+  const pick = (t: string): number => {
+    const p = parts.find((p) => p.type === t);
+    return p ? parseInt(p.value, 10) : NaN;
+  };
+  const zH = pick('hour') % 24;
+  const zM = pick('minute');
+  if (Number.isNaN(zH) || Number.isNaN(zM)) return undefined;
+  // 3) Offset (minutes) between the target wall time and the zone's wall time
+  // at asIfUtc, normalized to ±12h to absorb calendar-day wrap in the zone.
+  let offsetMin = (h * 60 + m) - (zH * 60 + zM);
+  if (offsetMin > 720) offsetMin -= 1440;
+  if (offsetMin < -720) offsetMin += 1440;
+  // 4) The true instant = asIfUtc + offset (move forward/back to the wall time).
+  return asIfUtc + offsetMin * 60 * 1000;
+}

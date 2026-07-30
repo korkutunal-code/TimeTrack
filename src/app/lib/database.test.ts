@@ -20,7 +20,7 @@ import {
   buildConsistentClosePatch,
 } from './segmentOps';
 import type { TimeSegment } from './database';
-import { calculateTotalHours } from './database';
+import { calculateTotalHours, getEntryTotals } from './database';
 
 describe('stripUndefined', () => {
   it('removes keys with undefined values', () => {
@@ -1007,5 +1007,222 @@ describe('mapEntry — split-chain double-count defense (cross-midnight)', () =>
     const entry = mapEntry('u1_2026-07-29', data as any);
     expect(entry.totalWorkMinutes).toBe(480);
     expect(getActiveSegment(entry)).toBeNull();
+  });
+});
+
+/**
+ * Regression: edited totals must propagate to every view (SSOT).
+ *
+ * Bug: after a within-24h direct edit of clockOutManual (17:00 → 18:00), the
+ * stored segment `workMinutes` (480, from the pre-edit 17:00 close) and the
+ * stored `totalWorkMinutes`/`totalHours` went STALE because the recompute
+ * measured the un-updated clockOutSystem. History/Team/Audit (mapEntry, which
+ * summed raw stored workMinutes) and Payroll (which recomputed via the
+ * system-preferred function) all kept showing the pre-edit total (8h).
+ *
+ * Fix: computeSegmentWorkMinutes is now manual-primary-when-stored-diverges
+ * (hybrid SSOT), and mapEntry recomputes archived minutes via it — so an edit
+ * is reflected immediately even on the already-stale stored doc.
+ */
+describe('mapEntry — edited totals propagate (SSOT)', () => {
+  it('reflects an edited clockOut even when stored workMinutes is stale', () => {
+    // The segment's manual clockOut was edited to 18:00, but its stored
+    // workMinutes (480) and the doc's totalWorkMinutes/totalHours are stale
+    // (still reflect the 17:00 close).
+    const data = {
+      userId: 'u1',
+      workDate: '2026-07-30',
+      clockInManual: '09:00',
+      clockOutManual: '18:00',          // edited
+      dayComplete: true,
+      totalWorkMinutes: 480,            // stale (was 8h)
+      totalHours: 8,                    // stale
+      segments: [
+        {
+          id: 'seg_1',
+          clockInManual: '09:00',
+          clockOutManual: '18:00',      // edited
+          workMinutes: 480,             // stale (pre-edit system close)
+          complete: true,
+        },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-07-30', data as any);
+    // 09:00 → 18:00 = 540 min = 9h (the EDITED total), not the stale 480/8h.
+    expect(entry.totalWorkMinutes).toBe(540);
+    expect(entry.totalHours).toBeCloseTo(9, 5);
+  });
+
+  it('reflects an edited clockIn too (08:00 → 09:00 with stale stored 480)', () => {
+    const data = {
+      userId: 'u1',
+      workDate: '2026-07-30',
+      clockInManual: '09:00',
+      clockOutManual: '17:00',
+      dayComplete: true,
+      totalWorkMinutes: 480,
+      segments: [
+        { id: 'seg_1', clockInManual: '09:00', clockOutManual: '17:00', workMinutes: 480, complete: true },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-07-30', data as any);
+    expect(entry.totalWorkMinutes).toBe(480); // 09:00→17:00 = 480, unchanged
+  });
+
+  it('does NOT regress a non-edited split doc (stored accurate when consistent)', () => {
+    // The split stored accurate system-based minutes (28/28). The hybrid must
+    // keep them (within the 1-min tolerance), not recompute to 27/28.
+    const data = {
+      userId: 'u1',
+      workDate: '2026-07-29',
+      clockInManual: '23:32',
+      clockOutManual: '00:28',
+      dayComplete: true,
+      totalWorkMinutes: 56,
+      segments: [
+        { id: 'seg_d1', clockInManual: '23:32', clockOutManual: '23:59', workMinutes: 28, complete: true, splitFromMidnight: true, localDate: '2026-07-29' },
+        { id: 'seg_d2', clockInManual: '00:00', clockOutManual: '00:28', workMinutes: 28, complete: true, splitFromMidnight: true, localDate: '2026-07-30' },
+      ],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-07-29', data as any);
+    expect(entry.totalWorkMinutes).toBe(56); // accurate, no artifact
+  });
+});
+
+/**
+ * Regression: a manual edit (directEditSegmentField) recomputes the segment's
+ * `*System` epoch millis from the edited `*Manual` string, but the segment has
+ * no `*SystemTime` Firestore Timestamp. mapEntry's top-level read previously
+ * looked ONLY at `*SystemTime`, so the recomputed millis was ignored and the
+ * Team view / Payroll rows showed the stale pre-edit instant.
+ *
+ * Fix: mapEntry top-level now reads `*SystemTime ?? *System` (matching the
+ * segment read), so a millis-only write is reflected.
+ */
+describe('mapEntry — *System falls back to millis when *SystemTime absent (edit path)', () => {
+  it('reads the recomputed top-level clockOutSystem millis (no SystemTime)', () => {
+    // After directEditSegmentField: top-level clockOutManual edited to 18:00,
+    // clockOutSystem millis recomputed to the 18:00 instant, clockOutSystemTime
+    // refreshed to match. Verify mapEntry reads the fresh value.
+    const editedMs = Date.UTC(2026, 6, 30, 18, 0, 0);
+    const data = {
+      userId: 'u1',
+      workDate: '2026-07-30',
+      clockInManual: '09:00',
+      clockOutManual: '18:00',
+      clockOutSystem: editedMs,        // recomputed millis (no SystemTime)
+      dayComplete: true,
+      totalWorkMinutes: 540,
+      segments: [
+        { id: 'seg_1', clockInManual: '09:00', clockOutManual: '18:00', clockOutSystem: editedMs, workMinutes: 540, complete: true },
+      ],
+      status: 'corrected',
+    };
+    const entry = mapEntry('u1_2026-07-30', data as any);
+    expect(entry.clockOutSystem).toBe(editedMs);
+  });
+
+  it('prefers *SystemTime when both are present (normal punch flow)', () => {
+    // Normal punch writes both; mapEntry should prefer the Timestamp.
+    const tsMs = Date.UTC(2026, 6, 30, 17, 0, 0);
+    const staleMillis = Date.UTC(2026, 6, 30, 16, 0, 0);
+    const data = {
+      userId: 'u1',
+      workDate: '2026-07-30',
+      clockInManual: '09:00',
+      clockOutManual: '17:00',
+      clockOutSystemTime: { toDate: () => new Date(tsMs) }, // Timestamp-like
+      clockOutSystem: staleMillis,
+      dayComplete: true,
+      segments: [],
+      status: 'active',
+    };
+    const entry = mapEntry('u1_2026-07-30', data as any);
+    expect(entry.clockOutSystem).toBe(tsMs); // prefers SystemTime over stale millis
+  });
+
+  it('segment *System falls back to millis when *SystemTime absent', () => {
+    const segMs = Date.UTC(2026, 6, 30, 18, 0, 0);
+    const data = {
+      userId: 'u1',
+      workDate: '2026-07-30',
+      clockInManual: '09:00',
+      clockOutManual: '18:00',
+      dayComplete: true,
+      totalWorkMinutes: 540,
+      segments: [
+        // Segment has clockOutSystem millis but no clockOutSystemTime — the
+        // shape produced by recomputeSegmentSystemTimestamps on an edit.
+        { id: 'seg_1', clockInManual: '09:00', clockOutManual: '18:00', clockInSystem: Date.UTC(2026, 6, 30, 16, 0, 0), clockOutSystem: segMs, workMinutes: 540, complete: true },
+      ],
+      status: 'corrected',
+    };
+    const entry = mapEntry('u1_2026-07-30', data as any);
+    expect(entry.segments![0].clockOutSystem).toBe(segMs);
+    expect(entry.segments![0].clockInSystem).toBe(Date.UTC(2026, 6, 30, 16, 0, 0));
+  });
+});
+
+describe('getEntryTotals — canonical read-side SSOT', () => {
+  it('reflects an edited clockOut from stale stored segment workMinutes', () => {
+    const entry = {
+      complete: true,
+      clockInManual: '09:00',
+      clockOutManual: '18:00', // edited
+      segments: [
+        { id: 's1', clockInManual: '09:00', clockOutManual: '18:00', workMinutes: 480, complete: true },
+      ],
+    } as any;
+    const t = getEntryTotals(entry);
+    expect(t.totalWorkMinutes).toBe(540);
+    expect(t.totalHours).toBeCloseTo(9, 5);
+  });
+
+  it('sums multiple segments (hybrid per segment)', () => {
+    const entry = {
+      complete: true,
+      segments: [
+        { id: 's1', clockInManual: '08:00', clockOutManual: '12:00', workMinutes: 240, complete: true },
+        { id: 's2', clockInManual: '13:00', clockOutManual: '17:00', workMinutes: 240, complete: true },
+      ],
+    } as any;
+    expect(getEntryTotals(entry).totalWorkMinutes).toBe(480);
+  });
+
+  it('derives from top-level manual fields when there are no segments', () => {
+    const entry = {
+      complete: true,
+      clockInManual: '09:00',
+      clockOutManual: '17:00',
+      // no segments
+    } as any;
+    expect(getEntryTotals(entry).totalWorkMinutes).toBe(480);
+  });
+
+  it('keeps the stored total for a no-segments doc that has one', () => {
+    const entry = {
+      complete: true,
+      clockInManual: '09:00',
+      clockOutManual: '17:00',
+      totalWorkMinutes: 477, // stored (legacy)
+      // no segments
+    } as any;
+    expect(getEntryTotals(entry).totalWorkMinutes).toBe(477);
+  });
+
+  it('does not double-count the synthesized current when it mirrors the last segment', () => {
+    const entry = {
+      complete: true,
+      clockInManual: '09:00',
+      clockOutManual: '17:00',
+      currentSegment: { id: 'x_current', clockInManual: '09:00', clockOutManual: '17:00', workMinutes: 480, complete: true },
+      segments: [
+        { id: 's1', clockInManual: '09:00', clockOutManual: '17:00', workMinutes: 480, complete: true },
+      ],
+    } as any;
+    expect(getEntryTotals(entry).totalWorkMinutes).toBe(480); // not 960
   });
 });
