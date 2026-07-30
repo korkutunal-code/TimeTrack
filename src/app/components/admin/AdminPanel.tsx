@@ -1,7 +1,7 @@
 import { useState, useEffect, type Dispatch, type SetStateAction } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
-import { dbService, TimeEntry, buildConsistentClosePatch } from '../../lib/database';
+import { dbService, TimeEntry, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined } from '../../lib/database';
 import { doc, Timestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Button } from '../ui/button';
@@ -620,6 +620,33 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       });
       const totalWorkMinutes = closePatch.totalWorkMinutes;
       const correctedUser = allUsers.find(u => u.uid === correctionUserId);
+      const correctedTz = correctedUser?.timezone;
+      // Recompute the corrected shift's *System epochs from the edited manual
+      // times (the SSOT for instants). buildConsistentClosePatch stamps
+      // clockOutSystem with "now" — the moment of the edit — which made Payroll
+      // rows / Team view show the editing time as the clock-out. Recompute all
+      // four boundaries from the manual strings + entry date + employee tz.
+      const sysSeg = correctedTz
+        ? recomputeSegmentSystemTimestamps(closePatch.closedSegment, correctionEntry.date, correctedTz)
+        : closePatch.closedSegment;
+      const segments = closePatch.segments.map((s) =>
+        (s.id === closePatch.closedSegment.id ? stripUndefined(sysSeg) : s),
+      );
+      // Top-level *System fields (millis + Firestore Timestamp) so Team view /
+      // mapEntry (which read the top-level *SystemTime) show the edited
+      // instants instead of "now".
+      const systemPatch = correctedTz
+        ? stripUndefined({
+            clockInSystem: sysSeg.clockInSystem,
+            clockOutSystem: sysSeg.clockOutSystem,
+            lunchOutSystem: correctionEntry.skipLunch ? undefined : sysSeg.lunchOutSystem,
+            lunchInSystem: correctionEntry.skipLunch ? undefined : sysSeg.lunchInSystem,
+            clockInSystemTime: sysSeg.clockInSystem != null ? Timestamp.fromMillis(sysSeg.clockInSystem) : undefined,
+            clockOutSystemTime: sysSeg.clockOutSystem != null ? Timestamp.fromMillis(sysSeg.clockOutSystem) : undefined,
+            lunchOutSystemTime: correctionEntry.skipLunch || sysSeg.lunchOutSystem == null ? undefined : Timestamp.fromMillis(sysSeg.lunchOutSystem),
+            lunchInSystemTime: correctionEntry.skipLunch || sysSeg.lunchInSystem == null ? undefined : Timestamp.fromMillis(sysSeg.lunchInSystem),
+          })
+        : {};
       const correctedWorkModel = correctedUser?.workModelId ? workModels.find(m => m.id === correctedUser.workModelId) ?? null : null;
       const ot = calculateDailyOvertimeBreakdown(totalWorkMinutes, correctedWorkModel, correctedUser?.workModelOverride ?? null);
       const workWeekStartDate = getWorkWeekStartDate(correctionEntry.date, DEFAULT_WORKWEEK_START_DAY);
@@ -635,7 +662,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         ...correctionEntry,
         lunchMinutes,
         totalWorkMinutes,
-        segments: closePatch.segments,
+        segments,
         regularMinutes: ot.regularMinutes,
         otMinutes: ot.otMinutes,
         doubleTimeMinutes: ot.doubleTimeMinutes,
@@ -664,7 +691,8 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         lunchSkipped: !!correctionEntry.skipLunch,
         lunchMinutes,
         totalWorkMinutes,
-        segments: closePatch.segments,
+        segments,
+        ...systemPatch,
         regularMinutes: ot.regularMinutes,
         otMinutes: ot.otMinutes,
         doubleTimeMinutes: ot.doubleTimeMinutes,

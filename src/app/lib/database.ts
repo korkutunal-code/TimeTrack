@@ -1409,6 +1409,22 @@ class DatabaseService {
     const after: TimeEntry = { ...before, [field]: value };
     let segments = before.segments ? before.segments.map((s) => ({ ...s })) : [];
     const hasClockOut = !!after.clockOutManual;
+
+    // Recompute the corrected boundary's *System epoch from the approved manual
+    // time (the SSOT for instants) instead of leaving it stale (or stamping
+    // "now"). Displays (Payroll rows, Team view) prefer *System, so an approved
+    // correction must persist the corrected instant — not the old punch or the
+    // approval moment. Requires the employee's tz + entry date to interpret
+    // HH:MM; cross-midnight aware (wrap relative to the shift's clockIn).
+    const empUserSnap = await getDoc(doc(db, 'users', request.employee_id));
+    const empTz = empUserSnap.exists() ? (empUserSnap.data().timezone as string | undefined) : undefined;
+    const anchorDate = before.date ?? before.workDate;
+    const sysField = fieldToSystemField(field);
+    const recomputedSys =
+      sysField && empTz
+        ? epochFromLocalWallTime(value, anchorDate, empTz, after.clockInManual)
+        : undefined;
+
     if (hasClockOut && after.clockInManual) {
       const closePatch = buildConsistentClosePatch({
         clockIn: after.clockInManual,
@@ -1416,7 +1432,10 @@ class DatabaseService {
         skipLunch: !!after.skipLunch,
         lunchOut: after.skipLunch ? undefined : (after.lunchOutManual || undefined),
         lunchIn: after.skipLunch ? undefined : (after.lunchInManual || undefined),
-        clockOutSystem: before.clockOutSystem ?? Date.now(),
+        clockOutSystem:
+          field === 'clockOutManual' && recomputedSys !== undefined
+            ? recomputedSys
+            : (before.clockOutSystem ?? Date.now()),
         clockInSystem: before.clockInSystem,
         existingSegments: segments,
         // 'append' preserves prior archived split-shift segments. 'replace'
@@ -1448,9 +1467,18 @@ class DatabaseService {
     // present), set the day-completion flags so mapEntry (which derives
     // completeness from dayComplete) renders the entry as Complete — without
     // these, an admin-approved clock-out would still show as "Incomplete/Open".
+    // Also write the corrected top-level *System epoch (millis + Timestamp) so
+    // Team view / mapEntry (which read the top-level *SystemTime) show the
+    // corrected instant, not the stale punch or the approval moment.
+    const sysPatch: Record<string, unknown> = {};
+    if (sysField && recomputedSys !== undefined) {
+      sysPatch[sysField] = recomputedSys;
+      sysPatch[`${sysField}Time`] = Timestamp.fromMillis(recomputedSys);
+    }
     await updateDoc(doc(db, 'timeEntries', entryId), {
       [field]: value,
       segments: segments.map((s) => stripUndefined(s)),
+      ...sysPatch,
       ...(hasClockOut
         ? {
             totalWorkMinutes: after.totalWorkMinutes,

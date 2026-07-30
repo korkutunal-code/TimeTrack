@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
-import { TimeEntry, dbService, buildConsistentClosePatch } from '../../lib/database';
+import { TimeEntry, dbService, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined } from '../../lib/database';
 import { doc, updateDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { auditLogService } from '../../../services/auditLogService';
@@ -298,6 +298,33 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
       });
       const totalWorkMinutes = closePatch.totalWorkMinutes;
       const editedUser = allUsers.find(u => u.uid === originalEditingEntry.userId);
+      const editedTz = editedUser?.timezone;
+      // Recompute the corrected shift's *System epochs from the edited manual
+      // times (the SSOT for instants). buildConsistentClosePatch stamps
+      // clockOutSystem with "now" — the moment of the edit — which made Payroll
+      // rows / Team view show the editing time as the clock-out. Recompute all
+      // four boundaries from the manual strings + entry date + employee tz.
+      const sysSeg = editedTz
+        ? recomputeSegmentSystemTimestamps(closePatch.closedSegment, originalEditingEntry.date, editedTz)
+        : closePatch.closedSegment;
+      const segments = closePatch.segments.map((s) =>
+        (s.id === closePatch.closedSegment.id ? stripUndefined(sysSeg) : s),
+      );
+      // Top-level *System fields (millis + Firestore Timestamp) so Team view /
+      // mapEntry (which read the top-level *SystemTime) show the edited
+      // instants instead of "now".
+      const systemPatch = editedTz
+        ? stripUndefined({
+            clockInSystem: sysSeg.clockInSystem,
+            clockOutSystem: sysSeg.clockOutSystem,
+            lunchOutSystem: editingEntry.skipLunch ? undefined : sysSeg.lunchOutSystem,
+            lunchInSystem: editingEntry.skipLunch ? undefined : sysSeg.lunchInSystem,
+            clockInSystemTime: sysSeg.clockInSystem != null ? Timestamp.fromMillis(sysSeg.clockInSystem) : undefined,
+            clockOutSystemTime: sysSeg.clockOutSystem != null ? Timestamp.fromMillis(sysSeg.clockOutSystem) : undefined,
+            lunchOutSystemTime: editingEntry.skipLunch || sysSeg.lunchOutSystem == null ? undefined : Timestamp.fromMillis(sysSeg.lunchOutSystem),
+            lunchInSystemTime: editingEntry.skipLunch || sysSeg.lunchInSystem == null ? undefined : Timestamp.fromMillis(sysSeg.lunchInSystem),
+          })
+        : {};
       const editedWorkModel = editedUser?.workModelId ? workModels.find(m => m.id === editedUser.workModelId) ?? null : null;
       const ot = calculateDailyOvertimeBreakdown(totalWorkMinutes, editedWorkModel, editedUser?.workModelOverride ?? null);
       // originalEditingEntry is definitely defined here so we can guarantee we have a date
@@ -314,7 +341,7 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
         lunchSkipped: !!editingEntry.skipLunch,
         lunchMinutes,
         totalWorkMinutes,
-        segments: closePatch.segments,
+        segments,
         regularMinutes: ot.regularMinutes,
         otMinutes: ot.otMinutes,
         doubleTimeMinutes: ot.doubleTimeMinutes,
@@ -345,7 +372,8 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
         lunchSkipped: !!editingEntry.skipLunch,
         lunchMinutes,
         totalWorkMinutes,
-        segments: closePatch.segments,
+        segments,
+        ...systemPatch,
         regularMinutes: ot.regularMinutes,
         otMinutes: ot.otMinutes,
         doubleTimeMinutes: ot.doubleTimeMinutes,
