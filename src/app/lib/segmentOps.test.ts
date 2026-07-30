@@ -13,9 +13,58 @@ import {
   recalculateEntryTotals,
   recomputeSegmentSystemTimestamps,
   fieldToSystemField,
+  getPreservedSegmentsForEdit,
+  buildConsistentClosePatch,
 } from './segmentOps';
 import type { TimeSegment } from './database';
 import { hhmmInZone } from '../../utils/timeView';
+
+describe('getPreservedSegmentsForEdit — split-shift-safe correction', () => {
+  // Regression for the Emir Korkut Ünal 2026-07-22 entry: a 3-segment
+  // split-shift day (13 + 84 + 27 = 124 min) whose top-level clockIn mirrors
+  // the LAST segment (11:31). The single-shift edit form must preserve the
+  // earlier shifts, not collapse the day to one.
+  const s1: TimeSegment = { id: 's1', clockInManual: '07:59', clockOutManual: '09:01', workMinutes: 13, complete: true };
+  const s2: TimeSegment = { id: 's2', clockInManual: '09:33', clockOutManual: '11:00', workMinutes: 84, complete: true };
+  const s3: TimeSegment = { id: 's3', clockInManual: '11:31', clockOutManual: '11:58', workMinutes: 27, complete: true };
+
+  it('drops the last segment when it mirrors the root clockIn (multi-shift)', () => {
+    const entry = { segments: [s1, s2, s3], clockInManual: '11:31' };
+    const preserved = getPreservedSegmentsForEdit(entry);
+    expect(preserved.map((s) => s.id)).toEqual(['s1', 's2']);
+  });
+
+  it('returns [] for a single-shift day (last segment mirrors root)', () => {
+    const entry = { segments: [s3], clockInManual: '11:31' };
+    expect(getPreservedSegmentsForEdit(entry)).toEqual([]);
+  });
+
+  it('preserves ALL segments when the last does NOT mirror the root (legacy top-level shift)', () => {
+    const entry = { segments: [s1, s2], clockInManual: '99:99' }; // current shift only in top-level
+    expect(getPreservedSegmentsForEdit(entry).map((s) => s.id)).toEqual(['s1', 's2']);
+  });
+
+  it('handles an empty/undefined segments array', () => {
+    expect(getPreservedSegmentsForEdit({ clockInManual: '11:31' })).toEqual([]);
+  });
+
+  it('before == after on a no-op correction (append mode preserves the full day total)', () => {
+    // Load the entry into the edit form unchanged (clockIn 11:31, clockOut
+    // 11:58). buildConsistentClosePatch with the preserved segments must yield
+    // the FULL day total (124 min), identical to the "before" total — not the
+    // collapsed single-shift 27 min that 'replace' produced.
+    const entry = { segments: [s1, s2, s3], clockInManual: '11:31' };
+    const patch = buildConsistentClosePatch({
+      clockIn: '11:31',
+      clockOut: '11:58',
+      skipLunch: false,
+      existingSegments: getPreservedSegmentsForEdit(entry),
+      mode: 'append',
+    });
+    expect(patch.totalWorkMinutes).toBe(124); // 13 + 84 + 27, the full day
+    expect(patch.segments).toHaveLength(3); // s1 + s2 + edited s3, not collapsed to 1
+  });
+});
 
 describe('computeSegmentWorkMinutes — hybrid SSOT', () => {
   it('returns stored workMinutes when it agrees with the manual signal (non-edited)', () => {

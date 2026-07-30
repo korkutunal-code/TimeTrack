@@ -1,7 +1,7 @@
-import { useState, useEffect, type Dispatch, type SetStateAction } from 'react';
+import { useState, useEffect, useMemo, type Dispatch, type SetStateAction } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
-import { dbService, TimeEntry, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined, getEntryTotals } from '../../lib/database';
+import { dbService, TimeEntry, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined, getEntryTotals, getPreservedSegmentsForEdit } from '../../lib/database';
 import { doc, Timestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Button } from '../ui/button';
@@ -299,6 +299,29 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const [correctionUserId, setCorrectionUserId] = useState('');
   const [correctionDate, setCorrectionDate] = useState('');
   const [adminNotes, setAdminNotes] = useState('');
+
+  // Live "after" preview for the Correct Entry modal: the total the save will
+  // persist (preserved earlier segments + the edited shift), computed with the
+  // SAME buildConsistentClosePatch('append') logic the save uses. On load with
+  // no edits this equals the "before" total (getEntryTotals) — previously the
+  // preview collapsed the multi-shift day to one shift and showed a bogus drop.
+  const correctionAfterHours = useMemo(() => {
+    if (!originalCorrectionEntry || !correctionEntry?.clockInManual || !correctionEntry?.clockOutManual) {
+      return null;
+    }
+    // clockOutSystem omitted: the total is derived from the manual HH:MM span,
+    // so the preview is a pure function of the form values (no Date.now()).
+    const patch = buildConsistentClosePatch({
+      clockIn: correctionEntry.clockInManual,
+      clockOut: correctionEntry.clockOutManual,
+      skipLunch: !!correctionEntry.skipLunch,
+      lunchOut: correctionEntry.skipLunch ? undefined : (correctionEntry.lunchOutManual || undefined),
+      lunchIn: correctionEntry.skipLunch ? undefined : (correctionEntry.lunchInManual || undefined),
+      existingSegments: getPreservedSegmentsForEdit(originalCorrectionEntry),
+      mode: 'append',
+    });
+    return patch.totalWorkMinutes / 60;
+  }, [originalCorrectionEntry, correctionEntry]);
 
   const handleCreateUser = async () => {
     if (!newUser.name || !newUser.email) {
@@ -606,8 +629,13 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       );
       // S7: derive totalWorkMinutes + synchronized segments[] from the same
       // canonical closeActiveSegment math (S6 wrap + lunch deduction) so root,
-      // segments[last], and totalWorkMinutes never diverge. 'replace' mode
-      // collapses to the single corrected shift (matches the admin form UX).
+      // segments[last], and totalWorkMinutes never diverge. 'append' mode
+      // PRESERVES the day's earlier split-shift segments and replaces only the
+      // targeted (current/last) shift in-place — the old 'replace' mode
+      // collapsed the whole multi-shift day into a single shift, destroying the
+      // other segments' minutes (data loss) and making the modal preview show
+      // "before" (full day) diverge from "after" (collapsed) even with no edits.
+      const preservedSegs = getPreservedSegmentsForEdit(originalCorrectionEntry ?? {});
       const closePatch = buildConsistentClosePatch({
         clockIn: correctionEntry.clockInManual,
         clockOut: correctionEntry.clockOutManual,
@@ -615,8 +643,8 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         lunchOut: correctionEntry.skipLunch ? undefined : (correctionEntry.lunchOutManual || undefined),
         lunchIn: correctionEntry.skipLunch ? undefined : (correctionEntry.lunchInManual || undefined),
         clockOutSystem: now.toMillis(),
-        existingSegments: originalCorrectionEntry?.segments,
-        mode: 'replace',
+        existingSegments: preservedSegs,
+        mode: 'append',
       });
       const totalWorkMinutes = closePatch.totalWorkMinutes;
       const correctedUser = allUsers.find(u => u.uid === correctionUserId);
@@ -683,6 +711,12 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       });
 
       // Only after durable audit row exists do we mutate the time record.
+      // When the corrected shift has no lunch, explicitly NULL the top-level
+      // lunch *System fields — a prior segment's lunch epoch would otherwise
+      // linger (the Audit Viewer showed it as an out-of-order submission stamped
+      // before this shift's clock-in).
+      const shiftHasLunch =
+        !correctionEntry.skipLunch && !!correctionEntry.lunchOutManual && !!correctionEntry.lunchInManual;
       await updateDoc(doc(db, 'timeEntries', correctionEntry.id), {
         clockInManual: correctionEntry.clockInManual,
         lunchOutManual: correctionEntry.skipLunch ? '' : (correctionEntry.lunchOutManual || ''),
@@ -693,6 +727,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         totalWorkMinutes,
         segments,
         ...systemPatch,
+        ...(shiftHasLunch
+          ? {}
+          : { lunchOutSystem: null, lunchInSystem: null, lunchOutSystemTime: null, lunchInSystemTime: null }),
         regularMinutes: ot.regularMinutes,
         otMinutes: ot.otMinutes,
         doubleTimeMinutes: ot.doubleTimeMinutes,
@@ -1220,7 +1257,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                     </div>
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-indigo-600 font-medium">Total hours after:</span>
-                      <span className="font-bold text-indigo-700">{dbService.calculateTotalHours(correctionEntry).toFixed(2)} hrs</span>
+                      <span className="font-bold text-indigo-700">{(correctionAfterHours ?? getEntryTotals(correctionEntry).totalHours).toFixed(2)} hrs</span>
                     </div>
                   </div>
                 )}

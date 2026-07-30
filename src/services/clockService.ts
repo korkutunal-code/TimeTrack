@@ -239,6 +239,15 @@ export async function punchIn(userId: string, taskId?: string, timezone?: string
       completedAt: null,
       lunchOutManual: null,
       lunchInManual: null,
+      // Reset the lunch *System fields too — previously only the manual strings
+      // were cleared, leaving the prior shift's lunch epoch (lunchOutSystemTime /
+      // lunchInSystemTime) stale at the top level. The Audit Viewer then showed
+      // the old shift's lunch submission as if it belonged to the new shift
+      // (out-of-order: lunch stamped before the new clock-in).
+      lunchOutSystem: null,
+      lunchInSystem: null,
+      lunchOutSystemTime: null,
+      lunchInSystemTime: null,
       lunchSkipped: false,
       skipLunch: false,
     };

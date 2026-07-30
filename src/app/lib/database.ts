@@ -374,6 +374,7 @@ export {
   recalculateEntryTotals,
   recomputeSegmentSystemTimestamps,
   fieldToSystemField,
+  getPreservedSegmentsForEdit,
 } from './segmentOps';
 
 function timeToMinutes(time: string): number {

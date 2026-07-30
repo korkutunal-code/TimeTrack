@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
-import { TimeEntry, dbService, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined, getEntryTotals } from '../../lib/database';
+import { TimeEntry, dbService, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined, getEntryTotals, getPreservedSegmentsForEdit, computeSegmentWorkMinutes } from '../../lib/database';
 import { doc, updateDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { auditLogService } from '../../../services/auditLogService';
@@ -57,6 +57,29 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
   const [originalEditingEntry, setOriginalEditingEntry] = useState<TimeEntry | null>(null);
   const [adminNotes, setAdminNotes] = useState('');
   const [workModels, setWorkModels] = useState<WorkModelDef[]>([]);
+
+  // Live "after" preview for the Edit Entry modal: the total the save will
+  // persist (preserved earlier segments + the edited shift), computed with the
+  // SAME buildConsistentClosePatch('append') logic the save uses. On load with
+  // no edits this equals the "before" total (getEntryTotals) — previously the
+  // preview collapsed the multi-shift day to one shift and showed a bogus drop.
+  const editAfterHours = useMemo(() => {
+    if (!originalEditingEntry || !editingEntry?.clockInManual || !editingEntry?.clockOutManual) {
+      return null;
+    }
+    // clockOutSystem omitted: the total is derived from the manual HH:MM span,
+    // so the preview is a pure function of the form values (no Date.now()).
+    const patch = buildConsistentClosePatch({
+      clockIn: editingEntry.clockInManual,
+      clockOut: editingEntry.clockOutManual,
+      skipLunch: !!editingEntry.skipLunch,
+      lunchOut: editingEntry.skipLunch ? undefined : (editingEntry.lunchOutManual || undefined),
+      lunchIn: editingEntry.skipLunch ? undefined : (editingEntry.lunchInManual || undefined),
+      existingSegments: getPreservedSegmentsForEdit(originalEditingEntry),
+      mode: 'append',
+    });
+    return patch.totalWorkMinutes / 60;
+  }, [originalEditingEntry, editingEntry]);
 
   // Req 4: display a time boundary in the selected admin view zone. Uses the
   // absolute epoch system timestamp when present (converts to employee-local
@@ -290,9 +313,12 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
       // S7: derive totalWorkMinutes + a synchronized segments[] from the same
       // canonical closeActiveSegment math (S6 cross-midnight wrap + lunch
       // deduction) so root fields, segments[last], and totalWorkMinutes can
-      // never diverge. 'replace' mode collapses to the single corrected shift
-      // (matches the admin form UX). Without this, mapEntry's override would
-      // recompute totalWorkMinutes from stale segments and clobber the edit.
+      // never diverge. 'append' mode PRESERVES the day's earlier split-shift
+      // segments and replaces only the targeted (current/last) shift in-place —
+      // the old 'replace' mode collapsed the whole multi-shift day into one
+      // shift, destroying the other segments' minutes (data loss) and making
+      // the modal preview "before" (full day) diverge from "after" (collapsed).
+      const preservedSegs = getPreservedSegmentsForEdit(originalEditingEntry);
       const closePatch = buildConsistentClosePatch({
         clockIn: editingEntry.clockInManual,
         clockOut: editingEntry.clockOutManual,
@@ -300,8 +326,8 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
         lunchOut: editingEntry.skipLunch ? undefined : (editingEntry.lunchOutManual || undefined),
         lunchIn: editingEntry.skipLunch ? undefined : (editingEntry.lunchInManual || undefined),
         clockOutSystem: now.toMillis(),
-        existingSegments: originalEditingEntry.segments,
-        mode: 'replace',
+        existingSegments: preservedSegs,
+        mode: 'append',
       });
       const totalWorkMinutes = closePatch.totalWorkMinutes;
       const editedUser = allUsers.find(u => u.uid === originalEditingEntry.userId);
@@ -371,6 +397,12 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
       });
 
       // Only after durable audit row exists do we mutate the time record.
+      // When the edited shift has no lunch, explicitly NULL the top-level lunch
+      // *System fields — a prior segment's lunch epoch would otherwise linger
+      // (the Audit Viewer showed it as an out-of-order submission stamped
+      // before this shift's clock-in).
+      const shiftHasLunch =
+        !editingEntry.skipLunch && !!editingEntry.lunchOutManual && !!editingEntry.lunchInManual;
       await updateDoc(doc(db, 'timeEntries', originalEditingEntry.id), {
         clockInManual: editingEntry.clockInManual,
         lunchOutManual: editingEntry.skipLunch ? '' : (editingEntry.lunchOutManual || ''),
@@ -381,6 +413,9 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
         totalWorkMinutes,
         segments,
         ...systemPatch,
+        ...(shiftHasLunch
+          ? {}
+          : { lunchOutSystem: null, lunchInSystem: null, lunchOutSystemTime: null, lunchInSystemTime: null }),
         regularMinutes: ot.regularMinutes,
         otMinutes: ot.otMinutes,
         doubleTimeMinutes: ot.doubleTimeMinutes,
@@ -682,16 +717,46 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 mb-2">
-                    <div className="bg-muted/50 p-2 rounded text-center border border-border">
-                      <p className="text-xs text-muted-foreground mb-0.5">In</p>
-                      <p className="text-sm font-bold">{fmtTz(entry.clockInSystem, entry.clockInManual, tzForUser(entry.userId))}</p>
-                    </div>
-                    <div className="bg-muted/50 p-2 rounded text-center border border-border">
-                      <p className="text-xs text-muted-foreground mb-0.5">Out</p>
-                      <p className="text-sm font-bold">{fmtTz(entry.clockOutSystem, entry.clockOutManual, tzForUser(entry.userId))}</p>
-                    </div>
-                  </div>
+                  {(() => {
+                    const segs = (entry.segments || []).filter((s) => s.clockInManual || s.clockInSystem);
+                    // Multi-shift (split-shift) day: the top-level In/Out mirror
+                    // only the LAST shift, which made the row total (the sum of
+                    // ALL shifts) look inconsistent with the single displayed
+                    // span. Render each shift's In/Out + minutes so the displayed
+                    // timestamps sum mathematically to the card total.
+                    if (segs.length > 1) {
+                      return (
+                        <div className="mb-2 rounded-lg border border-border divide-y divide-border overflow-hidden">
+                          {segs.map((seg, i) => (
+                            <div key={seg.id || i} className="flex items-center justify-between px-2 py-1.5 text-xs bg-muted/40">
+                              <span className="text-muted-foreground font-medium">Shift {i + 1}</span>
+                              <span className="tabular-nums font-semibold">
+                                {fmtTz(seg.clockInSystem, seg.clockInManual, tzForUser(entry.userId))}
+                                {' – '}
+                                {fmtTz(seg.clockOutSystem, seg.clockOutManual, tzForUser(entry.userId))}
+                              </span>
+                              <span className="tabular-nums text-muted-foreground">
+                                {(computeSegmentWorkMinutes(seg) / 60).toFixed(2)}h
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }
+                    // Single shift: the original In/Out grid (top-level fields).
+                    return (
+                      <div className="grid grid-cols-2 gap-2 mb-2">
+                        <div className="bg-muted/50 p-2 rounded text-center border border-border">
+                          <p className="text-xs text-muted-foreground mb-0.5">In</p>
+                          <p className="text-sm font-bold">{fmtTz(entry.clockInSystem, entry.clockInManual, tzForUser(entry.userId))}</p>
+                        </div>
+                        <div className="bg-muted/50 p-2 rounded text-center border border-border">
+                          <p className="text-xs text-muted-foreground mb-0.5">Out</p>
+                          <p className="text-sm font-bold">{fmtTz(entry.clockOutSystem, entry.clockOutManual, tzForUser(entry.userId))}</p>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {entry.flags && entry.flags.length > 0 && (
                     <div className="bg-amber-50 border border-amber-200 rounded p-2 flex items-center gap-2">
@@ -755,6 +820,34 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
                   </>
                 )}
               </div>
+
+              {/* Multi-shift (split-shift) breakdown: the top-level In/Out above
+                  mirror only the LAST shift. List every shift's In/Out + minutes
+                  so the displayed timestamps sum mathematically to the total. */}
+              {(() => {
+                const segs = (selectedEntry.segments || []).filter((s) => s.clockInManual || s.clockInSystem);
+                if (segs.length <= 1) return null;
+                return (
+                  <div className="rounded-lg border border-slate-200 divide-y divide-slate-200 overflow-hidden">
+                    <p className="px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 bg-slate-50">
+                      {segs.length} shifts this day
+                    </p>
+                    {segs.map((seg, i) => (
+                      <div key={seg.id || i} className="flex items-center justify-between px-2 py-1.5 text-xs">
+                        <span className="text-slate-500 font-medium">Shift {i + 1}</span>
+                        <span className="tabular-nums font-semibold">
+                          {fmtTz(seg.clockInSystem, seg.clockInManual, tzForUser(selectedEntry.userId))}
+                          {' – '}
+                          {fmtTz(seg.clockOutSystem, seg.clockOutManual, tzForUser(selectedEntry.userId))}
+                        </span>
+                        <span className="tabular-nums text-slate-500">
+                          {(computeSegmentWorkMinutes(seg) / 60).toFixed(2)}h
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
 
               {selectedEntry.complete && (
                 <div className="bg-blue-50 p-3 rounded border border-blue-200">
@@ -875,7 +968,7 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
                 </div>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-slate-500">Total hours after:</span>
-                  <span className="font-bold text-indigo-700">{dbService.calculateTotalHours(editingEntry as TimeEntry).toFixed(2)} hrs</span>
+                  <span className="font-bold text-indigo-700">{(editAfterHours ?? getEntryTotals(editingEntry as TimeEntry).totalHours).toFixed(2)} hrs</span>
                 </div>
               </div>
 

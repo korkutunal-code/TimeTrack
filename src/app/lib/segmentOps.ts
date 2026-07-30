@@ -443,3 +443,31 @@ export function recomputeSegmentSystemTimestamps(
   }
   return out;
 }
+
+/**
+ * Segments to PRESERVE when an admin/manager corrects a shift via the
+ * single-shift form: all persisted segments EXCEPT the one being edited.
+ *
+ * The single-shift edit form targets the current/last shift (the persisted
+ * segment that mirrors the root `clockInManual`). Editing a split-shift day
+ * must replace ONLY that targeted segment in-place — NOT collapse the whole
+ * day to a single shift. The previous `buildConsistentClosePatch({mode:
+ * 'replace'})` collapsed every segment into one, which (a) destroyed the other
+ * shifts' minutes on save (data loss) and (b) made the modal preview show
+ * "before" (the full multi-shift day) diverge from "after" (the collapsed
+ * single shift) even with no edits.
+ *
+ * Identification: the edited segment is the LAST persisted segment when it
+ * mirrors the root `clockInManual` (the dual-write invariant). If the last
+ * segment does not mirror the root (legacy doc whose current shift lives only
+ * in the top-level fields), ALL persisted segments are archived and preserved.
+ */
+export function getPreservedSegmentsForEdit(entry: {
+  segments?: TimeSegment[];
+  clockInManual?: string;
+}): TimeSegment[] {
+  const segs = entry.segments ?? [];
+  const last = segs[segs.length - 1];
+  const lastMirrorsRoot = !!last && last.clockInManual === entry.clockInManual;
+  return lastMirrorsRoot ? segs.slice(0, -1) : segs;
+}
