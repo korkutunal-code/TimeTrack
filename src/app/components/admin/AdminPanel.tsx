@@ -1,7 +1,7 @@
 import { useState, useEffect, type Dispatch, type SetStateAction } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
-import { dbService, TimeEntry, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined } from '../../lib/database';
+import { dbService, TimeEntry, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined, getEntryTotals } from '../../lib/database';
 import { doc, Timestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { Button } from '../ui/button';
@@ -1216,7 +1216,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                     <p className="text-sm font-semibold text-slate-700 mb-2">Preview Changes</p>
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-slate-500">Total hours before:</span>
-                      <span className="font-medium">{dbService.calculateTotalHours(originalCorrectionEntry).toFixed(2)} hrs</span>
+                      <span className="font-medium">{getEntryTotals(originalCorrectionEntry).totalHours.toFixed(2)} hrs</span>
                     </div>
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-indigo-600 font-medium">Total hours after:</span>

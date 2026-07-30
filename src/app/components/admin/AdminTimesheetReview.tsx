@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { User } from '../../lib/auth';
-import { dbService, TimeEntry, getActiveSegment } from '../../lib/database';
+import { dbService, TimeEntry, getActiveSegment, getEntryTotals } from '../../lib/database';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -106,7 +106,7 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
 
     const headers = ['Date', 'Employee', 'Clock In', 'Clock Out', 'Hours', 'Status', 'Flags'];
     const rows = entries.map(e => {
-      const hrs = dbService.calculateTotalHours(e);
+      const hrs = getEntryTotals(e).totalHours;
       const status = e.status || (e.correctionNotes ? 'corrected' : 'active');
       return [
         e.date,
@@ -134,7 +134,7 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
     }
   };
 
-  const totalHours = entries.reduce((sum, e) => sum + dbService.calculateTotalHours(e), 0);
+  const totalHours = entries.reduce((sum, e) => sum + getEntryTotals(e).totalHours, 0);
   const correctedCount = entries.filter(e => e.status === 'corrected' || !!e.correctionNotes).length;
 
   return (
@@ -241,7 +241,7 @@ export function AdminTimesheetReview({ allUsers, onCorrectEntry }: AdminTimeshee
               </TableHeader>
               <TableBody>
                 {entries.sort((a, b) => b.date.localeCompare(a.date)).map(entry => {
-                  const hrs = dbService.calculateTotalHours(entry);
+                  const hrs = getEntryTotals(entry).totalHours;
                   const isCorrected = !!entry.correctionNotes || entry.status === 'corrected';
                   const isOpen = getActiveSegment(entry) !== null && !entry.clockOutManual;
                   return (

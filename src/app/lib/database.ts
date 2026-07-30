@@ -2,7 +2,7 @@ import { collection, doc, getDoc, getDocs, orderBy, query, Timestamp, updateDoc,
 import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { db } from './firebase';
 import type { User } from './auth';
-import { stripUndefined, buildConsistentClosePatch, closeActiveSegment, computeSegmentWorkMinutes, recalculateEntryTotals, recomputeSegmentSystemTimestamps, fieldToSystemField } from './segmentOps';
+import { stripUndefined, closeActiveSegment, computeSegmentWorkMinutes, recalculateEntryTotals, recomputeSegmentSystemTimestamps, fieldToSystemField } from './segmentOps';
 import { deriveSegmentWorkMinutes, epochFromLocalWallTime, getEmployeeTimezone } from '../../utils/timeCalculations';
 import { auditLogService } from '../../services/auditLogService';
 import { fetchGlobalSettings } from '../../services/systemSettingsService';
@@ -649,128 +649,6 @@ class DatabaseService {
       workModelId: data.workModelId as string | undefined,
       workModelOverride: (data.workModelOverride as User['workModelOverride']) ?? null,
     };
-  }
-
-  async updateTimeEntry(id: string, updates: Partial<TimeEntry>): Promise<TimeEntry> {
-    // Only supports a subset of fields used in admin corrections in this React UI.
-    const patch: Record<string, unknown> = { updatedAt: Timestamp.now() };
-    if (updates.clockInManual !== undefined) patch.clockInManual = updates.clockInManual;
-    if (updates.lunchOutManual !== undefined) patch.lunchOutManual = updates.lunchOutManual;
-    if (updates.lunchInManual !== undefined) patch.lunchInManual = updates.lunchInManual;
-    if (updates.clockOutManual !== undefined) patch.clockOutManual = updates.clockOutManual;
-    if (updates.skipLunch !== undefined) patch.lunchSkipped = updates.skipLunch;
-    if (updates.adminNotes !== undefined) patch.correctionNotes = updates.adminNotes;
-    if (updates.correctionRequested !== undefined) patch.correctionRequested = updates.correctionRequested;
-    await updateDoc(doc(db, 'timeEntries', id), patch);
-    const snap = await getDoc(doc(db, 'timeEntries', id));
-    if (!snap.exists()) throw new Error('Entry not found');
-    return mapEntry(snap.id, snap.data());
-  }
-
-  /**
-   * Quick-Edit direct adjustment (≤24h path). An employee directly updates one
-   * manual time field on their own recent entry. Honors the mandatory-audit
-   * rule (AGENTS.md / .kilo/rules/audit-mandatory-reason.md): writes an
-   * immutable auditLogs entry FIRST (actorRole 'employee', permitted by the
-   * widened self-audit rule), then mutates timeEntries. Dual-writes the
-   * matching segment field + recomputes totalWorkMinutes for closed shifts via
-   * the S7 `buildConsistentClosePatch` helper so root/segments/total never
-   * diverge. Open shifts just update the active segment's manual field.
-   *
-   * The 24h threshold itself is enforced by the caller (TimeAdjustmentModal)
-   * using each field's `*System` millis — this method does not re-check age,
-   * it only performs the edit + audit once invoked.
-   */
-  async directEditTimeField(args: {
-    userId: string;
-    actorName?: string;
-    entryId: string;
-    field: 'clockInManual' | 'lunchOutManual' | 'lunchInManual' | 'clockOutManual';
-    value: string; // HH:MM
-    reason: string;
-  }): Promise<TimeEntry> {
-    const { userId, actorName, entryId, field, value, reason } = args;
-    const trimmedReason = (reason || '').trim();
-    if (!trimmedReason) throw new Error('A reason is required to adjust a time.');
-
-    // Read authoritative "before" snapshot.
-    const beforeSnap = await getDoc(doc(db, 'timeEntries', entryId));
-    if (!beforeSnap.exists()) throw new Error('Entry not found.');
-    const before = mapEntry(entryId, beforeSnap.data());
-
-    // Own-entry guard (defense-in-depth; rules also allow self-update only).
-    if (before.userId !== userId) {
-      throw new Error('You can only edit your own time entries.');
-    }
-
-    const beforeFieldVal = before[field] ?? null;
-
-    // Build the "after" view with the edited top-level field.
-    const after: TimeEntry = { ...before, [field]: value };
-    const hasClockOut = !!after.clockOutManual;
-
-    // Dual-write the matching segment field (S7 contract).
-    let segments = before.segments ? before.segments.map((s) => ({ ...s })) : [];
-    if (hasClockOut && after.clockInManual) {
-      // Closed shift: rebuild segments consistently + recompute total (replace
-      // mode collapses to the single corrected shift, matching admin UX).
-      const closePatch = buildConsistentClosePatch({
-        clockIn: after.clockInManual,
-        clockOut: after.clockOutManual,
-        skipLunch: !!after.skipLunch,
-        lunchOut: after.skipLunch ? undefined : (after.lunchOutManual || undefined),
-        lunchIn: after.skipLunch ? undefined : (after.lunchInManual || undefined),
-        clockOutSystem: before.clockOutSystem ?? Date.now(),
-        existingSegments: segments,
-        mode: 'replace',
-      });
-      segments = closePatch.segments;
-      after.totalWorkMinutes = closePatch.totalWorkMinutes;
-      after.totalHours = closePatch.totalWorkMinutes / 60;
-    } else {
-      // Open shift: update the active (incomplete) segment's manual field;
-      // total is derived live by mapEntry, so don't persist a total here.
-      const activeIdx = segments.findIndex((s) => !s.complete);
-      if (activeIdx >= 0) {
-        segments[activeIdx][field] = value;
-      }
-    }
-
-    // 1) Audit FIRST (mandatory, non-bypassable). Employee self-audit.
-    await auditLogService.logTimeCorrection({
-      actorUid: userId,
-      actorName,
-      actorRole: 'employee',
-      targetId: entryId,
-      before: {
-        [field]: beforeFieldVal,
-        totalWorkMinutes: before.totalWorkMinutes,
-        status: before.status,
-      },
-      after: {
-        [field]: value,
-        totalWorkMinutes: after.totalWorkMinutes,
-        status: 'corrected',
-      },
-      reason: trimmedReason,
-    });
-
-    // 2) Only after the durable audit row exists, mutate the time record.
-    await updateDoc(doc(db, 'timeEntries', entryId), {
-      [field]: value,
-      segments: segments.map((s) => stripUndefined(s)),
-      ...(hasClockOut
-        ? { totalWorkMinutes: after.totalWorkMinutes, totalHours: after.totalHours }
-        : {}),
-      status: 'corrected',
-      updatedAt: Timestamp.now(),
-      updatedBy: userId,
-    });
-
-    // Re-read + return hydrated view.
-    const freshSnap = await getDoc(doc(db, 'timeEntries', entryId));
-    if (!freshSnap.exists()) throw new Error('Entry not found after update.');
-    return mapEntry(entryId, freshSnap.data());
   }
 
   /**

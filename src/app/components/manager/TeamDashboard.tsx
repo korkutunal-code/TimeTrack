@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
-import { TimeEntry, dbService, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined } from '../../lib/database';
+import { TimeEntry, dbService, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined, getEntryTotals } from '../../lib/database';
 import { doc, updateDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { auditLogService } from '../../../services/auditLogService';
@@ -871,7 +871,7 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
                 <p className="text-sm font-semibold text-slate-700 mb-2">Preview Changes</p>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-slate-500">Total hours before:</span>
-                  <span className="font-medium">{dbService.calculateTotalHours(originalEditingEntry).toFixed(2)} hrs</span>
+                  <span className="font-medium">{getEntryTotals(originalEditingEntry).totalHours.toFixed(2)} hrs</span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-slate-500">Total hours after:</span>
