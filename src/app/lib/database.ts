@@ -1419,11 +1419,11 @@ class DatabaseService {
     const empUserSnap = await getDoc(doc(db, 'users', request.employee_id));
     const empTz = empUserSnap.exists() ? (empUserSnap.data().timezone as string | undefined) : undefined;
     const anchorDate = before.date ?? before.workDate;
-    const sysField = fieldToSystemField(field);
-    const recomputedSys =
-      sysField && empTz
-        ? epochFromLocalWallTime(value, anchorDate, empTz, after.clockInManual)
-        : undefined;
+
+    // The recomputed closed/active segment (with all four *System boundaries
+    // refreshed from the corrected manual times). Matches the direct Admin/Team
+    // correction flows. Only computed when the employee's tz is known.
+    let sysSeg: TimeSegment | null = null;
 
     if (hasClockOut && after.clockInManual) {
       const closePatch = buildConsistentClosePatch({
@@ -1432,22 +1432,37 @@ class DatabaseService {
         skipLunch: !!after.skipLunch,
         lunchOut: after.skipLunch ? undefined : (after.lunchOutManual || undefined),
         lunchIn: after.skipLunch ? undefined : (after.lunchInManual || undefined),
-        clockOutSystem:
-          field === 'clockOutManual' && recomputedSys !== undefined
-            ? recomputedSys
-            : (before.clockOutSystem ?? Date.now()),
+        clockOutSystem: before.clockOutSystem ?? Date.now(),
         clockInSystem: before.clockInSystem,
         existingSegments: segments,
         // 'append' preserves prior archived split-shift segments. 'replace'
         // would collapse them, destroying other shifts' segments + totals.
         mode: 'append',
       });
-      segments = closePatch.segments;
+      // buildConsistentClosePatch only stamps clockOutSystem (with the stale
+      // before value for non-clockOut edits) and never sets clockIn/lunch
+      // *System. Recompute ALL four boundaries of the closed segment from the
+      // corrected manual times so Payroll rows / Team view show the corrected
+      // instants instead of inherited stale values.
+      sysSeg = empTz
+        ? recomputeSegmentSystemTimestamps(closePatch.closedSegment, anchorDate, empTz)
+        : null;
+      const finalClosed = sysSeg ?? closePatch.closedSegment;
+      segments = closePatch.segments.map((s) =>
+        (s.id === closePatch.closedSegment.id ? (stripUndefined(finalClosed) as TimeSegment) : s),
+      );
       after.totalWorkMinutes = closePatch.totalWorkMinutes;
       after.totalHours = closePatch.totalWorkMinutes / 60;
     } else {
       const activeIdx = segments.findIndex((s) => !s.complete);
-      if (activeIdx >= 0) segments[activeIdx][field] = value;
+      if (activeIdx >= 0) {
+        // Recompute the open segment's *System boundaries from the corrected
+        // manual times (only boundaries with a manual value are recomputed).
+        sysSeg = empTz
+          ? recomputeSegmentSystemTimestamps({ ...segments[activeIdx], [field]: value }, anchorDate, empTz)
+          : null;
+        segments[activeIdx] = sysSeg ?? { ...segments[activeIdx], [field]: value };
+      }
     }
 
     // 6) Audit FIRST (mandatory, non-bypassable). Admin action.
@@ -1467,14 +1482,23 @@ class DatabaseService {
     // present), set the day-completion flags so mapEntry (which derives
     // completeness from dayComplete) renders the entry as Complete — without
     // these, an admin-approved clock-out would still show as "Incomplete/Open".
-    // Also write the corrected top-level *System epoch (millis + Timestamp) so
-    // Team view / mapEntry (which read the top-level *SystemTime) show the
-    // corrected instant, not the stale punch or the approval moment.
-    const sysPatch: Record<string, unknown> = {};
-    if (sysField && recomputedSys !== undefined) {
-      sysPatch[sysField] = recomputedSys;
-      sysPatch[`${sysField}Time`] = Timestamp.fromMillis(recomputedSys);
-    }
+    // Write the corrected top-level *System epochs (millis + Timestamp) from the
+    // recomputed segment so root and segment stay in lock-step and Team view /
+    // mapEntry (which read the top-level *SystemTime) show the corrected
+    // instants. Lunch *System is guarded by skipLunch (the closed segment has no
+    // lunch fields when the shift skips lunch).
+    const sysPatch: Record<string, unknown> = sysSeg
+      ? stripUndefined({
+          clockInSystem: sysSeg.clockInSystem,
+          clockOutSystem: sysSeg.clockOutSystem,
+          lunchOutSystem: after.skipLunch ? undefined : sysSeg.lunchOutSystem,
+          lunchInSystem: after.skipLunch ? undefined : sysSeg.lunchInSystem,
+          clockInSystemTime: sysSeg.clockInSystem != null ? Timestamp.fromMillis(sysSeg.clockInSystem) : undefined,
+          clockOutSystemTime: sysSeg.clockOutSystem != null ? Timestamp.fromMillis(sysSeg.clockOutSystem) : undefined,
+          lunchOutSystemTime: after.skipLunch || sysSeg.lunchOutSystem == null ? undefined : Timestamp.fromMillis(sysSeg.lunchOutSystem),
+          lunchInSystemTime: after.skipLunch || sysSeg.lunchInSystem == null ? undefined : Timestamp.fromMillis(sysSeg.lunchInSystem),
+        })
+      : {};
     await updateDoc(doc(db, 'timeEntries', entryId), {
       [field]: value,
       segments: segments.map((s) => stripUndefined(s)),
