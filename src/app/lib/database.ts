@@ -493,6 +493,19 @@ class DatabaseService {
     return mapEntry(snap.id, snap.data());
   }
 
+  /**
+   * Fetch a single time entry by its Firestore doc id (`${uid}_${date}`).
+   * Used to resolve the persisted SOURCE doc of a synthetic exploded
+   * cross-midnight part when it isn't present in a component's loaded list
+   * (e.g. filtered out / not yet loaded) — so writes always target the real
+   * doc, never the synthetic `${sourceId}@${date}` display id.
+   */
+  async getTimeEntryById(docId: string): Promise<TimeEntry | null> {
+    const snap = await getDoc(doc(db, 'timeEntries', docId));
+    if (!snap.exists()) return null;
+    return mapEntry(snap.id, snap.data());
+  }
+
   async getTimeEntriesForUser(userId: string): Promise<TimeEntry[]> {
     const q = query(
       collection(db, 'timeEntries'),

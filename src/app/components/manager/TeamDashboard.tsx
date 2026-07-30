@@ -215,24 +215,40 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
     setDetailsOpen(true);
   };
 
-  const handleEditClick = (entry: TimeEntry) => {
-    const source = resolveSourceEntry(entry);
-    setEditingEntry({ ...source });
-    setOriginalEditingEntry(source);
-    setAdminNotes(source.adminNotes || '');
-    setEditEntryOpen(true);
-  };
-
   // Exploded synthetic day-portions (from the cross-midnight localDate
   // explosion) must be edited/voided via their SOURCE doc — the persisted
-  // cross-midnight record — not the synthetic `${uid}_${date}` id (which may
-  // not exist in Firestore, and whose partial segments[] would corrupt the doc
-  // if written back with the 'replace' close-patch). Resolve to the full
-  // source entry from `entries` state.
-  const resolveSourceEntry = (entry: TimeEntry): TimeEntry =>
-    entry.synthetic && entry.sourceId
-      ? (entries.find((e) => e.id === entry.sourceId) ?? entry)
-      : entry;
+  // cross-midnight record — not the synthetic `${sourceId}@${date}` display id
+  // (which does not exist in Firestore and whose partial segments[] would
+  // corrupt the doc if written back with the 'replace' close-patch).
+  //
+  // Resolve to the full source entry: first from the loaded `entries` (fast
+  // path), then — if absent (filtered out / not yet loaded) — fetched directly
+  // from Firestore by its sourceId. If the source genuinely doesn't exist,
+  // THROW so the caller aborts with a clear error instead of silently writing
+  // to a nonexistent synthetic id (which would fail or, with legacy ids,
+  // corrupt an unrelated doc).
+  const resolveSourceEntry = async (entry: TimeEntry): Promise<TimeEntry> => {
+    if (!entry.synthetic || !entry.sourceId) return entry;
+    const found = entries.find((e) => e.id === entry.sourceId);
+    if (found) return found;
+    const fetched = await dbService.getTimeEntryById(entry.sourceId);
+    if (!fetched) {
+      throw new Error('The source time entry for this shift could not be found. It may have been removed.');
+    }
+    return fetched;
+  };
+
+  const handleEditClick = async (entry: TimeEntry) => {
+    try {
+      const source = await resolveSourceEntry(entry);
+      setEditingEntry({ ...source });
+      setOriginalEditingEntry(source);
+      setAdminNotes(source.adminNotes || '');
+      setEditEntryOpen(true);
+    } catch (e: unknown) {
+      toast.error((e as Error).message || 'Cannot edit this entry');
+    }
+  };
 
   const handleSaveEdit = async () => {
     if (!editingEntry || !originalEditingEntry || !adminNotes.trim()) {
@@ -359,8 +375,10 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
     }
     try {
       // Void the persisted source doc (a synthetic day-portion can't be voided
-      // on its own — its id may not exist in Firestore).
-      const source = resolveSourceEntry(entry);
+      // on its own — its synthetic id doesn't exist in Firestore). Resolved
+      // (fetched on demand if absent from the loaded list); throws if the
+      // source genuinely doesn't exist.
+      const source = await resolveSourceEntry(entry);
       const before = { ...source };
       await auditLogService.logVoidEntry({
         actorUid: user.uid,
@@ -380,8 +398,8 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
       });
       toast.success('Entry voided');
       loadEntries();
-    } catch {
-      toast.error('Failed to void entry');
+    } catch (e: unknown) {
+      toast.error((e as Error).message || 'Failed to void entry');
     }
   };
 
