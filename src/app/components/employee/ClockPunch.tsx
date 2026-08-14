@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { Clock, Coffee, LogOut, RefreshCw, CalendarDays, AlertTriangle, WifiOff } from 'lucide-react';
 
 import type { User } from '../../lib/auth';
+import { dbService } from '../../lib/database';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { ClockStatus } from './ClockStatus';
@@ -15,7 +16,8 @@ import {
   type PunchStatus,
   type WeekSummary,
 } from '../../../services/clockService';
-import { formatHoursHMM, getEmployeeTimezone, getTimezoneAbbreviation } from '../../../utils/timeCalculations';
+import { formatHoursHMM, getEmployeeTimezone, getTimezoneAbbreviation, getLocalDate, subtractLocalDays } from '../../../utils/timeCalculations';
+import { detectGuardrailWarning } from '../../../utils/shiftGuardrails';
 
 interface ClockPunchProps {
   user: User;
@@ -36,6 +38,32 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   // midnight split, and per-local-date totals (the local-time-tracking
   // refactor). Falls back to the OS timezone when the profile has none.
   const employeeTz = useMemo(() => getEmployeeTimezone(user.timezone), [user.timezone]);
+  // Non-blocking "Action Required" warning when a recent entry was auto-closed
+  // or auto-ended by the server-side guardrails. WARNING ONLY — it never blocks
+  // or disables the Clock In button for a new shift.
+  const [guardrailWarning, setGuardrailWarning] = useState<string | null>(null);
+
+  // Detect any recent guardrail action (auto-closed shift / auto-ended lunch)
+  // so the employee sees a warning banner. Best-effort and silent on failure —
+  // the banner is advisory only and must never interfere with punching.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const today = getLocalDate(employeeTz);
+        const start = subtractLocalDays(today, 7, employeeTz);
+        const recent = await dbService.getTimeEntriesForUserInRange(user.uid, start, today);
+        if (cancelled) return;
+        const detection = detectGuardrailWarning(recent);
+        setGuardrailWarning(detection.hasWarning ? detection.reason : null);
+      } catch {
+        // Silent — advisory banner only.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user.uid, employeeTz]);
   // Layer 2: persistent failure banner. A fleeting toast was easy to miss on
   // a flaky mobile connection, leaving the employee believing their clock-out
   // landed when it hadn't (root cause of the stuck open shifts on
@@ -211,6 +239,18 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
           One-tap clock in/out
         </p>
       </div>
+
+      {/* Non-blocking guardrail warning: prior shift/lunch was auto-updated by
+          the system. Advisory only — Clock In stays fully enabled below. */}
+      {guardrailWarning && (
+        <div
+          role="alert"
+          className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800 shadow-sm"
+        >
+          <AlertTriangle className="size-5 shrink-0 mt-0.5 text-amber-500" />
+          <p className="text-sm font-medium leading-snug">{guardrailWarning}</p>
+        </div>
+      )}
 
       {/* Layer 2: persistent write-failure banner. Stays visible until the
           action succeeds on retry or is dismissed — a fleeting toast was the

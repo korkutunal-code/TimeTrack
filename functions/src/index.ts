@@ -6,4 +6,5 @@ if (!admin.apps.length) {
 }
 
 export * from './reminders';
+export * from './autoGuardrails';
 // We export the entire file so Cloud Functions router picks up `processReminders`

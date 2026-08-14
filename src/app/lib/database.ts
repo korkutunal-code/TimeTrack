@@ -27,6 +27,10 @@ export interface TimeSegment {
   complete?: boolean;       // clockOut recorded
   taskId?: string;          // Dragme task id (optional)
   autoClosed?: boolean;     // set when watchdog auto-closes the segment
+  /** Set when the 1-hour lunch auto-end guardrail ends an in-progress lunch. */
+  autoEndedLunch?: boolean;
+  /** Set when a server-side guardrail action affected this segment. */
+  flagged?: boolean;
   /** Local calendar date (YYYY-MM-DD) this segment is attributed to. Set by the
    * automatic local-midnight split; absent on single-day segments (their date
    * is the owning doc's workDate). */
@@ -87,6 +91,13 @@ export interface TimeEntry {
   status?: 'active' | 'corrected' | 'voided' | 'archived';
 
   completedAt?: number;     // millis
+
+  /** Server-side auto-guardrail markers (10 PM / 12h auto-close). */
+  autoClosed?: boolean;
+  /** Server-side 1-hour lunch auto-end marker. */
+  autoEndedLunch?: boolean;
+  /** Set when a server-side auto-guardrail action touched this entry. */
+  flagged?: boolean;
 
   /** Synthesized current-segment view exposed by mapEntry (not persisted). */
   currentSegment?: TimeSegment | null;
@@ -211,6 +222,9 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
     anomalyFlag: data.anomaly_flag === true,
     status: data.status || 'active',
     completedAt: tsToMillis(data.completedAt),
+    autoClosed: data.autoClosed === true,
+    autoEndedLunch: data.autoEndedLunch === true,
+    flagged: data.flagged === true,
   };
 
   // --- Split-shift segments ---------------------------------------------
@@ -240,6 +254,8 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
       // segment's actual persisted value instead.
       complete: s.complete === true,
       autoClosed: s.autoClosed === true,
+      autoEndedLunch: s.autoEndedLunch === true,
+      flagged: s.flagged === true,
       // Local-midnight split attribution fields (present on split segments).
       localDate: typeof s.localDate === 'string' ? s.localDate : undefined,
       splitFromMidnight: s.splitFromMidnight === true,
@@ -301,6 +317,7 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
           id: `${id}_current`,
           complete: !!entry.clockOutManual,
           autoClosed: data.autoClosed === true,
+          autoEndedLunch: data.autoEndedLunch === true,
           ...stripUndefined(fromEntry),
         };
         if (data.taskId) out.taskId = data.taskId; // omit when not set
@@ -462,6 +479,22 @@ export function getEntryTotals(entry: Partial<TimeEntry>): { totalWorkMinutes: n
 
 export function calculateFlags(entry: TimeEntry): string[] {
   const flags: string[] = [];
+
+  // Server-side auto-guardrail flags — surface regardless of completion state,
+  // because an auto-ended lunch leaves the shift OPEN (entry.complete === false)
+  // yet still must appear in the Admin Dashboard's Flags count / filtered list.
+  const segs = entry.segments ?? [];
+  const autoClosed =
+    entry.autoClosed === true ||
+    entry.currentSegment?.autoClosed === true ||
+    segs.some((s) => s.autoClosed === true);
+  const autoEndedLunch =
+    entry.autoEndedLunch === true ||
+    entry.currentSegment?.autoEndedLunch === true ||
+    segs.some((s) => s.autoEndedLunch === true);
+  if (autoClosed) flags.push('auto_closed_shift');
+  if (autoEndedLunch) flags.push('auto_ended_lunch');
+
   if (!entry.complete) return flags;
 
   // Short/long lunch

@@ -9,6 +9,7 @@ import type { CorrectionRequest, TimeEntry } from '../../lib/database';
 import { dbService, buildConsistentClosePatch, createInitialSegment, stripUndefined } from '../../lib/database';
 import { db } from '../../lib/firebase';
 import { auditLogService } from '../../../services/auditLogService';
+import { findOpenShiftEntry } from '../../../services/clockService';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -190,6 +191,22 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
     if (!validation.valid) {
       toast.error(validation.message);
       return;
+    }
+
+    // Enforce the one-open-shift invariant across recent days (including an
+    // unclosed cross-midnight shift from a previous day). This mirrors
+    // clockService.punchIn so the legacy form can't open a second overlapping
+    // shift. Completed entries are exempt (they start a fresh split shift).
+    try {
+      const openShift = await findOpenShiftEntry(user.uid, tz);
+      if (openShift && !entry?.complete) {
+        toast.error(
+          `You already have an open shift (started ${openShift.date}). Clock out before starting a new one.`
+        );
+        return;
+      }
+    } catch {
+      // Fall back to the local check below if the cross-day scan fails.
     }
 
     // Block only if there's an OPEN (incomplete) clock-in. Completed entries
