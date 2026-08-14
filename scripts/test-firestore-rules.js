@@ -141,10 +141,38 @@ async function main() {
     await assertSucceeds(dref(dbOf(manager), "users", "emp-2").get());
     await assertSucceeds(dref(dbOf(admin), "users", "emp-2").get());
 
-    // only admin can update users
+    // Employees may update their OWN profile, but only self-service fields
+    // (timezone + updatedAt). Protected fields remain admin-only.
+    await assertSucceeds(
+      dref(dbOf(emp1), "users", "emp-1").set({ timezone: "Asia/Bangkok" }, { merge: true }),
+    );
+    await assertSucceeds(
+      dref(dbOf(emp1), "users", "emp-1").set(
+        { timezone: "Asia/Bangkok", updatedAt: new Date() },
+        { merge: true },
+      ),
+    );
+
+    // employee cannot update protected fields (name, role, workModel, active)
     await assertFails(
       dref(dbOf(emp1), "users", "emp-1").set({ name: "Employee 1 Updated" }, { merge: true }),
     );
+    await assertFails(
+      dref(dbOf(emp1), "users", "emp-1").set({ role: "admin" }, { merge: true }),
+    );
+    await assertFails(
+      dref(dbOf(emp1), "users", "emp-1").set({ workModel: "Remote" }, { merge: true }),
+    );
+    await assertFails(
+      dref(dbOf(emp1), "users", "emp-1").set({ active: false }, { merge: true }),
+    );
+
+    // employee cannot update another user's profile
+    await assertFails(
+      dref(dbOf(emp1), "users", "emp-2").set({ timezone: "Asia/Bangkok" }, { merge: true }),
+    );
+
+    // admin can still update any user field
     await assertSucceeds(
       dref(dbOf(admin), "users", "emp-1").set({ name: "Employee 1 Updated" }, { merge: true }),
     );

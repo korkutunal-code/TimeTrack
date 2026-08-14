@@ -93,7 +93,14 @@ export default function App() {
         setAllUsers((prev) =>
           prev.map((u) => (u.uid === currentUser.uid ? { ...u, timezone: prevTz } : u)),
         );
-        toast.error('Could not save time zone: ' + ((e as Error).message || String(e)));
+        if (opts?.silent) {
+          // Auto-sync on load: permission errors (e.g. legacy docs not yet
+          // matching the self-service rule) or transient network failures must
+          // not spam an error toast on every page load. Log instead.
+          console.warn('Could not auto-sync time zone to profile:', e);
+        } else {
+          toast.error('Could not save time zone: ' + ((e as Error).message || String(e)));
+        }
       }
     },
     [currentUser],

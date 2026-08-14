@@ -40,8 +40,20 @@ service cloud.firestore {
         request.resource.data.role == 'employee'
       );
       
-      // Only admins can update/delete user data
-      allow update, delete: if hasRole('admin');
+      // Admins can update any user field. Non-admin users may update only
+      // their OWN profile, and only self-service fields (timezone + the
+      // `updatedAt` bookkeeping timestamp). Protected fields like role,
+      // workModel, workModelId, active, and uid remain admin-only, so an
+      // employee cannot escalate their own role or change their work model.
+      function isSelfServiceProfileUpdate() {
+        return isAuthenticated() &&
+          request.auth.uid == userId &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['timezone', 'updatedAt']);
+      }
+
+      allow update: if hasRole('admin') || isSelfServiceProfileUpdate();
+      allow delete: if hasRole('admin');
     }
     
     // Time entries collection
