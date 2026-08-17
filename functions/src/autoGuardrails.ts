@@ -71,10 +71,10 @@ function getOpenSegment(data: any): OpenSegment | null {
 }
 
 /** Work minutes for a closed span from system timestamps, lunch-aware. */
-function computeWorkMinutes(openSeg: OpenSegment, closeAtMs: number): number {
+function computeWorkMinutes(openSeg: OpenSegment, closedAtMs: number): number {
     const inSys = openSeg.clockInSystem;
     if (typeof inSys !== 'number') return 0;
-    let gross = Math.max(0, Math.round((closeAtMs - inSys) / 60000));
+    let gross = Math.max(0, Math.round((closedAtMs - inSys) / 60000));
     if (openSeg.skipLunch !== true) {
         const lo = openSeg.lunchOutSystem;
         const li = openSeg.lunchInSystem;
@@ -123,6 +123,46 @@ async function writeAuditLog(
  * Admin SDK it bypasses Firestore security rules, which is required for the
  * cross-user system write + audit append.
  */
+/**
+ * Fetch every candidate open-shift doc.
+ *
+ * Query audit (2026-08-18):
+ *  - `dayComplete == false` matches shifts created today AND shifts that
+ *    crossed a local midnight while still open: the midnight-split path in
+ *    clockService keeps the open segment on the ORIGINAL `${uid}_${date}` doc
+ *    (day-2+ docs are only written, already closed, at punch-out), so an open
+ *    split shift still carries `dayComplete: false` and is matched here.
+ *  - GAP: Firestore `== false` does NOT match docs where `dayComplete` is
+ *    missing entirely (legacy rows written before the field existed). Those
+ *    are fetched by a second, time-bounded query and merged in.
+ */
+async function fetchOpenEntryCandidates(nowMs: number): Promise<admin.firestore.QueryDocumentSnapshot[]> {
+    const byId = new Map<string, admin.firestore.QueryDocumentSnapshot>();
+
+    const primarySnap = await db.collection('timeEntries')
+        .where('dayComplete', '==', false)
+        .limit(1000)
+        .get();
+    for (const d of primarySnap.docs) byId.set(d.id, d);
+
+    // Legacy fallback: docs with NO `dayComplete` field. Bounded to shifts
+    // started in the last 7 days (a still-open shift older than that is a
+    // historical runaway — handled by repairRunawayShifts, not the cron).
+    const legacyCutoffMs = nowMs - 7 * 24 * 60 * 60 * 1000;
+    const legacySnap = await db.collection('timeEntries')
+        .where('clockInSystem', '>', legacyCutoffMs)
+        .limit(1000)
+        .get();
+    for (const d of legacySnap.docs) {
+        if (byId.has(d.id)) continue;
+        const data = d.data() as any;
+        if (data.dayComplete !== undefined) continue; // has the field — primary query owns it
+        byId.set(d.id, d);
+    }
+
+    return Array.from(byId.values());
+}
+
 export const runAutoGuardrails = functions.pubsub
     .schedule('every 15 minutes')
     .onRun(async () => {
@@ -132,36 +172,44 @@ export const runAutoGuardrails = functions.pubsub
             const usersById = new Map<string, any>();
             for (const u of usersSnap.docs) usersById.set(u.id, u.data());
 
-            const openSnap = await db.collection('timeEntries')
-                .where('dayComplete', '==', false)
-                .limit(1000)
-                .get();
-
             const nowMs = Date.now();
+            const candidates = await fetchOpenEntryCandidates(nowMs);
+            functions.logger.info(`Auto-guardrails: query returned ${candidates.length} candidate open-entr${candidates.length === 1 ? 'y' : 'ies'}.`);
 
-            for (const docSnap of openSnap.docs) {
+            for (const docSnap of candidates) {
                 const entryId = docSnap.id;
                 const data = docSnap.data() as any;
                 const userData = usersById.get(String(data.userId || ''));
-                if (!userData) continue; // orphaned entry — skip
+                if (!userData) {
+                    functions.logger.info(`Auto-guardrails: skipping ${entryId} — orphaned entry (no active user ${data.userId}).`);
+                    continue;
+                }
 
                 const openSeg = getOpenSegment(data);
-                if (!openSeg || typeof openSeg.clockInSystem !== 'number') continue;
+                if (!openSeg || typeof openSeg.clockInSystem !== 'number') {
+                    functions.logger.info(`Auto-guardrails: skipping ${entryId} — no open segment with a system clock-in.`);
+                    continue;
+                }
 
                 const workModel = userData.workModel === 'Remote' ? 'Remote' : 'On-site';
                 const timezone =
                     typeof userData.timezone === 'string' && userData.timezone.trim()
                         ? userData.timezone
                         : DEFAULT_TIMEZONE;
+                const elapsedHours = (nowMs - openSeg.clockInSystem) / 3600000;
+                functions.logger.info(
+                    `Auto-guardrails: evaluating entry=${entryId} user=${data.userId} ` +
+                    `workModel=${workModel} timezone=${timezone} elapsedHours=${elapsedHours.toFixed(2)}`,
+                );
 
                 // --- 1) Shift auto-close (takes precedence over lunch auto-end) ----
-                let closeAtMs: number | null = null;
+                let closedAtMs: number | null = null;
                 let closeReason = '';
 
                 if (workModel === 'Remote') {
                     const candidate = openSeg.clockInSystem + REMOTE_MAX_SHIFT_MS;
                     if (nowMs >= candidate) {
-                        closeAtMs = candidate;
+                        closedAtMs = candidate;
                         closeReason = 'Remote shift reached the 12-hour limit';
                     }
                 } else {
@@ -173,22 +221,25 @@ export const runAutoGuardrails = functions.pubsub
                         candidate = moment.tz(`${nextDate} ${ON_SITE_CLOSE_HHMM}`, 'YYYY-MM-DD HH:mm', timezone).valueOf();
                     }
                     if (nowMs >= candidate) {
-                        closeAtMs = candidate;
+                        closedAtMs = candidate;
                         closeReason = 'On-site shift reached 10:00 PM local time';
                     }
                 }
 
-                if (closeAtMs !== null) {
-                    const closeManual = moment.tz(closeAtMs, timezone).format('HH:mm');
+                if (closedAtMs !== null) {
+                    // TS: `let` narrowing is discarded inside the segments.map
+                    // closure below — bind a const for use inside callbacks.
+                    const capMs: number = closedAtMs;
+                    const closeManual = moment.tz(closedAtMs, timezone).format('HH:mm');
                     // Close any in-progress lunch at the close instant so it is deducted.
                     const onLunch =
                         typeof openSeg.lunchOutSystem === 'number' &&
                         typeof openSeg.lunchInSystem !== 'number' &&
                         openSeg.skipLunch !== true;
-                    const effectiveLunchIn = onLunch ? closeAtMs : openSeg.lunchInSystem;
+                    const effectiveLunchIn = onLunch ? closedAtMs : openSeg.lunchInSystem;
                     const workMinutes = computeWorkMinutes(
                         { ...openSeg, lunchInSystem: effectiveLunchIn },
-                        closeAtMs,
+                        closedAtMs,
                     );
 
                     const before: Record<string, unknown> = {
@@ -200,12 +251,12 @@ export const runAutoGuardrails = functions.pubsub
 
                     const patch: Record<string, unknown> = {
                         clockOutManual: closeManual,
-                        clockOutSystem: closeAtMs,
-                        clockOutSystemTime: admin.firestore.Timestamp.fromMillis(closeAtMs),
+                        clockOutSystem: closedAtMs,
+                        clockOutSystemTime: admin.firestore.Timestamp.fromMillis(closedAtMs),
                         complete: true,
                         dayComplete: true,
                         currentStep: 4,
-                        completedAt: admin.firestore.Timestamp.fromMillis(closeAtMs),
+                        completedAt: admin.firestore.Timestamp.fromMillis(closedAtMs),
                         autoClosed: true,
                         flagged: true,
                         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -213,8 +264,8 @@ export const runAutoGuardrails = functions.pubsub
                     };
                     if (onLunch) {
                         patch.lunchInManual = closeManual;
-                        patch.lunchInSystem = closeAtMs;
-                        patch.lunchInSystemTime = admin.firestore.Timestamp.fromMillis(closeAtMs);
+                        patch.lunchInSystem = closedAtMs;
+                        patch.lunchInSystemTime = admin.firestore.Timestamp.fromMillis(closedAtMs);
                     }
 
                     // Close the matching open segment in segments[] too.
@@ -224,8 +275,8 @@ export const runAutoGuardrails = functions.pubsub
                                 const closed: any = {
                                     ...s,
                                     clockOutManual: closeManual,
-                                    clockOutSystem: closeAtMs,
-                                    clockOutSystemTime: admin.firestore.Timestamp.fromMillis(closeAtMs),
+                                    clockOutSystem: capMs,
+                                    clockOutSystemTime: admin.firestore.Timestamp.fromMillis(capMs),
                                     workMinutes,
                                     complete: true,
                                     autoClosed: true,
@@ -233,8 +284,8 @@ export const runAutoGuardrails = functions.pubsub
                                 };
                                 if (onLunch) {
                                     closed.lunchInManual = closeManual;
-                                    closed.lunchInSystem = closeAtMs;
-                                    closed.lunchInSystemTime = admin.firestore.Timestamp.fromMillis(closeAtMs);
+                                    closed.lunchInSystem = capMs;
+                                    closed.lunchInSystemTime = admin.firestore.Timestamp.fromMillis(capMs);
                                 }
                                 return closed;
                             }
@@ -256,7 +307,7 @@ export const runAutoGuardrails = functions.pubsub
                         before,
                         {
                             clockOutManual: closeManual,
-                            clockOutSystem: closeAtMs,
+                            clockOutSystem: closedAtMs,
                             autoClosed: true,
                             flagged: true,
                         },

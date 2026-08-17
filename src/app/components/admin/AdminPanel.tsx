@@ -4,6 +4,7 @@ import { SectionHelp } from '../ui/section-help';
 import { dbService, TimeEntry, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined, getEntryTotals, getPreservedSegmentsForEdit } from '../../lib/database';
 import { doc, Timestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { repairRunawayShifts } from '../../../services/repairRunawayShifts';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -18,7 +19,7 @@ import { UserAvatar } from '../ui/user-avatar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 import { WorkModelOverrideModal } from './WorkModelOverrideModal';
 import { toast } from 'sonner';
-import { UserPlus, Upload, Download, Edit, Trash2, CheckCircle2, Loader2, UserCheck, UserX, Building2, Laptop, Shield, Filter, Sliders, Briefcase, Settings } from 'lucide-react';
+import { UserPlus, Upload, Download, Edit, Trash2, CheckCircle2, Loader2, UserCheck, UserX, Building2, Laptop, Shield, Filter, Sliders, Briefcase, Settings, Wrench } from 'lucide-react';
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
@@ -787,6 +788,38 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     resetFilters();
   };
 
+  // One-time historical repair (client-side admin utility — org policy blocks
+  // deploying public callable invokers, so this reuses the authenticated admin
+  // path like "Correct Entry"): dry-run first, then confirm and apply.
+  const [repairing, setRepairing] = useState(false);
+  const handleRepairRunawayShifts = async () => {
+    setRepairing(true);
+    try {
+      const usersById = new Map(allUsers.map(u => [u.uid, u]));
+      const dry = await repairRunawayShifts({ admin: currentUser, usersById, dryRun: true });
+      if (!dry.repairs.length) {
+        toast.success(`No runaway shifts found (${dry.scanned} entries scanned).`);
+        return;
+      }
+      const list = dry.repairs
+        .slice(0, 10)
+        .map(r => `• ${r.userName || r.userId} (${r.entryId}) → cap ${r.capAtLocal} (${(r.totalWorkMinutes / 60).toFixed(2)}h)`)
+        .join('\n');
+      const more = dry.repairs.length > 10 ? `\n…and ${dry.repairs.length - 10} more` : '';
+      const confirmed = window.confirm(
+        `Found ${dry.repairs.length} runaway shift(s):\n${list}${more}\n\nApply repairs? This closes each shift at its guardrail cap, recomputes totals, and writes audit log entries.`,
+      );
+      if (!confirmed) return;
+      const applied = await repairRunawayShifts({ admin: currentUser, usersById, dryRun: false });
+      toast.success(`Repaired ${applied.repaired} runaway shift(s). See audit logs for details.`);
+    } catch (e: unknown) {
+      console.error('repairRunawayShifts failed', e);
+      toast.error(`Repair failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setRepairing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl overflow-hidden">
@@ -803,6 +836,10 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
           <Button variant="outline" onClick={() => setCorrectEntryOpen(true)}>
             <Edit className="size-4 mr-2" />
             Correct Entry
+          </Button>
+          <Button variant="outline" onClick={handleRepairRunawayShifts} disabled={repairing}>
+            {repairing ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Wrench className="size-4 mr-2" />}
+            Repair Runaway Shifts
           </Button>
           <div className="ml-auto">
             <SectionHelp
