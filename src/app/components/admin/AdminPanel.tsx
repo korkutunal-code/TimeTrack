@@ -4,7 +4,7 @@ import { SectionHelp } from '../ui/section-help';
 import { dbService, TimeEntry, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined, getEntryTotals, getPreservedSegmentsForEdit } from '../../lib/database';
 import { doc, Timestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { repairRunawayShifts } from '../../../services/repairRunawayShifts';
+import { repairRunawayShifts, repairDefaultEndDate, REPAIR_DEFAULT_START_DATE, type RepairRunawayResult } from '../../../services/repairRunawayShifts';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -790,28 +790,52 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
 
   // One-time historical repair (client-side admin utility — org policy blocks
   // deploying public callable invokers, so this reuses the authenticated admin
-  // path like "Correct Entry"): dry-run first, then confirm and apply.
+  // path like "Correct Entry"): pick a date window, dry-run scan, then apply.
+  const [repairOpen, setRepairOpen] = useState(false);
+  const [repairStart, setRepairStart] = useState(REPAIR_DEFAULT_START_DATE);
+  const [repairEnd, setRepairEnd] = useState(repairDefaultEndDate);
+  const [repairPreview, setRepairPreview] = useState<RepairRunawayResult | null>(null);
   const [repairing, setRepairing] = useState(false);
-  const handleRepairRunawayShifts = async () => {
+
+  const runRepairScan = async () => {
+    setRepairing(true);
+    setRepairPreview(null);
+    try {
+      const usersById = new Map(allUsers.map(u => [u.uid, u]));
+      const res = await repairRunawayShifts({
+        admin: currentUser,
+        usersById,
+        startDate: repairStart,
+        endDate: repairEnd,
+        dryRun: true,
+      });
+      setRepairPreview(res);
+      if (!res.repairs.length) {
+        toast.info(`No runaway shifts found (${res.scanned} entries scanned).`);
+      }
+    } catch (e: unknown) {
+      console.error('repairRunawayShifts scan failed', e);
+      toast.error(`Scan failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  const applyRepairs = async () => {
+    if (!repairPreview || !repairPreview.repairs.length) return;
     setRepairing(true);
     try {
       const usersById = new Map(allUsers.map(u => [u.uid, u]));
-      const dry = await repairRunawayShifts({ admin: currentUser, usersById, dryRun: true });
-      if (!dry.repairs.length) {
-        toast.success(`No runaway shifts found (${dry.scanned} entries scanned).`);
-        return;
-      }
-      const list = dry.repairs
-        .slice(0, 10)
-        .map(r => `• ${r.userName || r.userId} (${r.entryId}) → cap ${r.capAtLocal} (${(r.totalWorkMinutes / 60).toFixed(2)}h)`)
-        .join('\n');
-      const more = dry.repairs.length > 10 ? `\n…and ${dry.repairs.length - 10} more` : '';
-      const confirmed = window.confirm(
-        `Found ${dry.repairs.length} runaway shift(s):\n${list}${more}\n\nApply repairs? This closes each shift at its guardrail cap, recomputes totals, and writes audit log entries.`,
-      );
-      if (!confirmed) return;
-      const applied = await repairRunawayShifts({ admin: currentUser, usersById, dryRun: false });
+      const applied = await repairRunawayShifts({
+        admin: currentUser,
+        usersById,
+        startDate: repairStart,
+        endDate: repairEnd,
+        dryRun: false,
+      });
       toast.success(`Repaired ${applied.repaired} runaway shift(s). See audit logs for details.`);
+      setRepairPreview(null);
+      setRepairOpen(false);
     } catch (e: unknown) {
       console.error('repairRunawayShifts failed', e);
       toast.error(`Repair failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -837,8 +861,8 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             <Edit className="size-4 mr-2" />
             Correct Entry
           </Button>
-          <Button variant="outline" onClick={handleRepairRunawayShifts} disabled={repairing}>
-            {repairing ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Wrench className="size-4 mr-2" />}
+          <Button variant="outline" onClick={() => setRepairOpen(true)}>
+            <Wrench className="size-4 mr-2" />
             Repair Runaway Shifts
           </Button>
           <div className="ml-auto">
@@ -1026,6 +1050,82 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
           </div>
         </CardContent>
       </Card>
+
+      {/* Repair Runaway Shifts Dialog */}
+      <Dialog open={repairOpen} onOpenChange={setRepairOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Repair Runaway Shifts</DialogTitle>
+            <DialogDescription>
+              Scan a date window for runaway shifts — open entries past their guardrail cap, and
+              completed entries with segments past the cap (On-site: 10:00 PM local; Remote: 12 hours).
+              Run a dry scan first, then apply. Every repair is audit-logged.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="repair-start">Start date</Label>
+              <Input
+                id="repair-start"
+                type="date"
+                value={repairStart}
+                onChange={(e) => { setRepairStart(e.target.value); setRepairPreview(null); }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="repair-end">End date (defaults to today)</Label>
+              <Input
+                id="repair-end"
+                type="date"
+                value={repairEnd}
+                onChange={(e) => { setRepairEnd(e.target.value); setRepairPreview(null); }}
+              />
+            </div>
+          </div>
+          {repairPreview && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+              {repairPreview.repairs.length === 0 ? (
+                <p className="text-slate-600">
+                  No runaway shifts found ({repairPreview.scanned} entries scanned in window).
+                </p>
+              ) : (
+                <>
+                  <p className="font-medium text-slate-800 mb-2">
+                    {repairPreview.repairs.length} runaway shift(s) found ({repairPreview.scanned} scanned):
+                  </p>
+                  <ul className="max-h-56 overflow-y-auto space-y-1 text-slate-700">
+                    {repairPreview.repairs.map(r => (
+                      <li key={r.entryId} className="leading-snug">
+                        <span className="font-medium">{r.userName || r.userId}</span>
+                        <span className="text-slate-500"> ({r.workModel}{r.wasComplete ? ', completed' : ', open'})</span>
+                        {' → '}{(r.totalWorkMinutes / 60).toFixed(2)}h after cap
+                        <span className="block text-xs text-slate-500">{r.caps.join('; ')}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={runRepairScan}
+              disabled={repairing || !repairStart || !repairEnd}
+            >
+              {repairing && !repairPreview ? <Loader2 className="size-4 mr-2 animate-spin" /> : null}
+              Dry Run Scan
+            </Button>
+            <Button
+              onClick={applyRepairs}
+              disabled={repairing || !repairPreview || repairPreview.repairs.length === 0}
+            >
+              {repairing && repairPreview ? <Loader2 className="size-4 mr-2 animate-spin" /> : null}
+              Apply Repairs ({repairPreview?.repairs.length ?? 0})
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Create User Dialog */}
       <Dialog open={createUserOpen} onOpenChange={setCreateUserOpen}>

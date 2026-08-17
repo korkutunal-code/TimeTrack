@@ -1,17 +1,20 @@
 /**
  * One-time admin repair utility for historical runaway entries.
  *
- * Replaces the former `repairRunawayShifts` Cloud Function: deploying a v1
- * callable requires granting `roles/cloudfunctions.invoker` to allUsers,
- * which the Google Cloud org policy blocks. The Admin Panel already has an
- * authenticated admin path (same as "Correct Entry") — firestore.rules allow
- * admins to update any timeEntry and append auditLogs — so the repair runs
- * client-side under the signed-in admin instead of a public invoker function.
+ * Runs client-side under the signed-in admin (org policy blocks deploying
+ * public callable invokers, and firestore.rules already allow admins to
+ * update any timeEntry + append auditLogs — the same path "Correct Entry"
+ * uses).
  *
  * Policy (mirrors the server-side autoGuardrails cron):
- *   - On-site: cap the un-split open shift at 10:00 PM local (next local day
- *     when the clock-in itself was after 10 PM).
- *   - Remote: cap the shift at 12 hours from the initial clock-in.
+ *   - On-site: cap any shift segment at 10:00 PM local (next local day when
+ *     the clock-in itself was after 10 PM).
+ *   - Remote: cap any shift segment at 12 hours from its clock-in.
+ *
+ * BOTH still-open entries and completed entries (dayComplete === true) are
+ * inspected: a completed entry whose segment ran past the cap (e.g. a 24-hour
+ * "completed" runaway) is flagged and capped the same way.
+ *
  * Totals are recomputed via the canonical read-side SSOT `getEntryTotals`
  * (AGENTS.md), the entry is flagged/autoClosed, and every repair appends an
  * immutable auditLogs row with a mandatory reason (audit-mandatory-reason
@@ -27,9 +30,14 @@ import type { User } from '../app/lib/auth';
 const ON_SITE_CLOSE_HHMM = '22:00';
 const REMOTE_MAX_SHIFT_MS = 12 * 60 * 60 * 1000;
 const PT_ZONE = 'America/Los_Angeles';
-const DEFAULT_RANGE = { startDate: '2026-08-10', endDate: '2026-08-17' };
+export const REPAIR_DEFAULT_START_DATE = '2026-08-10';
 const REPAIR_REASON =
-  'Admin one-time repair: retroactive cap of historical runaway shift per guardrail policy.';
+  'Admin one-time repair: retroactive cap of runaway shift per guardrail policy.';
+
+/** Today's date (YYYY-MM-DD) in the admin's local zone — default window end. */
+export function repairDefaultEndDate(): string {
+  return new Date().toLocaleDateString('en-CA');
+}
 
 export interface RepairPreview {
   entryId: string;
@@ -37,10 +45,12 @@ export interface RepairPreview {
   userName: string;
   workModel: string;
   timezone: string;
+  /** Human-readable cap descriptions, one per repaired segment. */
+  caps: string[];
   clockInSystem: number;
-  capAtSystem: number;
-  capAtLocal: string;
   totalWorkMinutes: number;
+  /** True when the entry was already dayComplete before the repair. */
+  wasComplete: boolean;
 }
 
 export interface RepairRunawayResult {
@@ -49,7 +59,7 @@ export interface RepairRunawayResult {
   scanned: number;
   repaired: number;
   repairs: RepairPreview[];
-  skipped: { closed: number; voided: number; noSegment: number; noUser: number; withinPolicy: number };
+  skipped: { voided: number; noUser: number; noViolation: number };
 }
 
 function toMillis(value: unknown): number | undefined {
@@ -71,7 +81,7 @@ function localWallClockToMs(localDate: string, hhmm: string, timeZone: string): 
   return x;
 }
 
-/** Cap instant (epoch ms) for a still-open shift under the guardrail policy. */
+/** Cap instant (epoch ms) for a segment starting at `clockInMs` under the guardrail policy. */
 function computeCapMs(workModel: 'On-site' | 'Remote', clockInMs: number, timezone: string): number {
   if (workModel === 'Remote') return clockInMs + REMOTE_MAX_SHIFT_MS;
   const clockInDate = localDateOf(clockInMs, timezone);
@@ -84,9 +94,65 @@ function computeCapMs(workModel: 'On-site' | 'Remote', clockInMs: number, timezo
   return cap;
 }
 
+interface SegmentPatch {
+  id?: string;
+  clockOutManual: string;
+  clockOutSystem: number;
+  clockOutSystemTime: Timestamp;
+  lunchOutManual?: string | null;
+  lunchOutSystem?: number | null;
+  lunchOutSystemTime?: Timestamp | null;
+  lunchInManual?: string | null;
+  lunchInSystem?: number | null;
+  lunchInSystemTime?: Timestamp | null;
+  complete: true;
+  autoClosed: true;
+  flagged: true;
+}
+
 /**
- * Scan the window for still-open (runaway) entries and optionally repair them.
- * `dryRun: true` returns the preview list without writing anything.
+ * Build the close-at-cap patch for one segment (open OR completed-but-runaway).
+ * Lunch is clamped to the cap: a lunch starting at/after the cap is removed;
+ * a lunch straddling the cap ends at the cap.
+ */
+function buildSegmentCapPatch(seg: Record<string, any>, capMs: number, timezone: string): SegmentPatch { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const capManual = localTimeHHMM(capMs, timezone);
+  const patch: SegmentPatch = {
+    id: typeof seg.id === 'string' ? seg.id : undefined,
+    clockOutManual: capManual,
+    clockOutSystem: capMs,
+    clockOutSystemTime: Timestamp.fromMillis(capMs),
+    complete: true,
+    autoClosed: true,
+    flagged: true,
+  };
+
+  const lo = toMillis(seg.lunchOutSystem ?? seg.lunchOutSystemTime);
+  const li = toMillis(seg.lunchInSystem ?? seg.lunchInSystemTime);
+  const skipLunch = seg.skipLunch === true || seg.lunchSkipped === true;
+  if (!skipLunch && typeof lo === 'number') {
+    if (lo >= capMs) {
+      // Lunch began at/after the cap — it never happened within the capped span.
+      patch.lunchOutManual = null;
+      patch.lunchOutSystem = null;
+      patch.lunchOutSystemTime = null;
+      patch.lunchInManual = null;
+      patch.lunchInSystem = null;
+      patch.lunchInSystemTime = null;
+    } else if (typeof li !== 'number' || li > capMs) {
+      // Lunch straddles (or is open past) the cap — end it at the cap.
+      patch.lunchInManual = capManual;
+      patch.lunchInSystem = capMs;
+      patch.lunchInSystemTime = Timestamp.fromMillis(capMs);
+    }
+  }
+  return patch;
+}
+
+/**
+ * Scan the window for runaway entries (open OR completed) and optionally
+ * repair them. `dryRun: true` returns the preview list without writing.
+ * Window defaults: 2026-08-10 through today (admin-local).
  */
 export async function repairRunawayShifts(opts: {
   admin: User;
@@ -96,14 +162,14 @@ export async function repairRunawayShifts(opts: {
   dryRun?: boolean;
 }): Promise<RepairRunawayResult> {
   const { admin, usersById } = opts;
-  const startDate = opts.startDate || DEFAULT_RANGE.startDate;
-  const endDate = opts.endDate || DEFAULT_RANGE.endDate;
+  const startDate = opts.startDate || REPAIR_DEFAULT_START_DATE;
+  const endDate = opts.endDate || repairDefaultEndDate();
   const dryRun = opts.dryRun === true;
 
   // PT-bounded window: clock-ins from 00:00 PT on startDate through end of endDate PT.
   const windowStartMs = localWallClockToMs(startDate, '00:00', PT_ZONE);
-  const nextDay = localDateOf(nextLocalMidnightMs(localWallClockToMs(endDate, '12:00', PT_ZONE), PT_ZONE), PT_ZONE);
-  const windowEndMs = localWallClockToMs(nextDay, '00:00', PT_ZONE);
+  const dayAfterEnd = localDateOf(nextLocalMidnightMs(localWallClockToMs(endDate, '12:00', PT_ZONE), PT_ZONE), PT_ZONE);
+  const windowEndMs = localWallClockToMs(dayAfterEnd, '00:00', PT_ZONE);
 
   const snap = await getDocs(
     query(
@@ -115,67 +181,103 @@ export async function repairRunawayShifts(opts: {
 
   const nowMs = Date.now();
   const repairs: RepairPreview[] = [];
-  const skipped = { closed: 0, voided: 0, noSegment: 0, noUser: 0, withinPolicy: 0 };
+  const skipped = { voided: 0, noUser: 0, noViolation: 0 };
 
   for (const docSnap of snap.docs) {
     const entryId = docSnap.id;
     const d = docSnap.data() as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
     if (d.status === 'voided' || d.status === 'archived') { skipped.voided++; continue; }
-    if (d.dayComplete === true || d.complete === true) { skipped.closed++; continue; }
 
     const user = usersById.get(String(d.userId || ''));
     if (!user) { skipped.noUser++; continue; }
 
-    const segments: Record<string, any>[] = Array.isArray(d.segments) ? d.segments : []; // eslint-disable-line @typescript-eslint/no-explicit-any
-    const openSeg = segments.length ? segments[segments.length - 1] : null;
-    const openSegIsOpen = !!openSeg && openSeg.complete !== true;
-    // Legacy flat doc (no segments) with a top-level open punch.
-    const flatOpen = !segments.length && !!d.clockInManual && !d.clockOutManual;
-    if (!openSegIsOpen && !flatOpen) { skipped.noSegment++; continue; }
-
-    const clockInMs = openSegIsOpen
-      ? toMillis(openSeg.clockInSystem ?? openSeg.clockInSystemTime)
-      : toMillis(d.clockInSystem ?? d.clockInSystemTime);
-    if (typeof clockInMs !== 'number') { skipped.noSegment++; continue; }
-
     const workModel: 'On-site' | 'Remote' = user.workModel === 'Remote' ? 'Remote' : 'On-site';
     const timezone = user.timezone && user.timezone.trim() ? user.timezone : PT_ZONE;
 
-    const capMs = computeCapMs(workModel, clockInMs, timezone);
-    if (capMs > nowMs) { skipped.withinPolicy++; continue; } // not actually runaway
+    const segments: Record<string, any>[] = Array.isArray(d.segments) ? d.segments : []; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const isFlatDoc = segments.length === 0;
 
-    const capManual = localTimeHHMM(capMs, timezone);
+    // Evaluate every segment (or the flat top-level punch): a violation is a
+    // segment whose (actual or, for open segments, current) end exceeds its
+    // policy cap. Completed entries are inspected too — a "completed" 24-hour
+    // runaway is still a runaway.
+    const segmentPatches: SegmentPatch[] = [];
+    const caps: string[] = [];
+    let flatPatch: SegmentPatch | null = null;
+    let flatClockInMs: number | undefined;
 
-    // Build the patched entry, then recompute the day total via the canonical
-    // read-side SSOT (getEntryTotals) so History/Team/Payroll all agree.
-    let newSegments: Record<string, any>[] | null = null; // eslint-disable-line @typescript-eslint/no-explicit-any
-    if (openSegIsOpen) {
-      newSegments = segments.map((s) =>
-        s.id === openSeg!.id
-          ? {
-              ...s,
-              clockOutManual: capManual,
-              clockOutSystem: capMs,
-              clockOutSystemTime: Timestamp.fromMillis(capMs),
-              complete: true,
-              autoClosed: true,
-              flagged: true,
-            }
-          : s,
+    if (isFlatDoc) {
+      if (!d.clockInManual) { skipped.noViolation++; continue; }
+      const inMs = toMillis(d.clockInSystem ?? d.clockInSystemTime);
+      if (typeof inMs !== 'number') { skipped.noViolation++; continue; }
+      const outMs = toMillis(d.clockOutSystem ?? d.clockOutSystemTime);
+      const isOpen = !d.clockOutManual && d.dayComplete !== true;
+      if (!isOpen && typeof outMs !== 'number') { skipped.noViolation++; continue; }
+      const capMs = computeCapMs(workModel, inMs, timezone);
+      const violates = isOpen ? nowMs > capMs : (outMs as number) > capMs;
+      if (!violates) { skipped.noViolation++; continue; }
+      flatClockInMs = inMs;
+      flatPatch = buildSegmentCapPatch(
+        {
+          clockInSystem: inMs,
+          lunchOutSystem: toMillis(d.lunchOutSystem ?? d.lunchOutSystemTime),
+          lunchInSystem: toMillis(d.lunchInSystem ?? d.lunchInSystemTime),
+          skipLunch: d.skipLunch === true || d.lunchSkipped === true,
+        },
+        capMs,
+        timezone,
       );
+      caps.push(`${localDateOf(capMs, timezone)} ${localTimeHHMM(capMs, timezone)} ${timezone}`);
+    } else {
+      for (const s of segments) {
+        const inMs = toMillis(s.clockInSystem ?? s.clockInSystemTime);
+        if (typeof inMs !== 'number') continue;
+        const outMs = toMillis(s.clockOutSystem ?? s.clockOutSystemTime);
+        const isOpen = s.complete !== true && typeof outMs !== 'number';
+        if (!isOpen && typeof outMs !== 'number') continue; // unusable segment
+        const capMs = computeCapMs(workModel, inMs, timezone);
+        const violates = isOpen ? nowMs > capMs : (outMs as number) > capMs;
+        if (!violates) continue;
+        segmentPatches.push(buildSegmentCapPatch(s, capMs, timezone));
+        caps.push(`${localDateOf(capMs, timezone)} ${localTimeHHMM(capMs, timezone)} ${timezone}`);
+      }
+      if (!segmentPatches.length) { skipped.noViolation++; continue; }
     }
-    const patchedForTotals: Partial<TimeEntry> = {
-      ...(d as Partial<TimeEntry>),
-      segments: (newSegments ?? undefined) as TimeEntry['segments'],
-      currentSegment: undefined,
-      complete: true,
-      clockOutManual: capManual,
-      // Flat-doc path: drop any stale stored total so getEntryTotals derives
-      // from the (now-closed) manual punch span instead of returning it.
-      totalWorkMinutes: openSegIsOpen ? (d.totalWorkMinutes as number | undefined) : undefined,
-    };
+
+    // Build patched segments / patched flat fields, then recompute the day
+    // total via the canonical read-side SSOT (getEntryTotals) so
+    // History/Team/Payroll all agree.
+    let newSegments: Record<string, any>[] | null = null; // eslint-disable-line @typescript-eslint/no-explicit-any
+    let patchedForTotals: Partial<TimeEntry>;
+    if (!isFlatDoc) {
+      newSegments = segments.map((s) => {
+        const p = segmentPatches.find((x) => x.id === s.id);
+        return p ? { ...s, ...p } : s;
+      });
+      patchedForTotals = {
+        ...(d as Partial<TimeEntry>),
+        segments: newSegments as TimeEntry['segments'],
+        currentSegment: undefined,
+        complete: true,
+      };
+    } else {
+      patchedForTotals = {
+        ...(d as Partial<TimeEntry>),
+        ...flatPatch,
+        currentSegment: undefined,
+        segments: undefined,
+        complete: true,
+        // Drop any stale stored total so getEntryTotals derives from the
+        // (now-closed) manual punch span instead of returning it.
+        totalWorkMinutes: undefined,
+      };
+    }
     const { totalWorkMinutes } = getEntryTotals(patchedForTotals);
+
+    const firstInMs = isFlatDoc
+      ? (flatClockInMs as number)
+      : (toMillis(segments[0].clockInSystem ?? segments[0].clockInSystemTime) as number);
 
     repairs.push({
       entryId,
@@ -183,22 +285,18 @@ export async function repairRunawayShifts(opts: {
       userName: user.name,
       workModel,
       timezone,
-      clockInSystem: clockInMs,
-      capAtSystem: capMs,
-      capAtLocal: `${localDateOf(capMs, timezone)} ${capManual} ${timezone}`,
+      caps,
+      clockInSystem: firstInMs,
       totalWorkMinutes,
+      wasComplete: d.dayComplete === true || d.complete === true,
     });
 
     if (dryRun) continue;
 
     const patch: Record<string, unknown> = {
-      clockOutManual: capManual,
-      clockOutSystem: capMs,
-      clockOutSystemTime: Timestamp.fromMillis(capMs),
       complete: true,
       dayComplete: true,
       currentStep: 4,
-      completedAt: Timestamp.fromMillis(capMs),
       autoClosed: true,
       flagged: true,
       totalWorkMinutes,
@@ -206,7 +304,29 @@ export async function repairRunawayShifts(opts: {
       updatedAt: serverTimestamp(),
       updatedBy: admin.uid,
     };
-    if (newSegments) patch.segments = newSegments;
+    if (newSegments) {
+      patch.segments = newSegments;
+      // Keep the dual-written top-level punch fields mirroring the LAST
+      // segment when that segment was the one capped.
+      const lastSeg = newSegments[newSegments.length - 1];
+      const lastPatch = segmentPatches.find((x) => x.id === lastSeg?.id);
+      if (lastPatch) {
+        patch.clockOutManual = lastPatch.clockOutManual;
+        patch.clockOutSystem = lastPatch.clockOutSystem;
+        patch.clockOutSystemTime = lastPatch.clockOutSystemTime;
+        patch.completedAt = lastPatch.clockOutSystemTime;
+        for (const k of ['lunchOutManual', 'lunchOutSystem', 'lunchOutSystemTime', 'lunchInManual', 'lunchInSystem', 'lunchInSystemTime'] as const) {
+          if (lastPatch[k] !== undefined) patch[k] = lastPatch[k];
+        }
+      } else if (lastSeg?.clockOutSystem) {
+        patch.completedAt = Timestamp.fromMillis(lastSeg.clockOutSystem);
+      }
+    } else if (flatPatch) {
+      const flatFields: Record<string, unknown> = { ...flatPatch };
+      delete flatFields.id;
+      Object.assign(patch, flatFields);
+      patch.completedAt = flatPatch.clockOutSystemTime;
+    }
 
     await updateDoc(doc(db, 'timeEntries', entryId), patch);
     // Mandatory immutable audit row (audit-mandatory-reason rule).
@@ -216,20 +336,19 @@ export async function repairRunawayShifts(opts: {
       actorRole: 'admin',
       targetId: entryId,
       before: {
-        clockInSystem: clockInMs,
-        clockOutSystem: null,
+        clockInSystem: firstInMs,
+        clockOutSystem: toMillis(d.clockOutSystem ?? d.clockOutSystemTime) ?? null,
         dayComplete: d.dayComplete ?? null,
         totalWorkMinutes: d.totalWorkMinutes ?? null,
       },
       after: {
-        clockOutManual: capManual,
-        clockOutSystem: capMs,
+        cappedSegments: caps,
         dayComplete: true,
         totalWorkMinutes,
         autoClosed: true,
         flagged: true,
       },
-      reason: `${REPAIR_REASON} (${workModel}, capped at ${capManual} ${timezone}.)`,
+      reason: `${REPAIR_REASON} (${workModel}, ${caps.length} segment(s) capped: ${caps.join('; ')}.)`,
     });
   }
 
