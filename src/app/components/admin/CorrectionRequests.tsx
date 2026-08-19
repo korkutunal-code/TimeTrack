@@ -6,7 +6,6 @@ import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
-import { Textarea } from '../ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Label } from '../ui/label';
 import { toast } from 'sonner';
@@ -87,7 +86,6 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
   const [selectedRequest, setSelectedRequest] = useState<CorrectionRequest | null>(null);
   const [resolveOpen, setResolveOpen] = useState(false);
   const [newStatus, setNewStatus] = useState<CorrectionRequest['status']>('In Progress');
-  const [resolutionNote, setResolutionNote] = useState('');
   const [saving, setSaving] = useState(false);
   const exclusionCutoff = useExclusionCutoff();
 
@@ -123,16 +121,14 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
     // Open → default to In Progress; In Progress → default to Resolved;
     // Resolved/Rejected (edge) → Resolved.
     setNewStatus(req.status === 'Open' ? 'In Progress' : req.status === 'In Progress' ? 'Resolved' : 'Resolved');
-    setResolutionNote(req.resolution_note || req.rejection_reason || '');
     setResolveOpen(true);
   };
 
   const handleSaveResolution = async () => {
     if (!selectedRequest) return;
-    if (!resolutionNote.trim()) {
-      toast.error('A resolution note is required.');
-      return;
-    }
+    // Resolution note UI removed: saving requires only a status selection.
+    // Downstream handlers accept an empty note (the audit reason falls back
+    // to a default string so the mandatory-audit-reason rule stays intact).
     setSaving(true);
     try {
       if (newStatus === 'Resolved') {
@@ -143,7 +139,7 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
           adminUid: currentUser.uid,
           adminName: currentUser.name,
           newStatus: 'Resolved',
-          resolutionNote: resolutionNote.trim(),
+          resolutionNote: '',
         });
         toast.success(`Request resolved — the employee's time entry has been updated.`);
       } else {
@@ -152,17 +148,11 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
           status: newStatus,
           updated_by: currentUser.uid,
         };
-        if (newStatus === 'Rejected') {
-          updates.rejection_reason = resolutionNote.trim();
-        } else {
-          updates.resolution_note = resolutionNote.trim();
-        }
         await dbService.updateCorrectionRequest(selectedRequest.id, updates);
         toast.success(`Request updated to "${newStatus}".`);
       }
       setResolveOpen(false);
       setSelectedRequest(null);
-      setResolutionNote('');
       await loadRequests();
     } catch (err: unknown) {
       console.error('[CorrectionRequests] Failed to update:', err);
@@ -182,7 +172,7 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
         title="Correction Requests"
         description={
           isAdminOrManager
-            ? 'Review and resolve time correction requests submitted by employees. Update the status and add a resolution note.'
+            ? 'Review and resolve time correction requests submitted by employees. Select a new status and save.'
             : 'Submit and track your time correction requests. Admins will review and resolve them.'
         }
       />
@@ -379,26 +369,6 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
                   </SelectContent>
                 </Select>
               </div>
-
-              {/* Resolution note */}
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium">
-                  {newStatus === 'Rejected' ? 'Rejection Reason' : 'Resolution Note'}{' '}
-                  <span className="text-red-500">*</span>{' '}
-                  <span className="text-xs text-red-500 font-normal">Required before saving.</span>
-                </Label>
-                <Textarea
-                  placeholder={
-                    newStatus === 'Rejected'
-                      ? 'Explain why this request was rejected…'
-                      : 'Describe the action taken or resolution…'
-                  }
-                  value={resolutionNote}
-                  onChange={(e) => setResolutionNote(e.target.value)}
-                  rows={3}
-                  className="resize-none"
-                />
-              </div>
             </div>
           )}
 
@@ -408,7 +378,7 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
             </Button>
             <Button
               onClick={handleSaveResolution}
-              disabled={saving || !resolutionNote.trim()}
+              disabled={saving}
               className={
                 newStatus === 'Rejected'
                   ? 'bg-red-600 hover:bg-red-700 text-white'

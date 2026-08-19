@@ -1243,8 +1243,10 @@ class DatabaseService {
     resolutionNote: string;
   }): Promise<void> {
     const { requestId, adminUid, adminName, newStatus, resolutionNote } = args;
+    // Resolution note is optional (the UI no longer collects one). It is NOT
+    // validated as non-empty here; the audit reason below falls back to a
+    // default string so the mandatory-audit-reason rule still holds.
     const trimmedNote = (resolutionNote || '').trim();
-    if (!trimmedNote) throw new Error('A resolution note is required.');
 
     // 1) Read the correction request to get the target field + suggested time.
     const reqSnap = await getDoc(doc(db, 'correctionRequests', requestId));
@@ -1384,7 +1386,7 @@ class DatabaseService {
       targetId: entryId,
       before: { field, [field]: beforeFieldVal, totalWorkMinutes: before.totalWorkMinutes },
       after: { field, [field]: value, totalWorkMinutes: after.totalWorkMinutes },
-      reason: `${trimmedNote} (approved correction request ${requestId} for ${request.issue_type})`,
+      reason: trimmedNote ? `${trimmedNote} (approved correction request ${requestId} for ${request.issue_type})` : `Approved correction request ${requestId} for ${request.issue_type} (no resolution note provided)`,
       correctionRequestId: requestId,
     });
 
