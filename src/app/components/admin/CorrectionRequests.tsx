@@ -168,15 +168,6 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
 
   return (
     <div className="space-y-6">
-      <SectionHelp
-        title="Correction Requests"
-        description={
-          isAdminOrManager
-            ? 'Review and resolve time correction requests submitted by employees. Select a new status and save.'
-            : 'Submit and track your time correction requests. Admins will review and resolve them.'
-        }
-      />
-
       {/* Summary cards (admin/manager only) */}
       {isAdminOrManager && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -212,10 +203,20 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
       {/* Main table */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <FileWarning className="size-4 text-amber-600" />
-            {isAdminOrManager ? 'All Correction Requests' : 'My Correction Requests'}
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <FileWarning className="size-4 text-amber-600" />
+              {isAdminOrManager ? 'All Correction Requests' : 'My Correction Requests'}
+            </CardTitle>
+            <SectionHelp
+              title="Correction Requests"
+              description={
+                isAdminOrManager
+                  ? 'Review and resolve time correction requests submitted by employees. Select a new status and save.'
+                  : 'Submit and track your time correction requests. Admins will review and resolve them.'
+              }
+            />
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
