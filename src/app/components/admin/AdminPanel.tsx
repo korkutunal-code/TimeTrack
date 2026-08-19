@@ -23,7 +23,8 @@ import { UserPlus, Upload, Download, Edit, Trash2, CheckCircle2, Loader2, UserCh
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
-import { calculateLunchMinutes, validateTimeEntry } from '../../../utils/timeCalculations';
+import { calculateLunchMinutes } from '../../../utils/timeCalculations';
+import { validateSegmentChronology, getFuturePunchError, getSegmentOverlapError } from '../../../utils/timeValidation';
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import { auditLogService } from '../../../services/auditLogService';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
@@ -610,14 +611,17 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         return;
       }
 
-      const entryToValidate: Partial<TimeEntry> = {
+      // Cross-midnight-aware chronology: validateTimeEntry false-rejects
+      // legitimate overnight shifts (22:00 -> 06:00); the wrap-aware
+      // validator accepts those while still rejecting true inversions
+      // (out before in, lunch outside shift bounds, partial lunch pairs).
+      const errors = validateSegmentChronology({
         clockInManual: correctionEntry.clockInManual,
         clockOutManual: correctionEntry.clockOutManual,
         lunchOutManual: correctionEntry.skipLunch ? '' : (correctionEntry.lunchOutManual || ''),
         lunchInManual: correctionEntry.skipLunch ? '' : (correctionEntry.lunchInManual || ''),
-      };
-
-      const errors = validateTimeEntry(entryToValidate);
+        skipLunch: !!correctionEntry.skipLunch,
+      });
       if (errors.length > 0) {
         toast.error(errors[0]);
         return;
@@ -676,6 +680,21 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             lunchInSystemTime: correctionEntry.skipLunch || sysSeg.lunchInSystem == null ? undefined : Timestamp.fromMillis(sysSeg.lunchInSystem),
           })
         : {};
+      // Future-time guard on the corrected epochs, same-day overlap guard,
+      // and the payroll-lock check — all before the audit write so a rejected
+      // correction produces no audit row.
+      const futureError = getFuturePunchError(sysSeg, Date.now());
+      if (futureError) {
+        toast.error(futureError);
+        return;
+      }
+      const overlapError = getSegmentOverlapError(segments);
+      if (overlapError) {
+        toast.error(overlapError);
+        return;
+      }
+      await dbService.assertPayrollNotLocked(correctionEntry.date);
+
       const correctedWorkModel = correctedUser?.workModelId ? workModels.find(m => m.id === correctedUser.workModelId) ?? null : null;
       const ot = calculateDailyOvertimeBreakdown(totalWorkMinutes, correctedWorkModel, correctedUser?.workModelOverride ?? null);
       const workWeekStartDate = getWorkWeekStartDate(correctionEntry.date, DEFAULT_WORKWEEK_START_DAY);

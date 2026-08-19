@@ -4,6 +4,7 @@ import { db } from './firebase';
 import type { User } from './auth';
 import { stripUndefined, closeActiveSegment, computeSegmentWorkMinutes, recalculateEntryTotals, recomputeSegmentSystemTimestamps, fieldToSystemField } from './segmentOps';
 import { deriveSegmentWorkMinutes, epochFromLocalWallTime, getEmployeeTimezone } from '../../utils/timeCalculations';
+import { validateSegmentChronology, getFuturePunchError, getSegmentOverlapError } from '../../utils/timeValidation';
 import { auditLogService } from '../../services/auditLogService';
 import { fetchGlobalSettings } from '../../services/systemSettingsService';
 
@@ -816,6 +817,21 @@ class DatabaseService {
       }
     }
 
+    // --- Adjustment guardrails (2026-08) -------------------------------
+    // Chronology (cross-midnight aware) on the edited segment; future-time
+    // rejection on its recomputed epochs; no overlap with sibling shifts;
+    // payroll-lock check. All run BEFORE the audit write so a rejected edit
+    // produces no audit row.
+    const editChronologyErrors = validateSegmentChronology(editedSeg, {
+      allowOpen: !editedSeg.clockOutManual,
+    });
+    if (editChronologyErrors.length) throw new Error(editChronologyErrors[0]);
+    const editFutureError = getFuturePunchError(editedSeg, Date.now());
+    if (editFutureError) throw new Error(editFutureError);
+    const editOverlapError = getSegmentOverlapError(newSegments);
+    if (editOverlapError) throw new Error(editOverlapError);
+    await this.assertPayrollNotLocked(before.date ?? before.workDate);
+
     // 1) Audit FIRST (mandatory, non-bypassable).
     await auditLogService.logTimeCorrection({
       actorUid: userId,
@@ -896,15 +912,13 @@ class DatabaseService {
     if (targetSeg.clockOutManual) throw new Error('This shift is already closed.');
     if (!targetSeg.clockInManual) throw new Error('Cannot close a shift without a clock-in time.');
 
-    // Validate clock-out is chronologically later than clock-in (S6
-    // cross-midnight-aware: if outM < inM, the shift crossed midnight and we
-    // add 24h; after that, outM must still be > inM).
-    const inM = timeToMinutes(targetSeg.clockInManual);
-    const outM = timeToMinutes(clockOut);
-    const effOutM = outM < inM ? outM + 24 * 60 : outM;
-    if (effOutM <= inM) {
-      throw new Error('Clock-out time must be later than the clock-in time.');
-    }
+    // Chronology (cross-midnight aware) on the would-be closed segment —
+    // subsumes the old clockOut > clockIn wrap check and adds lunch bounds.
+    const closeErrors = validateSegmentChronology(
+      { ...targetSeg, clockOutManual: clockOut },
+      { allowOpen: false },
+    );
+    if (closeErrors.length) throw new Error(closeErrors[0]);
 
     const beforeFieldVal = targetSeg.clockOutManual ?? null;
     const now = Timestamp.now();
@@ -946,6 +960,13 @@ class DatabaseService {
       (sum, s) => sum + (s.complete ? s.workMinutes || 0 : 0),
       0,
     );
+
+    // Future-time + overlap + payroll-lock guardrails (all pre-audit).
+    const closeFutureError = getFuturePunchError(closedSeg, Date.now());
+    if (closeFutureError) throw new Error(closeFutureError);
+    const closeOverlapError = getSegmentOverlapError(newSegments);
+    if (closeOverlapError) throw new Error(closeOverlapError);
+    await this.assertPayrollNotLocked(before.date ?? before.workDate);
 
     // 1) Audit FIRST (mandatory, non-bypassable). Employee self-audit.
     await auditLogService.logTimeCorrection({
@@ -1035,13 +1056,14 @@ class DatabaseService {
     if (!targetSeg.lunchOutManual) throw new Error('No lunch break was started on this shift.');
     if (targetSeg.lunchInManual) throw new Error('Lunch has already ended on this shift.');
 
-    // Validate lunchIn > lunchOut (S6 cross-midnight-aware).
-    const lunchOutM = timeToMinutes(targetSeg.lunchOutManual);
-    const lunchInM = timeToMinutes(lunchIn);
-    const effLunchInM = lunchInM < lunchOutM ? lunchInM + 24 * 60 : lunchInM;
-    if (effLunchInM <= lunchOutM) {
-      throw new Error('Lunch-in time must be later than the lunch-out time.');
-    }
+    // Chronology (cross-midnight aware) with the lunch ended — subsumes
+    // the old lunchIn > lunchOut wrap check. The shift stays open, so
+    // allowOpen permits the still-missing clock-out.
+    const lunchErrors = validateSegmentChronology(
+      { ...targetSeg, lunchInManual: lunchIn },
+      { allowOpen: true },
+    );
+    if (lunchErrors.length) throw new Error(lunchErrors[0]);
 
     const beforeFieldVal = targetSeg.lunchInManual ?? null;
     const now = Timestamp.now();
@@ -1083,6 +1105,12 @@ class DatabaseService {
       targetIdx === persistedSegs.length - 1 &&
       before.clockInManual === targetSeg.clockInManual;
     const updateTopLevel = isCurrent || isLastMirroring;
+
+    // Future-time + payroll-lock guardrails (pre-audit). The shift span is
+    // unchanged (lunch only), so no overlap check is needed here.
+    const endLunchFutureError = getFuturePunchError(updatedSeg, Date.now());
+    if (endLunchFutureError) throw new Error(endLunchFutureError);
+    await this.assertPayrollNotLocked(before.date ?? before.workDate);
 
     // 1) Audit FIRST (mandatory, non-bypassable). Employee self-audit.
     await auditLogService.logTimeCorrection({
@@ -1127,6 +1155,8 @@ class DatabaseService {
   // ---- Correction Requests ----
 
   async createCorrectionRequest(data: Omit<CorrectionRequest, 'id'>): Promise<string> {
+    // Payroll-lock guardrail: no new correction requests for locked periods.
+    await this.assertPayrollNotLocked(data.requested_date);
     // Sanitize: Firestore addDoc() rejects `undefined` field values. Optional
     // fields (requested_lunch, suggested_time, original_*, resolution_note,
     // updated_by, etc.) arrive as `undefined` when the caller omits them — e.g.
@@ -1368,6 +1398,20 @@ class DatabaseService {
       segments = [editedSeg];
     }
 
+    // --- Adjustment guardrails (2026-08, pre-audit) -----------------------
+    // The applied value must not invert the shift's chronology (cross-midnight
+    // aware), land in the future, overlap a sibling shift, or touch a locked
+    // payroll period — the admin approval alone does not check these.
+    const reqChronologyErrors = validateSegmentChronology(editedSeg, {
+      allowOpen: !editedSeg.clockOutManual,
+    });
+    if (reqChronologyErrors.length) throw new Error(reqChronologyErrors[0]);
+    const reqFutureError = getFuturePunchError(editedSeg, Date.now());
+    if (reqFutureError) throw new Error(reqFutureError);
+    const reqOverlapError = getSegmentOverlapError(segments);
+    if (reqOverlapError) throw new Error(reqOverlapError);
+    await this.assertPayrollNotLocked(request.requested_date);
+
     // SSOT: recompute every complete segment's workMinutes + the day totals from
     // the corrected timestamps, so stored totalWorkMinutes/totalHours exactly
     // match the edited span (e.g. 16:00→16:45 = 45 min = 0.75 h, no drift).
@@ -1446,6 +1490,24 @@ class DatabaseService {
     if (updates.rejection_reason !== undefined) patch.rejection_reason = updates.rejection_reason;
     if (updates.updated_by !== undefined) patch.updated_by = updates.updated_by;
     await updateDoc(doc(db, 'correctionRequests', id), patch);
+  }
+
+  /**
+   * Payroll-lock guardrail (2026-08): reject any correction / adjustment to an
+   * entry whose work date falls inside a locked payroll period
+   * (systemSettings/global.locked_up_to_date, PT date string, inclusive).
+   * Throws with a human-readable message; callers surface it as a toast.
+   * No-op when no lock date is set or the entry has no resolvable date.
+   */
+  async assertPayrollNotLocked(workDate: string | undefined): Promise<void> {
+    if (!workDate) return;
+    const settings = await this.getPayrollSettings();
+    const lockedUpTo = ((settings?.locked_up_to_date as string) || '').trim();
+    if (lockedUpTo && workDate <= lockedUpTo) {
+      throw new Error(
+        `This date (${workDate}) is in a locked payroll period (locked through ${lockedUpTo}). Ask an administrator to unlock the period first.`,
+      );
+    }
   }
 
   async getPayrollSettings(): Promise<DocumentData | null> {
