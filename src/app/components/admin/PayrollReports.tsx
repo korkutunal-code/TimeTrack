@@ -874,7 +874,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
           {/* Info Card */}
           <Card className="border-2 border-blue-200 bg-blue-50">
             <CardContent className="p-4">
-              <p className="text-sm font-semibold text-blue-900 mb-2">California Overtime Rules Applied</p>
+              <p className="text-sm font-semibold text-blue-900 mb-2">California Overtime Rules Applied for On-site Employees</p>
               <div className="text-sm text-blue-800 space-y-1">
                 <p>• <strong>Regular:</strong> First 8 hours per day, up to 40 per week</p>
                 <p>• <strong>Overtime (1.5x):</strong> Hours 8-12 per day, or over 40 per week</p>
