@@ -167,30 +167,30 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
   const rejectedCount = requests.filter(r => r.status === 'Rejected').length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {/* Summary cards (admin/manager only) */}
       {isAdminOrManager && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <Card className="border-slate-200">
-            <CardContent className="pt-4">
+            <CardContent className="pt-4 [&:last-child]:pb-3">
               <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Total</p>
               <p className="text-2xl font-bold text-slate-800">{requests.length}</p>
             </CardContent>
           </Card>
           <Card className="border-amber-200 bg-amber-50/40">
-            <CardContent className="pt-4">
+            <CardContent className="pt-4 [&:last-child]:pb-3">
               <p className="text-xs text-amber-700 font-medium uppercase tracking-wider">Open</p>
               <p className="text-2xl font-bold text-amber-800">{openCount}</p>
             </CardContent>
           </Card>
           <Card className="border-red-200 bg-red-50/40">
-            <CardContent className="pt-4">
+            <CardContent className="pt-4 [&:last-child]:pb-3">
               <p className="text-xs text-red-600 font-medium uppercase tracking-wider">Rejected</p>
               <p className="text-2xl font-bold text-red-600">{rejectedCount}</p>
             </CardContent>
           </Card>
           <Card className="border-green-200 bg-green-50/40">
-            <CardContent className="pt-4">
+            <CardContent className="pt-4 [&:last-child]:pb-3">
               <p className="text-xs text-green-700 font-medium uppercase tracking-wider">Resolved</p>
               <p className="text-2xl font-bold text-green-800">
                 {requests.filter(r => r.status === 'Resolved').length}
@@ -202,7 +202,7 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
 
       {/* Main table */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="px-6 pt-3 pb-0 -mb-[18px]">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base flex items-center gap-2">
               <FileWarning className="size-4 text-amber-600" />
