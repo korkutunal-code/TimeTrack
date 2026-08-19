@@ -32,6 +32,8 @@ import { Save, RotateCcw, ArrowLeft } from 'lucide-react';
 
 /** localStorage key for the persisted display-timezone choice ('auto' or IANA id). */
 const DISPLAY_TIMEZONE_STORAGE_KEY = 'timetrack.displayTimezone';
+/** Per-user localStorage key for an admin's preferred view ('admin' | 'employee'). */
+const adminViewModeStorageKey = (uid: string) => `timetrack.adminViewMode.${uid}`;
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,7 +43,7 @@ import {
 } from './components/ui/dropdown-menu';
 import { Toaster } from './components/ui/sonner';
 import { toast } from 'sonner';
-import { LogOut, Clock, Users, Settings, FileText, Search, TrendingUp, FileWarning, Sliders } from 'lucide-react';
+import { LogOut, Clock, Users, Settings, FileText, Search, TrendingUp, FileWarning, Sliders, Shield } from 'lucide-react';
 import { QABar } from './components/QABar';
 import { ReportProblemButton } from './components/ReportProblemButton';
 
@@ -60,6 +62,11 @@ export default function App() {
   const [displayTimezone, setDisplayTimezoneState] = useState<string>(
     () => localStorage.getItem(DISPLAY_TIMEZONE_STORAGE_KEY) || DEFAULT_DISPLAY_TIMEZONE,
   );
+  // Admin-only view switcher: 'employee' renders the regular employee surface
+  // (ClockPunch/TodayEntry fed with the admin's own user object) so admins can
+  // clock in/out like a regular employee. Persisted per-uid in localStorage so
+  // the choice survives page refresh. Employees/managers never see this.
+  const [adminViewMode, setAdminViewModeState] = useState<'admin' | 'employee'>('admin');
 
   // Persist the resolved concrete IANA zone to the employee's profile and
   // update the active app context immediately so clockService / shift
@@ -68,9 +75,10 @@ export default function App() {
   const syncTimezoneToProfile = useCallback(
     async (selectorValue: string, opts?: { silent?: boolean }) => {
       if (!currentUser) return;
-      // Only the header selector (non-admin) drives profile tz this way;
-      // admins manage their tz via AdminPanel.
-      if (currentUser.role === 'admin') return;
+      // The header selector drives profile tz for employees — and for admins
+      // while they are in Employee View (where they punch under their own uid).
+      // An admin in Admin View keeps the old behavior: tz managed via AdminPanel.
+      if (currentUser.role === 'admin' && adminViewMode !== 'employee') return;
       const zone = timezoneToPersist(selectorValue, currentUser.timezone);
       if (!zone) return; // already in sync — no write needed
       // Optimistic context update so downstream consumers re-derive
@@ -103,7 +111,7 @@ export default function App() {
         }
       }
     },
-    [currentUser],
+    [currentUser, adminViewMode],
   );
 
   const setDisplayTimezone = (tz: string) => {
@@ -123,11 +131,13 @@ export default function App() {
   // employee's calculations follow their device (e.g. after traveling). Silent
   // — no toast on the common load path.
   useEffect(() => {
-    if (!currentUser || currentUser.role === 'admin') return;
+    // Applies to employees, and to admins while they are in Employee View
+    // (where their own punches depend on user.timezone like any employee).
+    if (!currentUser || (currentUser.role === 'admin' && adminViewMode !== 'employee')) return;
     if (displayTimezone !== AUTO_TIMEZONE) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void syncTimezoneToProfile(AUTO_TIMEZONE, { silent: true });
-  }, [currentUser, displayTimezone, syncTimezoneToProfile]);
+  }, [currentUser, adminViewMode, displayTimezone, syncTimezoneToProfile]);
 
   const testMode =
     import.meta.env.VITE_TEST_MODE === 'true' ||
@@ -189,12 +199,35 @@ export default function App() {
 
   useEffect(() => {
     const unsubscribe = authService.onAuthStateChanged((user) => {
+      // Restore the admin's persisted view preference in the same batch as the
+      // user state so a refresh renders the remembered view with no flash.
+      if (user?.role === 'admin') {
+        try {
+          const stored = localStorage.getItem(adminViewModeStorageKey(user.uid));
+          setAdminViewModeState(stored === 'employee' ? 'employee' : 'admin');
+        } catch {
+          setAdminViewModeState('admin');
+        }
+      } else {
+        setAdminViewModeState('admin');
+      }
       setCurrentUser(user);
       setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
+
+  const setAdminViewMode = (mode: 'admin' | 'employee') => {
+    setAdminViewModeState(mode);
+    if (currentUser?.uid) {
+      try {
+        localStorage.setItem(adminViewModeStorageKey(currentUser.uid), mode);
+      } catch {
+        // localStorage unavailable (private mode / quota) — in-memory only.
+      }
+    }
+  };
 
   // Depend on uid/role primitives (not the user object identity) so this only
   // re-runs when the signed-in user or their role actually changes.
@@ -230,9 +263,17 @@ export default function App() {
   }, [currentUserUid, currentUserRole]);
 
   const handleLogout = async () => {
+    if (currentUser?.uid) {
+      try {
+        localStorage.removeItem(adminViewModeStorageKey(currentUser.uid));
+      } catch {
+        // Ignore — storage may be unavailable.
+      }
+    }
     await authService.logout();
     setEmployeeView('today');
     setAdminView('panel');
+    setAdminViewModeState('admin');
   };
 
   if (loading) {
@@ -272,7 +313,7 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-2 md:gap-3">
-            {currentUser.role !== 'admin' && (
+            {(currentUser.role !== 'admin' || adminViewMode === 'employee') && (
               <TimeZoneSelector value={displayTimezone} onChange={setDisplayTimezone} />
             )}
             <DropdownMenu>
@@ -298,6 +339,24 @@ export default function App() {
                   </p>
                 </div>
                 <DropdownMenuSeparator />
+                {currentUser.role === 'admin' && (
+                  <DropdownMenuItem
+                    onSelect={() => setAdminViewMode(adminViewMode === 'admin' ? 'employee' : 'admin')}
+                    className="cursor-pointer w-full justify-start gap-2 font-medium"
+                  >
+                    {adminViewMode === 'admin' ? (
+                      <>
+                        <Clock className="size-4" />
+                        <span>Switch to Employee View</span>
+                      </>
+                    ) : (
+                      <>
+                        <Shield className="size-4" />
+                        <span>Switch to Admin View</span>
+                      </>
+                    )}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   variant="destructive"
                   onSelect={() => handleLogout()}
@@ -548,10 +607,22 @@ export default function App() {
         </div>
       )}
       {renderHeader()}
+      {currentUser.role === 'admin' && adminViewMode === 'employee' && (
+        <div className="bg-indigo-50/80 border-b border-indigo-100 text-indigo-800 text-center py-1.5 px-4 text-xs sm:text-sm font-medium">
+          Admin Mode: Viewing as Employee
+          <button
+            type="button"
+            onClick={() => setAdminViewMode('admin')}
+            className="ml-2 underline underline-offset-2 hover:text-indigo-950 cursor-pointer"
+          >
+            Switch back to Admin View
+          </button>
+        </div>
+      )}
 
       {currentUser.role === 'employee' && renderEmployeeView()}
       {currentUser.role === 'manager' && renderManagerView()}
-      {currentUser.role === 'admin' && renderAdminView()}
+      {currentUser.role === 'admin' && (adminViewMode === 'employee' ? renderEmployeeView() : renderAdminView())}
 
       <Toaster />
       <QABar />
