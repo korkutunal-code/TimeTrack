@@ -24,8 +24,11 @@ describe('shiftGuardrails — decideShiftAutoClose (On-site 10 PM)', () => {
       timezone: TZ,
     });
     expect(d.reason).toBe('on_site_10pm');
-    expect(d.actionAtMs).toBe(closeAt);
-    expect(d.actionManual).toBe('22:00');
+    expect(d.actionAtMs).toBe(closeAt); // trigger stays the cutoff
+    // actionManual is the RECORDED clock-out (Settings default 17:00), not
+    // the trigger — the Automated Actions split introduced recordedAtMs.
+    expect(d.recordedAtMs).toBe(epochFromLocalWallTime('17:00', DATE, TZ));
+    expect(d.actionManual).toBe('17:00');
   });
 
   it('does not close before 10 PM', () => {
@@ -173,5 +176,136 @@ describe('shiftGuardrails — detectGuardrailWarning', () => {
   it('no warning when nothing is flagged', () => {
     expect(detectGuardrailWarning([{ status: 'active' }]).hasWarning).toBe(false);
     expect(detectGuardrailWarning([]).hasWarning).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Automated Actions (dynamic limits from systemSettings/global)
+// ---------------------------------------------------------------------------
+
+import { resolveGuardrailLimits, DEFAULT_GUARDRAIL_LIMITS } from './guardrailLimits';
+import { guardrailWarningText, GUARDRAIL_WARNING_TEXT } from './shiftGuardrails';
+
+describe('resolveGuardrailLimits', () => {
+  it('returns defaults for null/missing settings', () => {
+    expect(resolveGuardrailLimits(null)).toEqual(DEFAULT_GUARDRAIL_LIMITS);
+    expect(resolveGuardrailLimits(undefined)).toEqual(DEFAULT_GUARDRAIL_LIMITS);
+    expect(resolveGuardrailLimits({})).toEqual(DEFAULT_GUARDRAIL_LIMITS);
+  });
+
+  it('passes through valid custom values', () => {
+    const L = resolveGuardrailLimits({
+      onsiteLatestAllowedTime: '21:00',
+      onsiteRecordedTime: '16:30',
+      onsiteLunchMaxMinutes: 90,
+      onsiteLunchRecordedMinutes: 45,
+      remoteMaxWorkHours: 10,
+    });
+    expect(L.onsiteLatestAllowedTime).toBe('21:00');
+    expect(L.onsiteRecordedTime).toBe('16:30');
+    expect(L.onsiteLunchMaxMinutes).toBe(90);
+    expect(L.onsiteLunchRecordedMinutes).toBe(45);
+    expect(L.remoteMaxWorkHours).toBe(10);
+  });
+
+  it('falls back per-field on malformed values', () => {
+    const L = resolveGuardrailLimits({
+      onsiteLatestAllowedTime: '25:99',
+      onsiteLunchMaxMinutes: -5,
+      remoteMaxWorkHours: 0,
+    });
+    expect(L.onsiteLatestAllowedTime).toBe('22:00');
+    expect(L.onsiteLunchMaxMinutes).toBe(120);
+    expect(L.remoteMaxWorkHours).toBe(12);
+  });
+});
+
+describe('shiftGuardrails — dynamic limits', () => {
+  const clockIn = epochFromLocalWallTime('08:00', DATE, TZ)!;
+
+  it('honors a custom on-site cutoff (21:00) and recorded time (16:30)', () => {
+    const L = resolveGuardrailLimits({ onsiteLatestAllowedTime: '21:00', onsiteRecordedTime: '16:30' });
+    const trigger = epochFromLocalWallTime('21:00', DATE, TZ)!;
+    const recorded = epochFromLocalWallTime('16:30', DATE, TZ)!;
+    const d = decideShiftAutoClose({
+      nowMs: trigger + 60_000,
+      workModel: 'On-site',
+      shift: { clockInSystem: clockIn, complete: false },
+      timezone: TZ,
+      limits: L,
+    });
+    expect(d.reason).toBe('on_site_10pm');
+    expect(d.actionAtMs).toBe(trigger);
+    expect(d.recordedAtMs).toBe(recorded);
+    expect(d.actionManual).toBe('16:30');
+    // And it must NOT fire at the old default cutoff semantics:
+    const before = decideShiftAutoClose({
+      nowMs: trigger - 60_000,
+      workModel: 'On-site',
+      shift: { clockInSystem: clockIn, complete: false },
+      timezone: TZ,
+      limits: L,
+    });
+    expect(before.reason).toBeNull();
+  });
+
+  it('night-shift guard: recorded time before clock-in falls back to the trigger', () => {
+    const lateIn = epochFromLocalWallTime('23:00', DATE, TZ)!;
+    const d = decideShiftAutoClose({
+      nowMs: epochFromLocalWallTime('23:30', '2026-08-15', TZ)!,
+      workModel: 'On-site',
+      shift: { clockInSystem: lateIn, complete: false },
+      timezone: TZ,
+    });
+    expect(d.reason).toBe('on_site_10pm');
+    // 17:00 on the clock-in date precedes a 23:00 clock-in → trigger used.
+    expect(d.recordedAtMs).toBe(d.actionAtMs);
+  });
+
+  it('honors a custom remote max (10h)', () => {
+    const L = resolveGuardrailLimits({ remoteMaxWorkHours: 10 });
+    const trigger = clockIn + 10 * 60 * 60 * 1000;
+    const d = decideShiftAutoClose({
+      nowMs: trigger + 60_000,
+      workModel: 'Remote',
+      shift: { clockInSystem: clockIn, complete: false },
+      timezone: TZ,
+      limits: L,
+    });
+    expect(d.reason).toBe('remote_12h');
+    expect(d.actionAtMs).toBe(trigger);
+    expect(d.recordedAtMs).toBe(trigger);
+  });
+
+  it('lunch: fires at max minutes, records recorded minutes', () => {
+    const L = resolveGuardrailLimits({ onsiteLunchMaxMinutes: 90, onsiteLunchRecordedMinutes: 45 });
+    const lunchOut = clockIn + 4 * 60 * 60 * 1000;
+    const d = decideLunchAutoEnd({
+      nowMs: lunchOut + 91 * 60 * 1000,
+      shift: { lunchOutSystem: lunchOut, complete: false },
+      limits: L,
+    });
+    expect(d.reason).toBe('lunch_1h');
+    expect(d.actionAtMs).toBe(lunchOut + 90 * 60 * 1000);
+    expect(d.recordedAtMs).toBe(lunchOut + 45 * 60 * 1000);
+    // Not yet due at 60min under a 90min max:
+    const early = decideLunchAutoEnd({
+      nowMs: lunchOut + 61 * 60 * 1000,
+      shift: { lunchOutSystem: lunchOut, complete: false },
+      limits: L,
+    });
+    expect(early.reason).toBeNull();
+  });
+});
+
+describe('guardrailWarningText', () => {
+  it('quotes the active limits when provided', () => {
+    const text = guardrailWarningText(resolveGuardrailLimits({ onsiteLatestAllowedTime: '21:00', onsiteRecordedTime: '16:30' }));
+    expect(text).toContain('21:00');
+    expect(text).toContain('16:30');
+  });
+
+  it('falls back to the generic text without limits', () => {
+    expect(guardrailWarningText(null)).toBe(GUARDRAIL_WARNING_TEXT);
   });
 });

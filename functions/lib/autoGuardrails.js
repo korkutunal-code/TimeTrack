@@ -35,10 +35,34 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 const db = admin.firestore();
-const ON_SITE_CLOSE_HHMM = '22:00';
-const REMOTE_MAX_SHIFT_MS = 12 * 60 * 60 * 1000;
-const LUNCH_AUTO_END_MS = 60 * 60 * 1000;
 const DEFAULT_TIMEZONE = 'America/Los_Angeles';
+const DEFAULT_LIMITS = {
+    onsiteLatestAllowedTime: '22:00',
+    onsiteRecordedTime: '17:00',
+    onsiteLunchMaxMinutes: 120,
+    onsiteLunchRecordedMinutes: 60,
+    remoteMaxWorkHours: 12,
+};
+/** Read the active limits from systemSettings/global, tolerating missing/malformed fields. */
+async function fetchGuardrailLimits() {
+    try {
+        const snap = await db.collection('systemSettings').doc('global').get();
+        const d = snap.exists ? snap.data() : {};
+        const num = (v, dflt) => typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : dflt;
+        const hhmm = (v, dflt) => typeof v === 'string' && /^([01]?\d|2[0-3]):[0-5]\d$/.test(v) ? v : dflt;
+        return {
+            onsiteLatestAllowedTime: hhmm(d.onsiteLatestAllowedTime, DEFAULT_LIMITS.onsiteLatestAllowedTime),
+            onsiteRecordedTime: hhmm(d.onsiteRecordedTime, DEFAULT_LIMITS.onsiteRecordedTime),
+            onsiteLunchMaxMinutes: num(d.onsiteLunchMaxMinutes, DEFAULT_LIMITS.onsiteLunchMaxMinutes),
+            onsiteLunchRecordedMinutes: num(d.onsiteLunchRecordedMinutes, DEFAULT_LIMITS.onsiteLunchRecordedMinutes),
+            remoteMaxWorkHours: num(d.remoteMaxWorkHours, DEFAULT_LIMITS.remoteMaxWorkHours),
+        };
+    }
+    catch (err) {
+        functions.logger.error('Failed to read systemSettings/global — using default guardrail limits.', err);
+        return DEFAULT_LIMITS;
+    }
+}
 /**
  * Normalize a Firestore Timestamp | number | Date to epoch millis.
  * The client dual-writes both `clockInSystem` (millis) and `clockInSystemTime`
@@ -218,6 +242,10 @@ exports.runAutoGuardrails = functions.pubsub
         for (const u of usersSnap.docs)
             usersById.set(u.id, u.data());
         const nowMs = Date.now();
+        const limits = await fetchGuardrailLimits();
+        functions.logger.info(`Auto-guardrails limits: onsiteLatest=${limits.onsiteLatestAllowedTime} ` +
+            `onsiteRecorded=${limits.onsiteRecordedTime} lunchMax=${limits.onsiteLunchMaxMinutes}min ` +
+            `lunchRecorded=${limits.onsiteLunchRecordedMinutes}min remoteMax=${limits.remoteMaxWorkHours}h`);
         const candidates = await fetchOpenEntryCandidates(nowMs);
         functions.logger.info(`Auto-guardrails: query returned ${candidates.length} candidate open-entr${candidates.length === 1 ? 'y' : 'ies'}.`);
         for (const docSnap of candidates) {
@@ -241,30 +269,47 @@ exports.runAutoGuardrails = functions.pubsub
             functions.logger.info(`Auto-guardrails: evaluating entry=${entryId} user=${data.userId} ` +
                 `workModel=${workModel} timezone=${timezone} elapsedHours=${elapsedHours.toFixed(2)}`);
             // --- 1) Shift auto-close (takes precedence over lunch auto-end) ----
-            let closedAtMs = null;
+            // Trigger vs RECORDED instants (Settings → Automated Actions):
+            // the trigger decides WHEN the guardrail fires; the recorded
+            // instant is what gets stamped as clockOut (e.g. trigger 22:00
+            // records 17:00; trigger 120min lunch records 60min).
+            let triggerAtMs = null;
+            let recordedMs = null;
             let closeReason = '';
             if (workModel === 'Remote') {
-                const candidate = openSeg.clockInSystem + REMOTE_MAX_SHIFT_MS;
+                const candidate = openSeg.clockInSystem + limits.remoteMaxWorkHours * 60 * 60 * 1000;
                 if (nowMs >= candidate) {
-                    closedAtMs = candidate;
-                    closeReason = 'Remote shift reached the 12-hour limit';
+                    triggerAtMs = candidate;
+                    recordedMs = candidate; // remote: trigger == recorded
+                    closeReason = `Remote shift reached the ${limits.remoteMaxWorkHours}-hour limit`;
                 }
             }
             else {
                 const clockInDate = moment_timezone_1.default.tz(openSeg.clockInSystem, timezone).format('YYYY-MM-DD');
-                let candidate = moment_timezone_1.default.tz(`${clockInDate} ${ON_SITE_CLOSE_HHMM}`, 'YYYY-MM-DD HH:mm', timezone).valueOf();
+                let candidate = moment_timezone_1.default.tz(`${clockInDate} ${limits.onsiteLatestAllowedTime}`, 'YYYY-MM-DD HH:mm', timezone).valueOf();
                 if (candidate <= openSeg.clockInSystem) {
-                    // Clocked in after 10 PM — close at the next day's 10 PM.
+                    // Clocked in after the cutoff — close at the next day's cutoff.
                     const nextDate = moment_timezone_1.default.tz(openSeg.clockInSystem + 86400000, timezone).format('YYYY-MM-DD');
-                    candidate = moment_timezone_1.default.tz(`${nextDate} ${ON_SITE_CLOSE_HHMM}`, 'YYYY-MM-DD HH:mm', timezone).valueOf();
+                    candidate = moment_timezone_1.default.tz(`${nextDate} ${limits.onsiteLatestAllowedTime}`, 'YYYY-MM-DD HH:mm', timezone).valueOf();
                 }
                 if (nowMs >= candidate) {
-                    closedAtMs = candidate;
-                    closeReason = 'On-site shift reached 10:00 PM local time';
+                    triggerAtMs = candidate;
+                    // Recorded clock-out: onsiteRecordedTime on the clock-in
+                    // local date. Guard: if that would precede the clock-in
+                    // (night shift) or postdate the trigger, record the
+                    // trigger instant instead — the span must stay positive.
+                    let recorded = moment_timezone_1.default.tz(`${clockInDate} ${limits.onsiteRecordedTime}`, 'YYYY-MM-DD HH:mm', timezone).valueOf();
+                    if (recorded <= openSeg.clockInSystem || recorded > candidate)
+                        recorded = candidate;
+                    recordedMs = recorded;
+                    closeReason =
+                        `On-site shift exceeded ${limits.onsiteLatestAllowedTime} local; ` +
+                            `clock-out recorded at ${limits.onsiteRecordedTime} local`;
                 }
             }
-            if (closedAtMs !== null) {
-                const capMs = closedAtMs;
+            if (triggerAtMs !== null && recordedMs !== null) {
+                const capMs = triggerAtMs;
+                const stampMs = recordedMs;
                 const closeOutcome = await db.runTransaction(async (tx) => {
                     var _a, _b, _c, _d, _e, _f;
                     // Re-read inside the transaction: if the employee punched
@@ -278,24 +323,25 @@ exports.runAutoGuardrails = functions.pubsub
                     const fo = getOpenSegment(fd);
                     if (!fo || typeof fo.clockInSystem !== 'number')
                         return 'already-closed';
-                    // Lunch clamp: an in-progress lunch is ended at the cap
-                    // ONLY when it started at/before the cap. A lunch started
-                    // AFTER the cap (e.g. lunch at 22:05, cap 22:00, cron at
-                    // 22:10) never happened within the capped span — clear it
-                    // rather than persist an inverted lunchIn < lunchOut.
+                    // Lunch clamp vs the RECORDED instant: an in-progress
+                    // lunch is ended at the recorded clock-out ONLY when it
+                    // started at/before it. A lunch started AFTER the
+                    // recorded instant never happened within the recorded
+                    // span — clear it rather than persist an inverted
+                    // lunchIn < lunchOut.
                     const skipLunch = fo.skipLunch === true;
                     let loMs = skipLunch ? undefined : fo.lunchOutSystem;
                     let liMs = skipLunch ? undefined : fo.lunchInSystem;
                     if (typeof loMs === 'number' && typeof liMs !== 'number') {
-                        if (loMs <= capMs) {
-                            liMs = capMs; // in-progress lunch ends at the cap (deducted)
+                        if (loMs <= stampMs) {
+                            liMs = stampMs; // in-progress lunch ends at the recorded close (deducted)
                         }
                         else {
                             loMs = undefined;
                             liMs = undefined;
                         }
                     }
-                    const parts = splitClosedSpan(fo.clockInSystem, capMs, timezone, loMs, liMs, skipLunch, fo.taskId);
+                    const parts = splitClosedSpan(fo.clockInSystem, stampMs, timezone, loMs, liMs, skipLunch, fo.taskId);
                     const part0 = parts[0];
                     // Replace the targeted open segment (by id), or — for the
                     // top-level-only-open legacy shape — append the
@@ -320,7 +366,8 @@ exports.runAutoGuardrails = functions.pubsub
                         lunchInSystem: (_b = fo.lunchInSystem) !== null && _b !== void 0 ? _b : null,
                         clockOutSystem: null,
                     }, {
-                        cappedAt: capMs,
+                        triggerAt: capMs,
+                        recordedAt: stampMs,
                         parts: parts.length,
                         day1WorkMinutes: day1Total,
                         autoClosed: true,
@@ -406,13 +453,16 @@ exports.runAutoGuardrails = functions.pubsub
                 }
                 continue;
             }
-            // --- 2) Lunch auto-end (1 hour) -------------------------------------
+            // --- 2) Lunch auto-end (Settings → Automated Actions) ----------------
+            // Trigger at onsiteLunchMaxMinutes open; RECORD lunchIn as
+            // lunchOut + onsiteLunchRecordedMinutes.
             const lo = openSeg.lunchOutSystem;
             const li = openSeg.lunchInSystem;
             if (typeof lo === 'number' && typeof li !== 'number' && openSeg.skipLunch !== true) {
-                const endAtMs = lo + LUNCH_AUTO_END_MS;
+                const endAtMs = lo + limits.onsiteLunchMaxMinutes * 60 * 1000;
                 if (nowMs >= endAtMs) {
-                    const lunchInManual = moment_timezone_1.default.tz(endAtMs, timezone).format('HH:mm');
+                    const lunchInMs = lo + limits.onsiteLunchRecordedMinutes * 60 * 1000;
+                    const lunchInManual = moment_timezone_1.default.tz(lunchInMs, timezone).format('HH:mm');
                     const lunchOutcome = await db.runTransaction(async (tx) => {
                         const fresh = await tx.get(docSnap.ref);
                         if (!fresh.exists)
@@ -428,16 +478,16 @@ exports.runAutoGuardrails = functions.pubsub
                         const serverNow = admin.firestore.FieldValue.serverTimestamp();
                         // Audit FIRST — atomic with the mutation.
                         const auditRef = db.collection('auditLogs').doc();
-                        tx.create(auditRef, buildAuditDoc(entryId, 'System auto-ended lunch after 60 minutes.', { lunchOutSystem: fo.lunchOutSystem, lunchInSystem: null }, {
+                        tx.create(auditRef, buildAuditDoc(entryId, 'System auto-ended lunch: open past ' + limits.onsiteLunchMaxMinutes + ' minutes; recorded as ' + limits.onsiteLunchRecordedMinutes + ' minutes.', { lunchOutSystem: fo.lunchOutSystem, lunchInSystem: null }, {
                             lunchInManual,
-                            lunchInSystem: endAtMs,
+                            lunchInSystem: lunchInMs,
                             autoEndedLunch: true,
                             flagged: true,
                         }));
                         const patch = {
                             lunchInManual,
-                            lunchInSystem: endAtMs,
-                            lunchInSystemTime: admin.firestore.Timestamp.fromMillis(endAtMs),
+                            lunchInSystem: lunchInMs,
+                            lunchInSystemTime: admin.firestore.Timestamp.fromMillis(lunchInMs),
                             autoEndedLunch: true,
                             flagged: true,
                             updatedAt: serverNow,
@@ -446,7 +496,7 @@ exports.runAutoGuardrails = functions.pubsub
                         const segs = Array.isArray(fd.segments) ? fd.segments : [];
                         if (fo.id && segs.length) {
                             patch.segments = segs.map((s) => (s === null || s === void 0 ? void 0 : s.id) === fo.id
-                                ? Object.assign(Object.assign({}, s), { lunchInManual, lunchInSystem: endAtMs, lunchInSystemTime: admin.firestore.Timestamp.fromMillis(endAtMs), autoEndedLunch: true, flagged: true }) : s);
+                                ? Object.assign(Object.assign({}, s), { lunchInManual, lunchInSystem: lunchInMs, lunchInSystemTime: admin.firestore.Timestamp.fromMillis(lunchInMs), autoEndedLunch: true, flagged: true }) : s);
                         }
                         tx.update(docSnap.ref, patch);
                         return 'ended';

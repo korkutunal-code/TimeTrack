@@ -28,10 +28,9 @@ import { stripUndefined } from '../app/lib/segmentOps';
 import { getTimeZoneOffsetMs, localDateOf, localTimeHHMM, nextLocalMidnightMs } from '../utils/midnightSplit';
 import { getCurrentPTDate } from '../utils/timeCalculations';
 import { auditLogService } from './auditLogService';
+import { fetchGlobalSettings, resolveGuardrailLimits, type GuardrailLimits } from './systemSettingsService';
 import type { User } from '../app/lib/auth';
 
-const ON_SITE_CLOSE_HHMM = '22:00';
-const REMOTE_MAX_SHIFT_MS = 12 * 60 * 60 * 1000;
 const PT_ZONE = 'America/Los_Angeles';
 export const REPAIR_DEFAULT_START_DATE = '2026-08-10';
 const REPAIR_REASON =
@@ -91,17 +90,34 @@ function localWallClockToMs(localDate: string, hhmm: string, timeZone: string): 
   return x;
 }
 
-/** Cap instant (epoch ms) for a segment starting at `clockInMs` under the guardrail policy. */
-function computeCapMs(workModel: 'On-site' | 'Remote', clockInMs: number, timezone: string): number {
-  if (workModel === 'Remote') return clockInMs + REMOTE_MAX_SHIFT_MS;
-  const clockInDate = localDateOf(clockInMs, timezone);
-  let cap = localWallClockToMs(clockInDate, ON_SITE_CLOSE_HHMM, timezone);
-  if (cap <= clockInMs) {
-    // Clocked in after 10 PM — cap at the NEXT local day's 10 PM.
-    const nextDate = localDateOf(nextLocalMidnightMs(clockInMs, timezone), timezone);
-    cap = localWallClockToMs(nextDate, ON_SITE_CLOSE_HHMM, timezone);
+/**
+ * Guardrail instants for a segment starting at `clockInMs`, from the ACTIVE
+ * Settings → Automated Actions limits:
+ *  - triggerMs: when the guardrail fires (violation threshold),
+ *  - recordedMs: the clockOut actually stamped (onsiteRecordedTime on the
+ *    clock-in local date; falls back to the trigger when it would precede
+ *    the clock-in or postdate the trigger — night-shift guard).
+ */
+function computeGuardrailInstants(
+  workModel: 'On-site' | 'Remote',
+  clockInMs: number,
+  timezone: string,
+  limits: GuardrailLimits,
+): { triggerMs: number; recordedMs: number } {
+  if (workModel === 'Remote') {
+    const trigger = clockInMs + limits.remoteMaxWorkHours * 60 * 60 * 1000;
+    return { triggerMs: trigger, recordedMs: trigger };
   }
-  return cap;
+  const clockInDate = localDateOf(clockInMs, timezone);
+  let trigger = localWallClockToMs(clockInDate, limits.onsiteLatestAllowedTime, timezone);
+  if (trigger <= clockInMs) {
+    // Clocked in after the cutoff — trigger at the NEXT local day's cutoff.
+    const nextDate = localDateOf(nextLocalMidnightMs(clockInMs, timezone), timezone);
+    trigger = localWallClockToMs(nextDate, limits.onsiteLatestAllowedTime, timezone);
+  }
+  let recorded = localWallClockToMs(clockInDate, limits.onsiteRecordedTime, timezone);
+  if (recorded <= clockInMs || recorded > trigger) recorded = trigger;
+  return { triggerMs: trigger, recordedMs: recorded };
 }
 
 interface SegmentPatch {
@@ -183,6 +199,11 @@ export async function repairRunawayShifts(opts: {
   const endDate = opts.endDate || repairDefaultEndDate();
   const dryRun = opts.dryRun === true;
 
+  // Active Settings → Automated Actions limits drive BOTH the violation
+  // threshold (latest allowed / remote max hours) and the RECORDED clock-out
+  // (onsiteRecordedTime) — fetched once per scan.
+  const limits = resolveGuardrailLimits(await fetchGlobalSettings());
+
   // PT-bounded window: clock-ins from 00:00 PT on startDate through end of endDate PT.
   const windowStartMs = localWallClockToMs(startDate, '00:00', PT_ZONE);
   const dayAfterEnd = localDateOf(nextLocalMidnightMs(localWallClockToMs(endDate, '12:00', PT_ZONE), PT_ZONE), PT_ZONE);
@@ -252,8 +273,8 @@ export async function repairRunawayShifts(opts: {
       const outMs = toMillis(d.clockOutSystem ?? d.clockOutSystemTime);
       const isOpen = !d.clockOutManual && d.dayComplete !== true;
       if (!isOpen && typeof outMs !== 'number') { skipped.noViolation++; continue; }
-      const capMs = computeCapMs(workModel, inMs, timezone);
-      const violates = isOpen ? nowMs > capMs : (outMs as number) > capMs;
+      const { triggerMs, recordedMs: capMs } = computeGuardrailInstants(workModel, inMs, timezone, limits);
+      const violates = isOpen ? nowMs > triggerMs : (outMs as number) > triggerMs;
       if (!violates) { skipped.noViolation++; continue; }
       flatClockInMs = inMs;
       flatPatch = buildSegmentCapPatch(
@@ -275,8 +296,8 @@ export async function repairRunawayShifts(opts: {
         const outMs = toMillis(s.clockOutSystem ?? s.clockOutSystemTime);
         const isOpen = segmentIsOpen(s);
         if (!isOpen && typeof outMs !== 'number') continue; // unusable segment
-        const capMs = computeCapMs(workModel, inMs, timezone);
-        const violates = isOpen ? nowMs > capMs : (outMs as number) > capMs;
+        const { triggerMs, recordedMs: capMs } = computeGuardrailInstants(workModel, inMs, timezone, limits);
+        const violates = isOpen ? nowMs > triggerMs : (outMs as number) > triggerMs;
         if (!violates) continue;
         segmentPatches.set(i, buildSegmentCapPatch(s, capMs, timezone));
         caps.push(capDescription(capMs));
@@ -292,8 +313,8 @@ export async function repairRunawayShifts(opts: {
       if (topLevelOpen && lastSegClosed) {
         const inMs = toMillis(d.clockInSystem ?? d.clockInSystemTime);
         if (typeof inMs === 'number') {
-          const capMs = computeCapMs(workModel, inMs, timezone);
-          if (nowMs > capMs) {
+          const { triggerMs, recordedMs: capMs } = computeGuardrailInstants(workModel, inMs, timezone, limits);
+          if (nowMs > triggerMs) {
             topLevelClockInMs = inMs;
             topLevelPatch = buildSegmentCapPatch(
               {
@@ -455,7 +476,10 @@ export async function repairRunawayShifts(opts: {
         autoClosed: true,
         flagged: true,
       },
-      reason: `${REPAIR_REASON} (${workModel}, ${caps.length} segment(s) capped: ${caps.join('; ')}.)`,
+      // Audit reason records the ACTIVE configured cutoff + recorded times
+      // (audit-log-alignment requirement): future readers see exactly which
+      // rule values produced this correction.
+      reason: `${REPAIR_REASON} (${workModel}; on-site cutoff ${limits.onsiteLatestAllowedTime} recorded as ${limits.onsiteRecordedTime}, remote max ${limits.remoteMaxWorkHours}h; ${caps.length} segment(s) capped: ${caps.join('; ')}.)`,
     });
     await updateDoc(doc(db, 'timeEntries', entryId), patch);
   }

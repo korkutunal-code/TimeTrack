@@ -5,6 +5,7 @@ import { dbService, TimeEntry, buildConsistentClosePatch, recomputeSegmentSystem
 import { doc, Timestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { repairRunawayShifts, repairDefaultEndDate, REPAIR_DEFAULT_START_DATE, type RepairRunawayResult } from '../../../services/repairRunawayShifts';
+import { fetchGlobalSettings, resolveGuardrailLimits, DEFAULT_GUARDRAIL_LIMITS, type GuardrailLimits } from '../../../services/systemSettingsService';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -815,6 +816,17 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const [repairEnd, setRepairEnd] = useState(repairDefaultEndDate);
   const [repairPreview, setRepairPreview] = useState<RepairRunawayResult | null>(null);
   const [repairing, setRepairing] = useState(false);
+  // Active Automated Actions limits — fetched when the dialog opens so the
+  // description quotes the rules the repair will actually apply.
+  const [repairLimits, setRepairLimits] = useState<GuardrailLimits>(DEFAULT_GUARDRAIL_LIMITS);
+  useEffect(() => {
+    if (!repairOpen) return;
+    let cancelled = false;
+    fetchGlobalSettings()
+      .then((s) => { if (!cancelled) setRepairLimits(resolveGuardrailLimits(s)); })
+      .catch(() => { if (!cancelled) setRepairLimits(resolveGuardrailLimits(null)); });
+    return () => { cancelled = true; };
+  }, [repairOpen]);
 
   const runRepairScan = async () => {
     setRepairing(true);
@@ -1079,8 +1091,12 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             <DialogTitle>Repair Runaway Shifts</DialogTitle>
             <DialogDescription>
               Scan a date window for runaway shifts — open entries past their guardrail cap, and
-              completed entries with segments past the cap (On-site: 10:00 PM local; Remote: 12 hours).
-              Run a dry scan first, then apply. Every repair is audit-logged.
+              completed entries with segments past the cap. Active rules (Settings → Automated
+              Actions): on-site shifts past {repairLimits.onsiteLatestAllowedTime} local are recorded
+              as {repairLimits.onsiteRecordedTime}; lunches past {repairLimits.onsiteLunchMaxMinutes} min
+              are recorded as {repairLimits.onsiteLunchRecordedMinutes} min; remote shifts auto-close
+              after {repairLimits.remoteMaxWorkHours}h. Run a dry scan first, then apply. Every repair
+              is audit-logged.
             </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-4">

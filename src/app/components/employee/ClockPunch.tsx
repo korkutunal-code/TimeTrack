@@ -19,6 +19,7 @@ import {
 } from '../../../services/clockService';
 import { formatHoursHMM, getEmployeeTimezone, getTimezoneAbbreviation, getLocalDate, subtractLocalDays } from '../../../utils/timeCalculations';
 import { detectGuardrailWarning } from '../../../utils/shiftGuardrails';
+import { fetchGlobalSettings, resolveGuardrailLimits } from '../../../services/systemSettingsService';
 
 interface ClockPunchProps {
   user: User;
@@ -56,9 +57,15 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
       try {
         const today = getLocalDate(employeeTz);
         const start = subtractLocalDays(today, 7, employeeTz);
-        const recent = await dbService.getTimeEntriesForUserInRange(user.uid, start, today);
+        // Fetch the active Automated Actions limits alongside the entries so
+        // the banner quotes the rules that actually fired (defaults apply if
+        // the settings doc is missing/unreadable — banner stays advisory).
+        const [recent, settings] = await Promise.all([
+          dbService.getTimeEntriesForUserInRange(user.uid, start, today),
+          fetchGlobalSettings().catch(() => null),
+        ]);
         if (cancelled) return;
-        const detection = detectGuardrailWarning(recent);
+        const detection = detectGuardrailWarning(recent, resolveGuardrailLimits(settings));
         setGuardrailWarning(detection.hasWarning ? detection.reason : null);
       } catch {
         // Silent — advisory banner only.

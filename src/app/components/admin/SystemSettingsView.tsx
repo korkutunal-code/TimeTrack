@@ -44,6 +44,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isReminderSettingsOpen, setIsReminderSettingsOpen] = useState(false);
+  const [isAutomatedActionsOpen, setIsAutomatedActionsOpen] = useState(false);
   const [isPayrollSettingsOpen, setIsPayrollSettingsOpen] = useState(false);
   const [isLockPeriodOpen, setIsLockPeriodOpen] = useState(false);
   const [isExcludeRecordsOpen, setIsExcludeRecordsOpen] = useState(false);
@@ -66,6 +67,28 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
       // Single consolidated write: all 9 settings fields + audit metadata in
       // one document (systemSettings/global). { merge: true } preserves any
       // extra fields other services may have added.
+      // --- Automated Actions validation (must pass before any write) -------
+      const hhmmRe = /^([01]?\d|2[0-3]):[0-5]\d$/;
+      if (!hhmmRe.test(systemSettings.onsiteLatestAllowedTime) || !hhmmRe.test(systemSettings.onsiteRecordedTime)) {
+        toast.error('Automated Actions: cutoff and recorded times must be valid HH:MM (24h).');
+        setSaving(false);
+        return false;
+      }
+      if (
+        !Number.isInteger(systemSettings.onsiteLunchMaxMinutes) || systemSettings.onsiteLunchMaxMinutes <= 0 ||
+        !Number.isInteger(systemSettings.onsiteLunchRecordedMinutes) || systemSettings.onsiteLunchRecordedMinutes <= 0 ||
+        !Number.isInteger(systemSettings.remoteMaxWorkHours) || systemSettings.remoteMaxWorkHours <= 0
+      ) {
+        toast.error('Automated Actions: minute/hour limits must be positive whole numbers.');
+        setSaving(false);
+        return false;
+      }
+      if (systemSettings.onsiteLunchRecordedMinutes > systemSettings.onsiteLunchMaxMinutes) {
+        toast.error('Automated Actions: recorded lunch minutes cannot exceed the max lunch minutes.');
+        setSaving(false);
+        return false;
+      }
+
       const payload: Record<string, unknown> = {
         enable_email_reminders: systemSettings.enable_email_reminders,
         enable_sms_reminders: systemSettings.enable_sms_reminders,
@@ -81,6 +104,11 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
         monthly_start_day: systemSettings.monthly_start_day,
         locked_up_to_date: systemSettings.locked_up_to_date,
         exclude_records_before_date: systemSettings.exclude_records_before_date,
+        onsiteLatestAllowedTime: systemSettings.onsiteLatestAllowedTime,
+        onsiteRecordedTime: systemSettings.onsiteRecordedTime,
+        onsiteLunchMaxMinutes: systemSettings.onsiteLunchMaxMinutes,
+        onsiteLunchRecordedMinutes: systemSettings.onsiteLunchRecordedMinutes,
+        remoteMaxWorkHours: systemSettings.remoteMaxWorkHours,
         updatedAt: Timestamp.now(),
         updatedBy: currentUser.uid,
       };
@@ -178,6 +206,95 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
 
   return (
     <div className="space-y-6">
+      {/* Automated Actions — configurable runaway guardrails enforced by the
+          runAutoGuardrails cron, the Repair Runaway Shifts tool, and the
+          employee warning banner. Same collapsible pattern as the other
+          settings sections. */}
+      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
+        <CardHeader className="bg-white/40 pb-2">
+          <button
+            type="button"
+            onClick={() => setIsAutomatedActionsOpen((open) => !open)}
+            aria-expanded={isAutomatedActionsOpen}
+            className="w-full flex items-center justify-between text-left"
+          >
+            <CardTitle className="text-slate-800 font-bold">Automated Actions</CardTitle>
+            <ChevronDown
+              className={`size-5 text-slate-500 transition-transform duration-200 ${isAutomatedActionsOpen ? 'rotate-180' : 'rotate-0'}`}
+            />
+          </button>
+        </CardHeader>
+        {isAutomatedActionsOpen && (
+          <CardContent className="pt-2">
+            <p className="text-xs text-slate-400 mb-4">
+              Runaway-shift rules enforced automatically by the system (cron + repair tool). All times are the employee&apos;s local time.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('onsiteLatestAllowedTime')}`}>
+                <Label>On-Site Latest Allowed Time</Label>
+                <Input
+                  type="time"
+                  value={systemSettings.onsiteLatestAllowedTime}
+                  onChange={(e) => update('onsiteLatestAllowedTime', e.target.value)}
+                  className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
+                />
+                <p className="text-xs text-slate-400">An on-site shift still open at this local time is auto-closed.</p>
+              </div>
+
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('onsiteRecordedTime')}`}>
+                <Label>On-Site Recorded Clock-Out</Label>
+                <Input
+                  type="time"
+                  value={systemSettings.onsiteRecordedTime}
+                  onChange={(e) => update('onsiteRecordedTime', e.target.value)}
+                  className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
+                />
+                <p className="text-xs text-slate-400">The clock-out time recorded when the cutoff is hit (e.g. cutoff 22:00 records 17:00).</p>
+              </div>
+
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('remoteMaxWorkHours')}`}>
+                <Label>Remote Max Work Hours</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={systemSettings.remoteMaxWorkHours}
+                  onChange={(e) => update('remoteMaxWorkHours', Number(e.target.value))}
+                  className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
+                />
+                <p className="text-xs text-slate-400">A remote shift open longer than this is auto-closed at the limit.</p>
+              </div>
+
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('onsiteLunchMaxMinutes')}`}>
+                <Label>On-Site Lunch Max Minutes</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={systemSettings.onsiteLunchMaxMinutes}
+                  onChange={(e) => update('onsiteLunchMaxMinutes', Number(e.target.value))}
+                  className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
+                />
+                <p className="text-xs text-slate-400">A lunch left open longer than this is auto-ended.</p>
+              </div>
+
+              <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('onsiteLunchRecordedMinutes')}`}>
+                <Label>On-Site Lunch Recorded Minutes</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={systemSettings.onsiteLunchRecordedMinutes}
+                  onChange={(e) => update('onsiteLunchRecordedMinutes', Number(e.target.value))}
+                  className="max-w-[140px] rounded-lg border-slate-200 text-sm py-1.5 px-3"
+                />
+                <p className="text-xs text-slate-400">The lunch duration recorded when auto-ended (lunchIn = lunchOut + this). Must be ≤ max minutes.</p>
+              </div>
+            </div>
+          </CardContent>
+        )}
+      </Card>
+
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
         <CardHeader className="bg-white/40 pb-2">
           <button

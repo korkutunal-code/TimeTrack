@@ -26,6 +26,17 @@ export interface GlobalSettings {
    * Firestore — this is a reporting concern, not a data mutation.
    */
   exclude_records_before_date: string;
+  // --- Automated Actions (runaway guardrails) -----------------------------
+  /** Latest local time an on-site shift may remain open before auto-close. */
+  onsiteLatestAllowedTime: string;
+  /** The clockOut timestamp RECORDED when the on-site cutoff is reached. */
+  onsiteRecordedTime: string;
+  /** Max minutes an on-site lunch may stay open before auto-ending. */
+  onsiteLunchMaxMinutes: number;
+  /** The lunch duration RECORDED when the max is hit (lunchIn = lunchOut + this). */
+  onsiteLunchRecordedMinutes: number;
+  /** Max hours a remote shift may remain open before forced termination. */
+  remoteMaxWorkHours: number;
 }
 
 export const DEFAULT_SETTINGS: GlobalSettings = {
@@ -43,6 +54,11 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
   monthly_start_day: 1,
   locked_up_to_date: '',
   exclude_records_before_date: '',
+  onsiteLatestAllowedTime: '22:00',
+  onsiteRecordedTime: '17:00',
+  onsiteLunchMaxMinutes: 120,
+  onsiteLunchRecordedMinutes: 60,
+  remoteMaxWorkHours: 12,
 };
 
 /**
@@ -98,5 +114,19 @@ function mapSettings(data: Record<string, unknown>): GlobalSettings {
     monthly_start_day: (data.monthly_start_day as number) ?? DEFAULT_SETTINGS.monthly_start_day,
     locked_up_to_date: (data.locked_up_to_date as string) || DEFAULT_SETTINGS.locked_up_to_date,
     exclude_records_before_date: (data.exclude_records_before_date as string) || DEFAULT_SETTINGS.exclude_records_before_date,
+    onsiteLatestAllowedTime: (data.onsiteLatestAllowedTime as string) || DEFAULT_SETTINGS.onsiteLatestAllowedTime,
+    onsiteRecordedTime: (data.onsiteRecordedTime as string) || DEFAULT_SETTINGS.onsiteRecordedTime,
+    onsiteLunchMaxMinutes: (data.onsiteLunchMaxMinutes as number) ?? DEFAULT_SETTINGS.onsiteLunchMaxMinutes,
+    onsiteLunchRecordedMinutes: (data.onsiteLunchRecordedMinutes as number) ?? DEFAULT_SETTINGS.onsiteLunchRecordedMinutes,
+    remoteMaxWorkHours: (data.remoteMaxWorkHours as number) ?? DEFAULT_SETTINGS.remoteMaxWorkHours,
   };
 }
+
+// Guardrail limits type/defaults/resolver live in the PURE utils module so
+// shiftGuardrails.ts stays Firebase-free (jest-safe). Re-exported here for
+// the UI consumers that already work with this service.
+export {
+  DEFAULT_GUARDRAIL_LIMITS,
+  resolveGuardrailLimits,
+  type GuardrailLimits,
+} from '../utils/guardrailLimits';
