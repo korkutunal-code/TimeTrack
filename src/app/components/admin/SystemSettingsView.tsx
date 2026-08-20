@@ -227,7 +227,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
         {isAutomatedActionsOpen && (
           <CardContent className="pt-2">
             <p className="text-xs text-slate-400 mb-4">
-              Runaway-shift rules enforced automatically by the system (cron + repair tool). All times are Pacific / California Time.
+              Runaway-shift rules enforced automatically by the system (cron + repair tool). All times are interpreted in each employee&apos;s local timezone (their profile timezone, falling back to Pacific Time when unset).
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
               <div className={`space-y-1.5 rounded-lg p-1.5 -m-1.5 transition-colors ${fieldHighlight('onsiteLatestAllowedTime')}`}>
