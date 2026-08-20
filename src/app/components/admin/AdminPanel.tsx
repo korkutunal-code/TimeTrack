@@ -864,9 +864,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl overflow-hidden">
-        <CardContent className="flex flex-row items-center gap-4 flex-wrap py-4">
+        <CardContent className="flex flex-row items-center gap-4 flex-wrap py-4 [&:last-child]:pb-4">
           <CardTitle className="text-slate-800 font-bold whitespace-nowrap">Quick Actions</CardTitle>
           <Button onClick={() => setCreateUserOpen(true)}>
             <UserPlus className="size-4 mr-2" />
@@ -899,8 +899,10 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         </CardContent>
       </Card>
 
-      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl overflow-hidden">
-        <CardHeader className="bg-white/40 pb-2">
+      {/* gap-0 overrides the Card base gap-6 (24px flex gap between header and
+         content) so the heading-to-table distance is exactly the header pb-[14px]. */}
+      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl overflow-hidden gap-0">
+        <CardHeader className="bg-white/40 pt-[14px] pb-[14px]">
           <CardTitle className="text-slate-800 font-bold flex items-center justify-between">
             <span>Manage Users</span>
             <Popover open={columnSettingsOpen} onOpenChange={setColumnSettingsOpen}>
@@ -938,7 +940,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             </Popover>
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-0">
           {/* Mobile Filter Bar — mirrors the desktop column-header popovers */}
           <div className="md:hidden flex flex-wrap items-center gap-3">
             <FilterHeader column="workModel" title="Work Model" options={WORK_MODEL_OPTIONS} selected={selectedWorkModels} setSelected={setSelectedWorkModels} openColumn={openMobileFilterMenu} setOpenColumn={setOpenMobileFilterMenu} />
@@ -946,7 +948,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             <FilterHeader column="status" title="Status" options={STATUS_OPTIONS} selected={selectedStatuses} setSelected={setSelectedStatuses} openColumn={openMobileFilterMenu} setOpenColumn={setOpenMobileFilterMenu} />
           </div>
           {/* Mobile Card View */}
-          <div className="md:hidden space-y-3">
+          <div className="md:hidden space-y-3 mt-4">
             {filteredUsers.length === 0 ? (
               <Card className="border border-white/80 shadow-md bg-white/60 backdrop-blur-md rounded-2xl">
                 <CardContent className="py-10 flex flex-col items-center gap-3">
