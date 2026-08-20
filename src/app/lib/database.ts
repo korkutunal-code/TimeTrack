@@ -1503,13 +1503,6 @@ class DatabaseService {
   }
 
   /**
-   * Payroll-lock guardrail (2026-08): reject any correction / adjustment to an
-   * entry whose work date falls inside a locked payroll period
-   * (systemSettings/global.locked_up_to_date, PT date string, inclusive).
-   * Throws with a human-readable message; callers surface it as a toast.
-   * No-op when no lock date is set or the entry has no resolvable date.
-   */
-  /**
    * Lock-check EVERY calendar date an adjustment touches. The owning doc's
    * date and the edited segment's attributed local date can differ across a
    * local-midnight split (targetSeg.localDate may be the next day while
@@ -1523,6 +1516,13 @@ class DatabaseService {
     }
   }
 
+  /**
+   * Payroll-lock guardrail (2026-08): reject any correction / adjustment to an
+   * entry whose work date falls inside a locked payroll period
+   * (systemSettings/global.locked_up_to_date, PT date string, inclusive).
+   * Throws with a human-readable message; callers surface it as a toast.
+   * No-op when no lock date is set or the entry has no resolvable date.
+   */
   async assertPayrollNotLocked(workDate: string | undefined): Promise<void> {
     if (!workDate) return;
     const settings = await this.getPayrollSettings();
