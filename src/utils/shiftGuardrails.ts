@@ -134,8 +134,18 @@ export interface GuardrailEntryLike {
   status?: string;
   autoClosed?: boolean;
   autoEndedLunch?: boolean;
-  segments?: Array<{ autoClosed?: boolean; autoEndedLunch?: boolean }>;
-  currentSegment?: { autoClosed?: boolean; autoEndedLunch?: boolean } | null;
+  segments?: Array<{ autoClosed?: boolean; autoEndedLunch?: boolean; splitFromMidnight?: boolean; flagged?: boolean }>;
+  currentSegment?: { autoClosed?: boolean; autoEndedLunch?: boolean; splitFromMidnight?: boolean; flagged?: boolean } | null;
+}
+
+/**
+ * True only for a REAL guardrail close. Routine local-midnight splits stamp
+ * autoClosed: true on every cross-midnight Day-1 part (midnightSplit.ts) —
+ * those are excluded unless the segment is also flagged (the cron and the
+ * runaway-repair writer set flagged on segments they close).
+ */
+function isGuardrailClose(s: { autoClosed?: boolean; splitFromMidnight?: boolean; flagged?: boolean } | undefined): boolean {
+  return s?.autoClosed === true && (s.splitFromMidnight !== true || s.flagged === true);
 }
 
 export const GUARDRAIL_WARNING_TEXT =
@@ -155,8 +165,8 @@ export function detectGuardrailWarning(entries: GuardrailEntryLike[]): {
     if (e.status === 'voided' || e.status === 'archived' || e.status === 'corrected') continue;
     const autoClosed =
       e.autoClosed === true ||
-      e.currentSegment?.autoClosed === true ||
-      (e.segments ?? []).some((s) => s.autoClosed === true);
+      isGuardrailClose(e.currentSegment ?? undefined) ||
+      (e.segments ?? []).some((s) => isGuardrailClose(s));
     const autoEndedLunch =
       e.autoEndedLunch === true ||
       e.currentSegment?.autoEndedLunch === true ||

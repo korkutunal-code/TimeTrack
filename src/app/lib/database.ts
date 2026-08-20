@@ -485,10 +485,16 @@ export function calculateFlags(entry: TimeEntry): string[] {
   // because an auto-ended lunch leaves the shift OPEN (entry.complete === false)
   // yet still must appear in the Admin Dashboard's Flags count / filtered list.
   const segs = entry.segments ?? [];
+  // Exclude routine local-midnight-split portions: the splitter stamps
+  // autoClosed: true on every cross-midnight Day-1 part (midnightSplit.ts),
+  // which is NOT a guardrail action. A split part only counts as a guardrail
+  // action when it is also flagged (the cron/repair writers set flagged).
+  const isGuardrailClose = (s: { autoClosed?: boolean; splitFromMidnight?: boolean; flagged?: boolean } | undefined) =>
+    s?.autoClosed === true && (s.splitFromMidnight !== true || s.flagged === true);
   const autoClosed =
     entry.autoClosed === true ||
-    entry.currentSegment?.autoClosed === true ||
-    segs.some((s) => s.autoClosed === true);
+    isGuardrailClose(entry.currentSegment ?? undefined) ||
+    segs.some((s) => isGuardrailClose(s));
   const autoEndedLunch =
     entry.autoEndedLunch === true ||
     entry.currentSegment?.autoEndedLunch === true ||
@@ -1274,8 +1280,10 @@ class DatabaseService {
   }): Promise<void> {
     const { requestId, adminUid, adminName, newStatus, resolutionNote } = args;
     // Resolution note is optional (the UI no longer collects one). It is NOT
-    // validated as non-empty here; the audit reason below falls back to a
-    // default string so the mandatory-audit-reason rule still holds.
+    // validated as non-empty here. The mandatory-audit-reason rule requires a
+    // HUMAN-PROVIDED reason on every correction: when the admin note is empty,
+    // the audit reason below embeds the employee's own request notes (required
+    // at submission) instead of a machine-generated default string.
     const trimmedNote = (resolutionNote || '').trim();
 
     // 1) Read the correction request to get the target field + suggested time.
@@ -1430,7 +1438,9 @@ class DatabaseService {
       targetId: entryId,
       before: { field, [field]: beforeFieldVal, totalWorkMinutes: before.totalWorkMinutes },
       after: { field, [field]: value, totalWorkMinutes: after.totalWorkMinutes },
-      reason: trimmedNote ? `${trimmedNote} (approved correction request ${requestId} for ${request.issue_type})` : `Approved correction request ${requestId} for ${request.issue_type} (no resolution note provided)`,
+      reason: trimmedNote
+        ? `${trimmedNote} (approved correction request ${requestId} for ${request.issue_type})`
+        : `Approved correction request ${requestId} for ${request.issue_type}: "${request.notes}"`,
       correctionRequestId: requestId,
     });
 

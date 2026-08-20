@@ -69,6 +69,7 @@ function getOpenSegment(data) {
         if (last && last.complete !== true) {
             return {
                 id: typeof last.id === 'string' ? last.id : undefined,
+                taskId: typeof last.taskId === 'string' ? last.taskId : undefined,
                 clockInSystem: toMillis((_a = last.clockInSystem) !== null && _a !== void 0 ? _a : last.clockInSystemTime),
                 lunchOutSystem: toMillis((_b = last.lunchOutSystem) !== null && _b !== void 0 ? _b : last.lunchOutSystemTime),
                 lunchInSystem: toMillis((_c = last.lunchInSystem) !== null && _c !== void 0 ? _c : last.lunchInSystemTime),
@@ -76,9 +77,13 @@ function getOpenSegment(data) {
             };
         }
     }
-    // Legacy flat doc: clocked in at the top level but never clocked out.
+    // Legacy flat doc (or top-level-only open shift): clocked in at the top
+    // level but never clocked out, while segments[] may end in a CLOSED
+    // segment (documented legacy shape — the open shift lives only in the
+    // top-level fields).
     if (data.clockInManual && !data.clockOutManual && data.dayComplete !== true) {
         return {
+            taskId: typeof data.taskId === 'string' ? data.taskId : undefined,
             clockInSystem: toMillis((_d = data.clockInSystem) !== null && _d !== void 0 ? _d : data.clockInSystemTime),
             lunchOutSystem: toMillis((_e = data.lunchOutSystem) !== null && _e !== void 0 ? _e : data.lunchOutSystemTime),
             lunchInSystem: toMillis((_f = data.lunchInSystem) !== null && _f !== void 0 ? _f : data.lunchInSystemTime),
@@ -87,40 +92,62 @@ function getOpenSegment(data) {
     }
     return null;
 }
-/** Work minutes for a closed span from system timestamps, lunch-aware. */
-function computeWorkMinutes(openSeg, closedAtMs) {
-    const inSys = openSeg.clockInSystem;
-    if (typeof inSys !== 'number')
-        return 0;
-    let gross = Math.max(0, Math.round((closedAtMs - inSys) / 60000));
-    if (openSeg.skipLunch !== true) {
-        const lo = openSeg.lunchOutSystem;
-        const li = openSeg.lunchInSystem;
-        if (typeof lo === 'number' && typeof li === 'number' && li >= lo) {
-            gross = Math.max(0, gross - Math.round((li - lo) / 60000));
+/**
+ * Split a closed span at local midnights (client midnightSplit.ts parity):
+ * the cron must produce the same per-local-date segments a manual punch-out
+ * would, or per-date history / weekly totals diverge from an equivalent
+ * manually-closed shift. Single-day spans return one part with no split
+ * markers. Follows the client convention of stamping a midnight-ending part
+ * at 23:59 (epoch midnight - 60s).
+ */
+function splitClosedSpan(inMs, outMs, tz, loMs, liMs, skipLunch, taskId) {
+    const dates = [];
+    let cursor = moment_timezone_1.default.tz(inMs, tz).startOf('day');
+    const endDay = moment_timezone_1.default.tz(outMs, tz).startOf('day');
+    while (cursor.valueOf() <= endDay.valueOf()) {
+        dates.push(cursor.format('YYYY-MM-DD'));
+        cursor = cursor.clone().add(1, 'day');
+    }
+    const multi = dates.length > 1;
+    return dates.map((date, i) => {
+        const dayStart = moment_timezone_1.default.tz(`${date} 00:00`, 'YYYY-MM-DD HH:mm', tz).valueOf();
+        const nextDayStart = moment_timezone_1.default.tz(`${date} 00:00`, 'YYYY-MM-DD HH:mm', tz).add(1, 'day').valueOf();
+        const partStart = Math.max(inMs, dayStart);
+        const rawEnd = Math.min(outMs, nextDayStart);
+        const endsAtMidnight = multi && i < dates.length - 1 && rawEnd === nextDayStart;
+        const partEnd = endsAtMidnight ? rawEnd - 60000 : rawEnd;
+        // Lunch: deduct the overlap with this part; attach the lunch punch
+        // fields to the part(s) containing them.
+        let lunchMs = 0;
+        const lunchFields = {};
+        if (!skipLunch && typeof loMs === 'number' && typeof liMs === 'number' && liMs > loMs) {
+            lunchMs = Math.max(0, Math.min(liMs, rawEnd) - Math.max(loMs, partStart));
+            if (loMs >= partStart && loMs < rawEnd) {
+                lunchFields.lunchOutSystem = loMs;
+                lunchFields.lunchOutManual = moment_timezone_1.default.tz(loMs, tz).format('HH:mm');
+            }
+            if (liMs > partStart && liMs <= rawEnd) {
+                lunchFields.lunchInSystem = liMs;
+                lunchFields.lunchInManual = moment_timezone_1.default.tz(liMs, tz).format('HH:mm');
+            }
         }
-    }
-    return gross;
+        return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ id: `seg_sysclose_${outMs}_${i}` }, (i === 0 && taskId ? { taskId } : {})), { clockInManual: moment_timezone_1.default.tz(partStart, tz).format('HH:mm'), clockInSystem: partStart, clockOutManual: endsAtMidnight ? '23:59' : moment_timezone_1.default.tz(partEnd, tz).format('HH:mm'), clockOutSystem: partEnd }), lunchFields), (skipLunch ? { skipLunch: true } : {})), { workMinutes: Math.max(0, Math.round((partEnd - partStart) / 60000) - Math.round(lunchMs / 60000)) }), (multi ? { localDate: date, splitFromMidnight: true } : {})), { complete: true, autoClosed: true, flagged: true });
+    });
 }
-/** Append an immutable audit row (actor 'system') for a guardrail action. */
-async function writeAuditLog(entryId, reason, before, after) {
-    try {
-        await db.collection('auditLogs').add({
-            occurredAt: admin.firestore.FieldValue.serverTimestamp(),
-            actorUid: 'system',
-            actorName: 'System Guardrails',
-            actorRole: 'system',
-            action: 'time_correction',
-            targetCollection: 'timeEntries',
-            targetId: entryId,
-            before,
-            after,
-            reason,
-        });
-    }
-    catch (err) {
-        functions.logger.error(`Failed to write guardrail audit log for ${entryId}:`, err);
-    }
+/** Build the immutable audit row (actor 'system') for a guardrail action. */
+function buildAuditDoc(entryId, reason, before, after) {
+    return {
+        occurredAt: admin.firestore.FieldValue.serverTimestamp(),
+        actorUid: 'system',
+        actorName: 'System Guardrails',
+        actorRole: 'system',
+        action: 'time_correction',
+        targetCollection: 'timeEntries',
+        targetId: entryId,
+        before,
+        after,
+        reason,
+    };
 }
 /**
  * Auto-Guardrails Engine — runs every 15 minutes and evaluates all open time
@@ -134,6 +161,13 @@ async function writeAuditLog(entryId, reason, before, after) {
  * an immutable `auditLogs` row with actor 'system'. Because this runs under the
  * Admin SDK it bypasses Firestore security rules, which is required for the
  * cross-user system write + audit append.
+ *
+ * Writes run inside a Firestore transaction that (1) RE-READS the doc and
+ * re-verifies the shift/lunch is still open — an employee punch-out between
+ * the snapshot and the write wins, the cron never clobbers it — and
+ * (2) commits the audit row and the timeEntries mutation ATOMICALLY (audit
+ * first), so no correction can land without its immutable audit row and no
+ * audit row can reference a correction that never happened.
  */
 /**
  * Fetch every candidate open-shift doc.
@@ -177,7 +211,6 @@ async function fetchOpenEntryCandidates(nowMs) {
 exports.runAutoGuardrails = functions.pubsub
     .schedule('every 15 minutes')
     .onRun(async () => {
-    var _a, _b;
     functions.logger.info('Starting auto-guardrails evaluation...');
     try {
         const usersSnap = await db.collection('users').where('active', '==', true).get();
@@ -231,68 +264,146 @@ exports.runAutoGuardrails = functions.pubsub
                 }
             }
             if (closedAtMs !== null) {
-                // TS: `let` narrowing is discarded inside the segments.map
-                // closure below — bind a const for use inside callbacks.
                 const capMs = closedAtMs;
-                const closeManual = moment_timezone_1.default.tz(closedAtMs, timezone).format('HH:mm');
-                // Close any in-progress lunch at the close instant so it is deducted.
-                const onLunch = typeof openSeg.lunchOutSystem === 'number' &&
-                    typeof openSeg.lunchInSystem !== 'number' &&
-                    openSeg.skipLunch !== true;
-                const effectiveLunchIn = onLunch ? closedAtMs : openSeg.lunchInSystem;
-                const workMinutes = computeWorkMinutes(Object.assign(Object.assign({}, openSeg), { lunchInSystem: effectiveLunchIn }), closedAtMs);
-                const before = {
-                    clockInSystem: openSeg.clockInSystem,
-                    lunchOutSystem: (_a = openSeg.lunchOutSystem) !== null && _a !== void 0 ? _a : null,
-                    lunchInSystem: (_b = openSeg.lunchInSystem) !== null && _b !== void 0 ? _b : null,
-                    clockOutSystem: null,
-                };
-                const patch = {
-                    clockOutManual: closeManual,
-                    clockOutSystem: closedAtMs,
-                    clockOutSystemTime: admin.firestore.Timestamp.fromMillis(closedAtMs),
-                    complete: true,
-                    dayComplete: true,
-                    currentStep: 4,
-                    completedAt: admin.firestore.Timestamp.fromMillis(closedAtMs),
-                    autoClosed: true,
-                    flagged: true,
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                    updatedBy: 'system',
-                };
-                if (onLunch) {
-                    patch.lunchInManual = closeManual;
-                    patch.lunchInSystem = closedAtMs;
-                    patch.lunchInSystemTime = admin.firestore.Timestamp.fromMillis(closedAtMs);
-                }
-                // Close the matching open segment in segments[] too.
-                if (openSeg.id && Array.isArray(data.segments)) {
-                    const newSegments = data.segments.map((s) => {
-                        if (s.id === openSeg.id) {
-                            const closed = Object.assign(Object.assign({}, s), { clockOutManual: closeManual, clockOutSystem: capMs, clockOutSystemTime: admin.firestore.Timestamp.fromMillis(capMs), workMinutes, complete: true, autoClosed: true, flagged: true });
-                            if (onLunch) {
-                                closed.lunchInManual = closeManual;
-                                closed.lunchInSystem = capMs;
-                                closed.lunchInSystemTime = admin.firestore.Timestamp.fromMillis(capMs);
-                            }
-                            return closed;
+                const closeOutcome = await db.runTransaction(async (tx) => {
+                    var _a, _b, _c, _d, _e, _f;
+                    // Re-read inside the transaction: if the employee punched
+                    // out (or ended lunch) between the list snapshot and now,
+                    // their exact times win — the cron never overwrites a
+                    // legitimate punch-out.
+                    const fresh = await tx.get(docSnap.ref);
+                    if (!fresh.exists)
+                        return 'missing';
+                    const fd = fresh.data();
+                    const fo = getOpenSegment(fd);
+                    if (!fo || typeof fo.clockInSystem !== 'number')
+                        return 'already-closed';
+                    // Lunch clamp: an in-progress lunch is ended at the cap
+                    // ONLY when it started at/before the cap. A lunch started
+                    // AFTER the cap (e.g. lunch at 22:05, cap 22:00, cron at
+                    // 22:10) never happened within the capped span — clear it
+                    // rather than persist an inverted lunchIn < lunchOut.
+                    const skipLunch = fo.skipLunch === true;
+                    let loMs = skipLunch ? undefined : fo.lunchOutSystem;
+                    let liMs = skipLunch ? undefined : fo.lunchInSystem;
+                    if (typeof loMs === 'number' && typeof liMs !== 'number') {
+                        if (loMs <= capMs) {
+                            liMs = capMs; // in-progress lunch ends at the cap (deducted)
                         }
-                        return s;
+                        else {
+                            loMs = undefined;
+                            liMs = undefined;
+                        }
+                    }
+                    const parts = splitClosedSpan(fo.clockInSystem, capMs, timezone, loMs, liMs, skipLunch, fo.taskId);
+                    const part0 = parts[0];
+                    // Replace the targeted open segment (by id), or — for the
+                    // top-level-only-open legacy shape — append the
+                    // materialized shift to the existing segments.
+                    const existingSegs = Array.isArray(fd.segments) ? fd.segments : [];
+                    const baseSegs = fo.id ? existingSegs.filter((s) => (s === null || s === void 0 ? void 0 : s.id) !== fo.id) : existingSegs;
+                    const day1Segments = [...baseSegs, part0];
+                    const day1Total = day1Segments.reduce((sum, s) => sum + (typeof s.workMinutes === 'number' ? s.workMinutes : 0), 0);
+                    // Firestore transactions require ALL reads before ANY
+                    // write: fetch the day-2+ target docs up front.
+                    const extraParts = parts.slice(1);
+                    const extraRefs = extraParts.map((p) => db.collection('timeEntries').doc(`${fd.userId}_${p.localDate}`));
+                    const extraSnaps = await Promise.all(extraRefs.map((r) => tx.get(r)));
+                    const serverNow = admin.firestore.FieldValue.serverTimestamp();
+                    const ts = (ms) => admin.firestore.Timestamp.fromMillis(ms);
+                    // Audit FIRST — atomically with the mutation (same
+                    // transaction): no unaudited correction, no orphan audit.
+                    const auditRef = db.collection('auditLogs').doc();
+                    tx.create(auditRef, buildAuditDoc(entryId, `System auto-closed shift: ${closeReason}.`, {
+                        clockInSystem: fo.clockInSystem,
+                        lunchOutSystem: (_a = fo.lunchOutSystem) !== null && _a !== void 0 ? _a : null,
+                        lunchInSystem: (_b = fo.lunchInSystem) !== null && _b !== void 0 ? _b : null,
+                        clockOutSystem: null,
+                    }, {
+                        cappedAt: capMs,
+                        parts: parts.length,
+                        day1WorkMinutes: day1Total,
+                        autoClosed: true,
+                        flagged: true,
+                    }));
+                    // Original doc keeps the Day-1 portion; top-level fields
+                    // mirror THAT portion (client split parity — no phantom
+                    // spanning "current" shift).
+                    tx.update(docSnap.ref, {
+                        clockOutManual: part0.clockOutManual,
+                        clockOutSystem: part0.clockOutSystem,
+                        clockOutSystemTime: ts(part0.clockOutSystem),
+                        lunchOutManual: (_c = part0.lunchOutManual) !== null && _c !== void 0 ? _c : null,
+                        lunchOutSystem: (_d = part0.lunchOutSystem) !== null && _d !== void 0 ? _d : null,
+                        lunchOutSystemTime: part0.lunchOutSystem != null ? ts(part0.lunchOutSystem) : null,
+                        lunchInManual: (_e = part0.lunchInManual) !== null && _e !== void 0 ? _e : null,
+                        lunchInSystem: (_f = part0.lunchInSystem) !== null && _f !== void 0 ? _f : null,
+                        lunchInSystemTime: part0.lunchInSystem != null ? ts(part0.lunchInSystem) : null,
+                        complete: true,
+                        dayComplete: true,
+                        currentStep: 4,
+                        completedAt: ts(part0.clockOutSystem),
+                        autoClosed: true,
+                        flagged: true,
+                        segments: day1Segments,
+                        totalWorkMinutes: day1Total,
+                        totalHours: day1Total / 60,
+                        updatedAt: serverNow,
+                        updatedBy: 'system',
                     });
-                    patch.segments = newSegments;
-                    patch.totalWorkMinutes = newSegments.reduce((sum, s) => sum + (typeof s.workMinutes === 'number' ? s.workMinutes : 0), 0);
+                    // Day-2+ docs: one per local date (client split parity).
+                    extraParts.forEach((p, i) => {
+                        const snap = extraSnaps[i];
+                        const ref = extraRefs[i];
+                        if (snap.exists) {
+                            const ex = snap.data();
+                            const exSegs = Array.isArray(ex.segments) ? ex.segments : [];
+                            const exTotal = typeof ex.totalWorkMinutes === 'number' ? ex.totalWorkMinutes : 0;
+                            // Merge into the existing day doc WITHOUT touching
+                            // its completion state — the employee may have an
+                            // open shift there already.
+                            tx.update(ref, {
+                                segments: [...exSegs, p],
+                                totalWorkMinutes: exTotal + p.workMinutes,
+                                updatedAt: serverNow,
+                                updatedBy: 'system',
+                            });
+                        }
+                        else {
+                            tx.set(ref, {
+                                userId: fd.userId,
+                                workDate: p.localDate,
+                                clockInManual: p.clockInManual,
+                                clockInSystem: p.clockInSystem,
+                                clockInSystemTime: ts(p.clockInSystem),
+                                clockOutManual: p.clockOutManual,
+                                clockOutSystem: p.clockOutSystem,
+                                clockOutSystemTime: ts(p.clockOutSystem),
+                                complete: true,
+                                dayComplete: true,
+                                currentStep: 4,
+                                completedAt: ts(p.clockOutSystem),
+                                autoClosed: true,
+                                flagged: true,
+                                segments: [p],
+                                totalWorkMinutes: p.workMinutes,
+                                totalHours: p.workMinutes / 60,
+                                createdAt: serverNow,
+                                updatedAt: serverNow,
+                                updatedBy: 'system',
+                            });
+                        }
+                    });
+                    return 'closed';
+                });
+                if (closeOutcome === 'closed') {
+                    functions.logger.info(`Auto-closed shift ${entryId} (${closeReason})`);
                 }
                 else {
-                    patch.totalWorkMinutes = workMinutes;
+                    functions.logger.info(`Auto-guardrails: skipping ${entryId} — ${closeOutcome === 'missing'
+                        ? 'doc deleted'
+                        : 'closed between snapshot and transaction (employee punch-out wins)'}.`);
                 }
-                await docSnap.ref.update(patch);
-                await writeAuditLog(entryId, `System auto-closed shift: ${closeReason}.`, before, {
-                    clockOutManual: closeManual,
-                    clockOutSystem: closedAtMs,
-                    autoClosed: true,
-                    flagged: true,
-                });
-                functions.logger.info(`Auto-closed shift ${entryId} (${closeReason})`);
                 continue;
             }
             // --- 2) Lunch auto-end (1 hour) -------------------------------------
@@ -302,31 +413,50 @@ exports.runAutoGuardrails = functions.pubsub
                 const endAtMs = lo + LUNCH_AUTO_END_MS;
                 if (nowMs >= endAtMs) {
                     const lunchInManual = moment_timezone_1.default.tz(endAtMs, timezone).format('HH:mm');
-                    const patch = {
-                        lunchInManual,
-                        lunchInSystem: endAtMs,
-                        lunchInSystemTime: admin.firestore.Timestamp.fromMillis(endAtMs),
-                        autoEndedLunch: true,
-                        flagged: true,
-                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                        updatedBy: 'system',
-                    };
-                    if (openSeg.id && Array.isArray(data.segments)) {
-                        patch.segments = data.segments.map((s) => {
-                            if (s.id === openSeg.id) {
-                                return Object.assign(Object.assign({}, s), { lunchInManual, lunchInSystem: endAtMs, lunchInSystemTime: admin.firestore.Timestamp.fromMillis(endAtMs), autoEndedLunch: true, flagged: true });
-                            }
-                            return s;
-                        });
-                    }
-                    await docSnap.ref.update(patch);
-                    await writeAuditLog(entryId, 'System auto-ended lunch after 60 minutes.', { lunchOutSystem: lo, lunchInSystem: null }, {
-                        lunchInManual,
-                        lunchInSystem: endAtMs,
-                        autoEndedLunch: true,
-                        flagged: true,
+                    const lunchOutcome = await db.runTransaction(async (tx) => {
+                        const fresh = await tx.get(docSnap.ref);
+                        if (!fresh.exists)
+                            return 'missing';
+                        const fd = fresh.data();
+                        const fo = getOpenSegment(fd);
+                        if (!fo ||
+                            typeof fo.lunchOutSystem !== 'number' ||
+                            typeof fo.lunchInSystem === 'number' ||
+                            fo.skipLunch === true) {
+                            return 'changed'; // lunch ended / shift closed meanwhile
+                        }
+                        const serverNow = admin.firestore.FieldValue.serverTimestamp();
+                        // Audit FIRST — atomic with the mutation.
+                        const auditRef = db.collection('auditLogs').doc();
+                        tx.create(auditRef, buildAuditDoc(entryId, 'System auto-ended lunch after 60 minutes.', { lunchOutSystem: fo.lunchOutSystem, lunchInSystem: null }, {
+                            lunchInManual,
+                            lunchInSystem: endAtMs,
+                            autoEndedLunch: true,
+                            flagged: true,
+                        }));
+                        const patch = {
+                            lunchInManual,
+                            lunchInSystem: endAtMs,
+                            lunchInSystemTime: admin.firestore.Timestamp.fromMillis(endAtMs),
+                            autoEndedLunch: true,
+                            flagged: true,
+                            updatedAt: serverNow,
+                            updatedBy: 'system',
+                        };
+                        const segs = Array.isArray(fd.segments) ? fd.segments : [];
+                        if (fo.id && segs.length) {
+                            patch.segments = segs.map((s) => (s === null || s === void 0 ? void 0 : s.id) === fo.id
+                                ? Object.assign(Object.assign({}, s), { lunchInManual, lunchInSystem: endAtMs, lunchInSystemTime: admin.firestore.Timestamp.fromMillis(endAtMs), autoEndedLunch: true, flagged: true }) : s);
+                        }
+                        tx.update(docSnap.ref, patch);
+                        return 'ended';
                     });
-                    functions.logger.info(`Auto-ended lunch for ${entryId}`);
+                    if (lunchOutcome === 'ended') {
+                        functions.logger.info(`Auto-ended lunch for ${entryId}`);
+                    }
+                    else {
+                        functions.logger.info(`Auto-guardrails: skipping lunch auto-end for ${entryId} — state changed (${lunchOutcome}).`);
+                    }
                 }
             }
         }

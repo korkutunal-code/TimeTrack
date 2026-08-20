@@ -196,10 +196,13 @@ export function TodayEntry({ user, onViewHistory }: TodayEntryProps) {
     // Enforce the one-open-shift invariant across recent days (including an
     // unclosed cross-midnight shift from a previous day). This mirrors
     // clockService.punchIn so the legacy form can't open a second overlapping
-    // shift. Completed entries are exempt (they start a fresh split shift).
+    // shift. Block unconditionally when ANY recent doc is open — a completed
+    // TODAY doc is not exempt (findOpenShiftEntry returns null for completed
+    // docs, so the legit split-shift path still works; a ghost open shift on
+    // a PRIOR day must block the new clock-in, exactly like punchIn).
     try {
       const openShift = await findOpenShiftEntry(user.uid, tz);
-      if (openShift && !entry?.complete) {
+      if (openShift) {
         toast.error(
           `You already have an open shift (started ${openShift.date}). Clock out before starting a new one.`
         );
