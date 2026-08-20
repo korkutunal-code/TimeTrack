@@ -836,7 +836,7 @@ class DatabaseService {
     if (editFutureError) throw new Error(editFutureError);
     const editOverlapError = getSegmentOverlapError(newSegments);
     if (editOverlapError) throw new Error(editOverlapError);
-    await this.assertPayrollNotLocked(before.date ?? before.workDate);
+    await this.assertPayrollDatesNotLocked(anchorDate, before.date ?? before.workDate);
 
     // 1) Audit FIRST (mandatory, non-bypassable).
     await auditLogService.logTimeCorrection({
@@ -972,7 +972,7 @@ class DatabaseService {
     if (closeFutureError) throw new Error(closeFutureError);
     const closeOverlapError = getSegmentOverlapError(newSegments);
     if (closeOverlapError) throw new Error(closeOverlapError);
-    await this.assertPayrollNotLocked(before.date ?? before.workDate);
+    await this.assertPayrollDatesNotLocked(anchorDate, before.date ?? before.workDate);
 
     // 1) Audit FIRST (mandatory, non-bypassable). Employee self-audit.
     await auditLogService.logTimeCorrection({
@@ -1116,7 +1116,7 @@ class DatabaseService {
     // unchanged (lunch only), so no overlap check is needed here.
     const endLunchFutureError = getFuturePunchError(updatedSeg, Date.now());
     if (endLunchFutureError) throw new Error(endLunchFutureError);
-    await this.assertPayrollNotLocked(before.date ?? before.workDate);
+    await this.assertPayrollDatesNotLocked(anchorDate, before.date ?? before.workDate);
 
     // 1) Audit FIRST (mandatory, non-bypassable). Employee self-audit.
     await auditLogService.logTimeCorrection({
@@ -1418,7 +1418,7 @@ class DatabaseService {
     if (reqFutureError) throw new Error(reqFutureError);
     const reqOverlapError = getSegmentOverlapError(segments);
     if (reqOverlapError) throw new Error(reqOverlapError);
-    await this.assertPayrollNotLocked(request.requested_date);
+    await this.assertPayrollDatesNotLocked(anchorDate, request.requested_date);
 
     // SSOT: recompute every complete segment's workMinutes + the day totals from
     // the corrected timestamps, so stored totalWorkMinutes/totalHours exactly
@@ -1509,6 +1509,20 @@ class DatabaseService {
    * Throws with a human-readable message; callers surface it as a toast.
    * No-op when no lock date is set or the entry has no resolvable date.
    */
+  /**
+   * Lock-check EVERY calendar date an adjustment touches. The owning doc's
+   * date and the edited segment's attributed local date can differ across a
+   * local-midnight split (targetSeg.localDate may be the next day while
+   * before.date is the doc's day) — checking only the doc date would let the
+   * locked-period guardrail be bypassed on exactly those cross-midnight
+   * entries.
+   */
+  async assertPayrollDatesNotLocked(...dates: (string | undefined)[]): Promise<void> {
+    for (const d of new Set(dates.filter((x): x is string => !!x))) {
+      await this.assertPayrollNotLocked(d);
+    }
+  }
+
   async assertPayrollNotLocked(workDate: string | undefined): Promise<void> {
     if (!workDate) return;
     const settings = await this.getPayrollSettings();
