@@ -5,6 +5,7 @@ import { Clock, Coffee, LogOut, RefreshCw, CalendarDays, AlertTriangle, WifiOff 
 import type { User } from '../../lib/auth';
 import { dbService } from '../../lib/database';
 import { Button } from '../ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { ClockStatus } from './ClockStatus';
 import {
@@ -34,6 +35,9 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   const [week, setWeek] = useState<WeekSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // Confirmation step for Lunch Out / Lunch In / Clock Out (Clock In stays
+  // one-tap). Holds the pending action while the dialog is open; null = closed.
+  const [confirmAction, setConfirmAction] = useState<'out' | 'lunch-out' | 'lunch-in' | null>(null);
   // Employee's persisted local timezone drives entry doc ids, the local
   // midnight split, and per-local-date totals (the local-time-tracking
   // refactor). Falls back to the OS timezone when the profile has none.
@@ -193,6 +197,33 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     }
   };
 
+  // Dialog copy + dispatch for the three confirmable actions. Cancel simply
+  // closes the dialog (confirmAction -> null) with no state mutation.
+  const CONFIRM_COPY = {
+    out: {
+      title: 'Confirm Clock Out',
+      body: 'Are you sure you want to clock out at this time?',
+      confirmLabel: 'Clock Out',
+    },
+    'lunch-out': {
+      title: 'Confirm Lunch Out',
+      body: 'Are you sure you want to start your lunch break at this time?',
+      confirmLabel: 'Start Lunch',
+    },
+    'lunch-in': {
+      title: 'Confirm Lunch In',
+      body: 'Are you sure you want to end your lunch break and resume work at this time?',
+      confirmLabel: 'End Lunch',
+    },
+  } as const;
+
+  const handleConfirmPunch = async () => {
+    const action = confirmAction;
+    setConfirmAction(null); // close first — toasts/banners behave as before
+    if (action === 'out') await doPunchOut();
+    else if (action) await doToggleLunch(); // toggles out or in per current state
+  };
+
   if (loading && !status) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -208,18 +239,19 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   // Primary action label + icon (one big tap target)
   let primaryLabel = 'CLOCK IN';
   let primaryIcon = <Clock className="h-5 w-5 mr-2" />;
-  let primaryAction = doPunchIn;
+  // `() => void` so both direct (Clock In) and dialog-opening (async-void) handlers fit.
+  let primaryAction: () => void = doPunchIn;
   let primaryVariant: 'default' | 'destructive' | 'secondary' = 'default';
 
   if (isIn && !onLunch) {
     primaryLabel = 'CLOCK OUT';
     primaryIcon = <LogOut className="h-5 w-5 mr-2" />;
-    primaryAction = doPunchOut;
+    primaryAction = () => setConfirmAction('out'); // confirmation first
     primaryVariant = 'destructive';
   } else if (isIn && onLunch) {
     primaryLabel = 'END LUNCH';
     primaryIcon = <Coffee className="h-5 w-5 mr-2" />;
-    primaryAction = doToggleLunch;
+    primaryAction = () => setConfirmAction('lunch-in'); // confirmation first
     primaryVariant = 'default';
   }
 
@@ -340,7 +372,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
             "Lunch break used for this shift" with no interactive styling. */}
         {isIn && !onLunch && (
           <Button
-            onClick={doToggleLunch}
+            onClick={() => setConfirmAction('lunch-out')}
             disabled={lunchUsed || !canDoLunch || !!actionLoading}
             variant="outline"
             className={
@@ -420,6 +452,47 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
       <p className="text-[10px] text-center text-muted-foreground">
         Times shown in your local timezone ({getTimezoneAbbreviation(employeeTz)}). Lunch uses existing segment model.
       </p>
+
+      {/* Confirmation dialog for Lunch Out / Lunch In / Clock Out.
+          Clock In intentionally stays one-tap (no confirmation). */}
+      <Dialog
+        open={confirmAction !== null}
+        onOpenChange={(open) => {
+          // Block dismissal via backdrop/Escape only while a punch is in flight;
+          // Cancel/X always aborts with no state mutation otherwise.
+          if (!open && !actionLoading) setConfirmAction(null);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          {confirmAction && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{CONFIRM_COPY[confirmAction].title}</DialogTitle>
+                <DialogDescription>{CONFIRM_COPY[confirmAction].body}</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setConfirmAction(null)}
+                  disabled={!!actionLoading}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant={confirmAction === 'out' ? 'destructive' : 'default'}
+                  onClick={handleConfirmPunch}
+                  disabled={!!actionLoading}
+                >
+                  {actionLoading ? (
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  ) : null}
+                  {CONFIRM_COPY[confirmAction].confirmLabel}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
