@@ -24,7 +24,7 @@ import { UserPlus, Upload, Download, Edit, Trash2, CheckCircle2, Loader2, UserCh
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
-import { calculateLunchMinutes } from '../../../utils/timeCalculations';
+import { calculateLunchMinutes, formatHoursHMM } from '../../../utils/timeCalculations';
 import { validateSegmentChronology, getFuturePunchError, getSegmentOverlapError } from '../../../utils/timeValidation';
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import { auditLogService } from '../../../services/auditLogService';
@@ -581,6 +581,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     </button>
   );
 
+
   const loadCorrectionEntry = async () => {
     if (!correctionUserId || !correctionDate) {
       toast.error('Select employee and date');
@@ -600,11 +601,33 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     }
   };
 
+  // Auto-load: as soon as both User and Date are selected (with the modal
+  // open), fetch the entry reactively — no manual "Load Entry" step. Any
+  // selection change first clears the previous entry so stale data never
+  // shows while the fetch is in flight. Declared after loadCorrectionEntry
+  // (const TDZ) and the clearing setState calls are deferred to the effect's
+  // async fetch callback boundary.
+  useEffect(() => {
+    if (!correctEntryOpen || !correctionUserId || !correctionDate) return;
+    let cancelled = false;
+    (async () => {
+      await Promise.resolve(); // yield so the setState calls are async (lint: set-state-in-effect)
+      if (cancelled) return;
+      setCorrectionEntry(null);
+      setOriginalCorrectionEntry(null);
+      await loadCorrectionEntry();
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [correctEntryOpen, correctionUserId, correctionDate]);
+
   const handleSaveCorrection = async () => {
-    if (!correctionEntry || !adminNotes.trim()) {
-      toast.error('Admin notes are required');
-      return;
-    }
+    // Admin notes are OPTIONAL (2026-08 modal UX change). The mandatory-audit
+    // rule still requires a non-empty reason, so an empty note falls back to a
+    // fixed human-meaningful reason — the actor + full before/after snapshots
+    // carry the substantive audit content.
+    if (!correctionEntry) return;
+    const auditReason = adminNotes.trim() || 'Manual admin correction via Correct Time Entry (no note provided)';
 
     try {
       if (!correctionEntry.clockInManual || !correctionEntry.clockOutManual) {
@@ -728,7 +751,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         targetId: correctionEntry.id,
         before: beforeSnapshot,
         after: afterSnapshot,
-        reason: adminNotes.trim(),
+        reason: auditReason,
       });
 
       // Only after durable audit row exists do we mutate the time record.
@@ -766,12 +789,11 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       });
 
       toast.success('Entry corrected successfully (audit trail recorded)');
-      setCorrectionEntry(null);
-      setOriginalCorrectionEntry(null);
-      setCorrectionUserId('');
-      setCorrectionDate('');
+      // Modal stays OPEN after save (2026-08 UX): the just-saved values become
+      // the new "before" baseline so the preview reflects persisted state and
+      // a follow-up tweak diffs against it. Notes clear for the next edit.
+      setOriginalCorrectionEntry(JSON.parse(JSON.stringify(correctionEntry)));
       setAdminNotes('');
-      setCorrectEntryOpen(false);
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Failed to save correction';
       // If audit log itself failed, the error message already explains the safety block.
@@ -1346,7 +1368,21 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       </Dialog>
 
       {/* Correct Entry Dialog */}
-      <Dialog open={correctEntryOpen} onOpenChange={setCorrectEntryOpen}>
+      <Dialog
+        open={correctEntryOpen}
+        onOpenChange={(open) => {
+          setCorrectEntryOpen(open);
+          if (!open) {
+            // Fresh slate for the next session — Save no longer resets the
+            // form (the modal intentionally stays open after saving).
+            setCorrectionEntry(null);
+            setOriginalCorrectionEntry(null);
+            setCorrectionUserId('');
+            setCorrectionDate('');
+            setAdminNotes('');
+          }
+        }}
+      >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Correct Time Entry</DialogTitle>
@@ -1378,12 +1414,10 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                 />
               </div>
             </div>
-            <Button onClick={loadCorrectionEntry} variant="outline">
-              Load Entry
-            </Button>
-
             {correctionEntry && (
               <>
+                {/* Chronological reading order across the 2x2 grid:
+                    Clock In (TL) → Lunch Out (TR) → Lunch In (BL) → Clock Out (BR). */}
                 <div className="grid grid-cols-2 gap-4 p-4 border rounded-lg">
                   <div>
                     <Label>Clock In</Label>
@@ -1393,6 +1427,26 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                       onChange={(e) => setCorrectionEntry({ ...correctionEntry, clockInManual: e.target.value })}
                     />
                   </div>
+                  {!correctionEntry.skipLunch && (
+                    <div>
+                      <Label>Lunch Out</Label>
+                      <Input
+                        type="time"
+                        value={correctionEntry.lunchOutManual || ''}
+                        onChange={(e) => setCorrectionEntry({ ...correctionEntry, lunchOutManual: e.target.value })}
+                      />
+                    </div>
+                  )}
+                  {!correctionEntry.skipLunch && (
+                    <div>
+                      <Label>Lunch In</Label>
+                      <Input
+                        type="time"
+                        value={correctionEntry.lunchInManual || ''}
+                        onChange={(e) => setCorrectionEntry({ ...correctionEntry, lunchInManual: e.target.value })}
+                      />
+                    </div>
+                  )}
                   <div>
                     <Label>Clock Out</Label>
                     <Input
@@ -1401,42 +1455,22 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                       onChange={(e) => setCorrectionEntry({ ...correctionEntry, clockOutManual: e.target.value })}
                     />
                   </div>
-                  {!correctionEntry.skipLunch && (
-                    <>
-                      <div>
-                        <Label>Lunch Out</Label>
-                        <Input
-                          type="time"
-                          value={correctionEntry.lunchOutManual || ''}
-                          onChange={(e) => setCorrectionEntry({ ...correctionEntry, lunchOutManual: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label>Lunch In</Label>
-                        <Input
-                          type="time"
-                          value={correctionEntry.lunchInManual || ''}
-                          onChange={(e) => setCorrectionEntry({ ...correctionEntry, lunchInManual: e.target.value })}
-                        />
-                      </div>
-                    </>
-                  )}
                 </div>
                 {originalCorrectionEntry && correctionEntry && (
                   <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 space-y-1">
                     <p className="text-sm font-semibold text-slate-700 mb-2">Preview Changes</p>
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-slate-500">Total hours before:</span>
-                      <span className="font-medium">{getEntryTotals(originalCorrectionEntry).totalHours.toFixed(2)} hrs</span>
+                      <span className="font-medium">{formatHoursHMM(getEntryTotals(originalCorrectionEntry).totalHours)}</span>
                     </div>
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-indigo-600 font-medium">Total hours after:</span>
-                      <span className="font-bold text-indigo-700">{(correctionAfterHours ?? getEntryTotals(correctionEntry).totalHours).toFixed(2)} hrs</span>
+                      <span className="font-bold text-indigo-700">{formatHoursHMM(correctionAfterHours ?? getEntryTotals(correctionEntry).totalHours)}</span>
                     </div>
                   </div>
                 )}
                 <div className="mt-4">
-                  <Label>Admin Notes (Required)</Label>
+                  <Label>Admin Notes (Optional)</Label>
                   <Textarea
                     value={adminNotes}
                     onChange={(e) => setAdminNotes(e.target.value)}
@@ -1450,7 +1484,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             <Button variant="outline" onClick={() => setCorrectEntryOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSaveCorrection} disabled={!correctionEntry || !adminNotes.trim()}>
+            <Button onClick={handleSaveCorrection} disabled={!correctionEntry}>
               Save Correction
             </Button>
           </DialogFooter>

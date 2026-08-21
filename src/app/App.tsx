@@ -48,7 +48,20 @@ import { QABar } from './components/QABar';
 import { ReportProblemButton } from './components/ReportProblemButton';
 
 type EmployeeView = 'today' | 'history';
-type AdminView = 'panel' | 'payroll' | 'audit' | 'metrics' | 'corrections' | 'settings';
+type AdminView = 'panel' | 'payroll' | 'audit' | 'metrics' | 'team' | 'corrections' | 'settings';
+
+/** All valid admin tab ids — used to validate the ?tab= deep-link param. */
+const ADMIN_TAB_VALUES: readonly AdminView[] = ['panel', 'payroll', 'audit', 'metrics', 'team', 'corrections', 'settings'];
+
+/** Read the deep-linked admin tab from the URL (?tab=payroll), or null. */
+function adminTabFromLocation(): AdminView | null {
+  try {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    return ADMIN_TAB_VALUES.includes(t as AdminView) ? (t as AdminView) : null;
+  } catch {
+    return null;
+  }
+}
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -154,7 +167,8 @@ export default function App() {
 
   // View state
   const [employeeView, setEmployeeView] = useState<EmployeeView>('today');
-  const [adminView, setAdminView] = useState<AdminView>('panel');
+  // Initial tab honors the ?tab= deep link (supports 'open in new tab').
+  const [adminView, setAdminView] = useState<AdminView>(() => adminTabFromLocation() ?? 'panel');
   // Admin/Manager timezone view (Req 4): 'local' = employee local tz (default),
   // 'pt' = America/Los_Angeles (California Time). Applied to analysis views.
   const [timeViewMode, setTimeViewMode] = useState<TimeViewMode>('local');
@@ -166,6 +180,33 @@ export default function App() {
   // when set, the Unsaved Changes modal is shown.
   const settingsGuardRef = useRef<SettingsGuard>(null);
   const [pendingTab, setPendingTab] = useState<AdminView | null>(null);
+
+  /**
+   * Tab navigation with URL sync: every switch pushState()s ?tab=<id> so the
+   * browser back/forward buttons and copied links land on the same tab, and
+   * anchor-rendered tabs offer native 'open in new tab' context menus.
+   */
+  const navigateToAdminTab = useCallback((next: AdminView) => {
+    setAdminView(next);
+    try {
+      const url = next === 'panel'
+        ? window.location.pathname
+        : window.location.pathname + '?tab=' + next;
+      window.history.pushState(null, '', url);
+    } catch {
+      // history API unavailable — in-memory state still switches.
+    }
+  }, []);
+
+  // Back/forward buttons: re-read ?tab= and follow it.
+  useEffect(() => {
+    const onPop = () => {
+      const t = adminTabFromLocation();
+      if (t) setAdminView(t);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   const [guardBusy, setGuardBusy] = useState(false);
 
   // Browser unload guard: if the Settings form is dirty, prompt before the
@@ -454,45 +495,41 @@ export default function App() {
             setPendingTab(next);
             return;
           }
-          setAdminView(next);
+          navigateToAdminTab(next);
         }}
         className="space-y-4"
       >
         <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+          {/*
+            Tabs render as real anchors (asChild) with href="?tab=<id>" so
+            right-click / middle-click / ctrl+click get native browser link
+            behavior ("Open link in new tab" etc.). Left-click preventDefault
+            keeps the in-app Radix flow (including the unsaved-settings guard
+            in onValueChange); Radix already ignores ctrl+click activation.
+            Active-tab styling is unchanged (data-state lives on the anchor
+            via the slotted trigger).
+          */}
           <TabsList className="grid grid-cols-3 sm:grid-cols-7 w-full gap-1">
-            <TabsTrigger value="panel" className="text-xs sm:text-sm">
-              <Settings className="size-4 mr-0 sm:mr-2" />
-              <span className="hidden sm:inline">User Base</span>
-              <span className="sm:hidden">User Base</span>
-            </TabsTrigger>
-            <TabsTrigger value="payroll" className="text-xs sm:text-sm">
-              <FileText className="size-4 mr-0 sm:mr-2" />
-              <span className="hidden sm:inline">Payroll</span>
-              <span className="sm:hidden">Pay</span>
-            </TabsTrigger>
-            <TabsTrigger value="audit" className="text-xs sm:text-sm">
-              <Search className="size-4 mr-0 sm:mr-2" />
-              <span>Audit</span>
-            </TabsTrigger>
-            <TabsTrigger value="metrics" className="text-xs sm:text-sm">
-              <TrendingUp className="size-4 mr-0 sm:mr-2" />
-              <span className="hidden sm:inline">Metrics</span>
-              <span className="sm:hidden">Stats</span>
-            </TabsTrigger>
-            <TabsTrigger value="team" className="text-xs sm:text-sm">
-              <Users className="size-4 mr-0 sm:mr-2" />
-              <span>Team</span>
-            </TabsTrigger>
-            <TabsTrigger value="corrections" className="text-xs sm:text-sm">
-              <FileWarning className="size-4 mr-0 sm:mr-2" />
-              <span className="hidden sm:inline">Corrections</span>
-              <span className="sm:hidden">Fix</span>
-            </TabsTrigger>
-            <TabsTrigger value="settings" className="text-xs sm:text-sm">
-              <Sliders className="size-4 mr-0 sm:mr-2" />
-              <span className="hidden sm:inline">Settings</span>
-              <span className="sm:hidden">Set</span>
-            </TabsTrigger>
+            {([
+              { id: 'panel', icon: <Settings className="size-4 mr-0 sm:mr-2" />, full: 'User Base', short: 'User Base' },
+              { id: 'payroll', icon: <FileText className="size-4 mr-0 sm:mr-2" />, full: 'Payroll', short: 'Pay' },
+              { id: 'audit', icon: <Search className="size-4 mr-0 sm:mr-2" />, full: 'Audit', short: 'Audit' },
+              { id: 'metrics', icon: <TrendingUp className="size-4 mr-0 sm:mr-2" />, full: 'Metrics', short: 'Stats' },
+              { id: 'team', icon: <Users className="size-4 mr-0 sm:mr-2" />, full: 'Team', short: 'Team' },
+              { id: 'corrections', icon: <FileWarning className="size-4 mr-0 sm:mr-2" />, full: 'Corrections', short: 'Fix' },
+              { id: 'settings', icon: <Sliders className="size-4 mr-0 sm:mr-2" />, full: 'Settings', short: 'Set' },
+            ] as { id: AdminView; icon: React.ReactNode; full: string; short: string }[]).map((tab) => (
+              <TabsTrigger key={tab.id} value={tab.id} asChild className="text-xs sm:text-sm">
+                <a
+                  href={tab.id === 'panel' ? window.location.pathname : window.location.pathname + '?tab=' + tab.id}
+                  onClick={(e) => e.preventDefault()}
+                >
+                  {tab.icon}
+                  <span className="hidden sm:inline">{tab.full}</span>
+                  <span className="sm:hidden">{tab.short}</span>
+                </a>
+              </TabsTrigger>
+            ))}
           </TabsList>
         </div>
 
@@ -561,7 +598,7 @@ export default function App() {
                 if (ok) {
                   const next = pendingTab;
                   setPendingTab(null);
-                  if (next) setAdminView(next);
+                  if (next) navigateToAdminTab(next);
                 }
               }}
             >
@@ -576,7 +613,7 @@ export default function App() {
                 settingsGuardRef.current?.discard();
                 const next = pendingTab;
                 setPendingTab(null);
-                if (next) setAdminView(next);
+                if (next) navigateToAdminTab(next);
               }}
             >
               <RotateCcw className="size-4 mr-2" />
