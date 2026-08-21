@@ -689,12 +689,15 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   }, [correctEntryOpen, correctionUserId, correctionDate]);
 
   const handleSaveCorrection = async () => {
-    // Admin notes are OPTIONAL (2026-08 modal UX change). The mandatory-audit
-    // rule still requires a non-empty reason, so an empty note falls back to a
-    // fixed human-meaningful reason — the actor + full before/after snapshots
-    // carry the substantive audit content.
+    // Admin notes are REQUIRED (.kilo/rules/audit-mandatory-reason.md): every
+    // correction's audit row must carry a non-empty, HUMAN-PROVIDED reason —
+    // a machine-generated fallback string is not an acceptable substitute.
     if (!correctionEntry) return;
-    const auditReason = adminNotes.trim() || 'Manual admin correction via Correct Time Entry (no note provided)';
+    const auditReason = adminNotes.trim();
+    if (!auditReason) {
+      toast.error('Admin notes are required');
+      return;
+    }
 
     try {
       // --- Multi-segment validation --------------------------------------
@@ -805,14 +808,33 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
           })
         : {};
 
+      // Top-level clock fields must mirror the LAST edited shift card (the
+      // dual-write convention used for the Firestore write below). Do NOT
+      // spread correctionEntry's stale top-level values — edits now flow
+      // through correctionSegments, so correctionEntry still holds the
+      // pre-edit strings and would misrepresent the saved state in the
+      // immutable audit row.
       const afterSnapshot = {
         ...correctionEntry,
+        clockInManual: last.clockInManual,
+        lunchOutManual: last.skipLunch ? '' : (last.lunchOutManual || ''),
+        lunchInManual: last.skipLunch ? '' : (last.lunchInManual || ''),
+        clockOutManual: last.clockOutManual,
+        lunchSkipped: !!last.skipLunch,
         lunchMinutes,
         totalWorkMinutes,
         segments,
+        ...topLevelSystem,
+        ...(lastHasLunch
+          ? {}
+          : { lunchOutSystem: null, lunchInSystem: null, lunchOutSystemTime: null, lunchInSystemTime: null }),
         regularMinutes: ot.regularMinutes,
         otMinutes: ot.otMinutes,
         doubleTimeMinutes: ot.doubleTimeMinutes,
+        workWeekStartDate,
+        dayComplete: true,
+        currentStep: 'complete',
+        status: 'corrected',
         correctedAt: now.toMillis(),
         correctedBy: currentUser.uid,
         correctionNotes: adminNotes.trim(),
@@ -1572,7 +1594,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                   </div>
                 )}
                 <div className="mt-4">
-                  <Label>Admin Notes (Optional)</Label>
+                  <Label>Admin Notes (Required — becomes the audit reason)</Label>
                   <Textarea
                     value={adminNotes}
                     onChange={(e) => setAdminNotes(e.target.value)}

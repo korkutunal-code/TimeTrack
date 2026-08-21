@@ -201,8 +201,11 @@ export default function App() {
   // Back/forward buttons: re-read ?tab= and follow it.
   useEffect(() => {
     const onPop = () => {
-      const t = adminTabFromLocation();
-      if (t) setAdminView(t);
+      // A bare pathname (no ?tab=) means the Panel tab — navigateToAdminTab
+      // deliberately strips the param for it, so default to 'panel' here or
+      // Back past the last ?tab= entry would leave the view desynced.
+      const t = adminTabFromLocation() ?? 'panel';
+      setAdminView(t);
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
