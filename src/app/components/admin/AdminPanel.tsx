@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, type Dispatch, type SetStateAction } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
-import { dbService, TimeEntry, buildConsistentClosePatch, recomputeSegmentSystemTimestamps, stripUndefined, getEntryTotals, getPreservedSegmentsForEdit } from '../../lib/database';
+import { dbService, TimeEntry, TimeSegment, recomputeSegmentSystemTimestamps, stripUndefined, getEntryTotals, computeSegmentWorkMinutes, recalculateEntryTotals } from '../../lib/database';
 import { doc, Timestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { repairRunawayShifts, repairDefaultEndDate, REPAIR_DEFAULT_START_DATE, type RepairRunawayResult } from '../../../services/repairRunawayShifts';
@@ -20,7 +20,7 @@ import { UserAvatar } from '../ui/user-avatar';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '../ui/alert-dialog';
 import { WorkModelOverrideModal } from './WorkModelOverrideModal';
 import { toast } from 'sonner';
-import { UserPlus, Upload, Download, Edit, Trash2, CheckCircle2, Loader2, UserCheck, UserX, Building2, Laptop, Shield, Filter, Sliders, Briefcase, Settings, Wrench } from 'lucide-react';
+import { UserPlus, Upload, Download, Edit, Trash2, CheckCircle2, Loader2, UserCheck, UserX, Building2, Laptop, Shield, Filter, Sliders, Briefcase, Settings, Wrench, Plus } from 'lucide-react';
 
 // Existing provisioning logic (keeps admin signed in while creating users)
 import { provisionUser } from '../../../services/authService';
@@ -201,6 +201,52 @@ function FilterHeader({
   );
 }
 
+/** One editable shift card in the Correct Time Entry modal. */
+interface EditableShift {
+  /** React key: the persisted segment id, or a generated id for new shifts. */
+  key: string;
+  clockInManual: string;
+  lunchOutManual: string;
+  lunchInManual: string;
+  clockOutManual: string;
+  skipLunch: boolean;
+  /** Preserved for local-midnight-split portions (their owning date differs). */
+  localDate?: string;
+}
+
+/**
+ * Build the editable shift cards from a loaded entry: every persisted segment
+ * PLUS the synthesized current shift when it is not already covered by the
+ * persisted list (same dedup rules as getEntryTotals — open shift or legacy
+ * top-level-only shape). This is what makes secondary/split shifts visible
+ * and editable instead of silently editing only the first shift.
+ */
+function buildEditableShifts(entry: TimeEntry): EditableShift[] {
+  const toCard = (s: TimeSegment, fallbackKey: string): EditableShift => ({
+    key: s.id || fallbackKey,
+    clockInManual: s.clockInManual || '',
+    lunchOutManual: s.lunchOutManual || '',
+    lunchInManual: s.lunchInManual || '',
+    clockOutManual: s.clockOutManual || '',
+    skipLunch: !!s.skipLunch,
+    localDate: s.localDate,
+  });
+  const persistedSegs = entry.segments ?? [];
+  const cards = persistedSegs.map((s, i) => toCard(s, `seg_persisted_${i}`));
+  const current = entry.currentSegment;
+  if (current) {
+    const coveredExact = persistedSegs.some(
+      (s) => s.clockInManual === current.clockInManual && s.clockOutManual === current.clockOutManual,
+    );
+    const coveredSplitChain =
+      persistedSegs.length > 0 &&
+      persistedSegs[0].clockInManual === current.clockInManual &&
+      persistedSegs[persistedSegs.length - 1].clockOutManual === current.clockOutManual;
+    if (!coveredExact && !coveredSplitChain) cards.push(toCard(current, 'seg_current'));
+  }
+  return cards;
+}
+
 export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelProps) {
   const [createUserOpen, setCreateUserOpen] = useState(false);
   const [editUserOpen, setEditUserOpen] = useState(false);
@@ -302,29 +348,48 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   const [correctionUserId, setCorrectionUserId] = useState('');
   const [correctionDate, setCorrectionDate] = useState('');
   const [adminNotes, setAdminNotes] = useState('');
+  // Editable per-shift cards for the Correct Entry modal (multi-segment
+  // editing: every shift of the day is visible/editable, not just the first).
+  const [correctionSegments, setCorrectionSegments] = useState<EditableShift[]>([]);
 
-  // Live "after" preview for the Correct Entry modal: the total the save will
-  // persist (preserved earlier segments + the edited shift), computed with the
-  // SAME buildConsistentClosePatch('append') logic the save uses. On load with
-  // no edits this equals the "before" total (getEntryTotals) — previously the
-  // preview collapsed the multi-shift day to one shift and showed a bogus drop.
+  const updateShiftCard = (idx: number, field: keyof EditableShift, value: string | boolean) => {
+    setCorrectionSegments((prev) => prev.map((s, i) => (i === idx ? { ...s, [field]: value } : s)));
+  };
+  const addShiftCard = () => {
+    setCorrectionSegments((prev) => [
+      ...prev,
+      { key: `seg_new_${Date.now()}_${prev.length}`, clockInManual: '', lunchOutManual: '', lunchInManual: '', clockOutManual: '', skipLunch: false },
+    ]);
+  };
+  const removeShiftCard = (idx: number) => {
+    setCorrectionSegments((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  // Live "after" preview for the Correct Entry modal: the day total the save
+  // will persist, computed from ALL edited shift cards via the canonical
+  // computeSegmentWorkMinutes (manual-primary, S6 wrap + lunch deduction) —
+  // the same math the read-side SSOT (getEntryTotals) applies, so the preview
+  // matches what History/Payroll will show.
   const correctionAfterHours = useMemo(() => {
-    if (!originalCorrectionEntry || !correctionEntry?.clockInManual || !correctionEntry?.clockOutManual) {
-      return null;
-    }
-    // clockOutSystem omitted: the total is derived from the manual HH:MM span,
-    // so the preview is a pure function of the form values (no Date.now()).
-    const patch = buildConsistentClosePatch({
-      clockIn: correctionEntry.clockInManual,
-      clockOut: correctionEntry.clockOutManual,
-      skipLunch: !!correctionEntry.skipLunch,
-      lunchOut: correctionEntry.skipLunch ? undefined : (correctionEntry.lunchOutManual || undefined),
-      lunchIn: correctionEntry.skipLunch ? undefined : (correctionEntry.lunchInManual || undefined),
-      existingSegments: getPreservedSegmentsForEdit(originalCorrectionEntry),
-      mode: 'append',
-    });
-    return patch.totalWorkMinutes / 60;
-  }, [originalCorrectionEntry, correctionEntry]);
+    if (!correctionEntry) return null;
+    const completeCards = correctionSegments.filter((s) => s.clockInManual && s.clockOutManual);
+    if (completeCards.length === 0) return null;
+    const mins = completeCards.reduce(
+      (sum, s) =>
+        sum +
+        computeSegmentWorkMinutes({
+          id: s.key,
+          clockInManual: s.clockInManual,
+          lunchOutManual: s.skipLunch ? '' : s.lunchOutManual || undefined,
+          lunchInManual: s.skipLunch ? '' : s.lunchInManual || undefined,
+          clockOutManual: s.clockOutManual,
+          skipLunch: s.skipLunch,
+          complete: true,
+        }),
+      0,
+    );
+    return mins / 60;
+  }, [correctionEntry, correctionSegments]);
 
   const handleCreateUser = async () => {
     if (!newUser.name || !newUser.email) {
@@ -593,7 +658,9 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       if (entry) {
         setCorrectionEntry(entry);
         setOriginalCorrectionEntry(JSON.parse(JSON.stringify(entry)));
+        setCorrectionSegments(buildEditableShifts(entry));
       } else {
+        setCorrectionSegments([]);
         toast.error('No entry found for this date');
       }
     } catch {
@@ -630,94 +697,82 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     const auditReason = adminNotes.trim() || 'Manual admin correction via Correct Time Entry (no note provided)';
 
     try {
-      if (!correctionEntry.clockInManual || !correctionEntry.clockOutManual) {
-        toast.error('Clock In and Clock Out are required');
+      // --- Multi-segment validation --------------------------------------
+      // Every shift card must be complete + chronologically valid (S6
+      // cross-midnight wrap-aware); overlap across cards is checked below.
+      if (correctionSegments.length === 0) {
+        toast.error('At least one shift is required.');
         return;
       }
-
-      // Cross-midnight-aware chronology: validateTimeEntry false-rejects
-      // legitimate overnight shifts (22:00 -> 06:00); the wrap-aware
-      // validator accepts those while still rejecting true inversions
-      // (out before in, lunch outside shift bounds, partial lunch pairs).
-      const errors = validateSegmentChronology({
-        clockInManual: correctionEntry.clockInManual,
-        clockOutManual: correctionEntry.clockOutManual,
-        lunchOutManual: correctionEntry.skipLunch ? '' : (correctionEntry.lunchOutManual || ''),
-        lunchInManual: correctionEntry.skipLunch ? '' : (correctionEntry.lunchInManual || ''),
-        skipLunch: !!correctionEntry.skipLunch,
-      });
-      if (errors.length > 0) {
-        toast.error(errors[0]);
-        return;
+      for (let i = 0; i < correctionSegments.length; i++) {
+        const c = correctionSegments[i];
+        if (!c.clockInManual || !c.clockOutManual) {
+          toast.error(`Shift ${i + 1}: Clock In and Clock Out are required`);
+          return;
+        }
+        const errs = validateSegmentChronology(
+          {
+            clockInManual: c.clockInManual,
+            clockOutManual: c.clockOutManual,
+            lunchOutManual: c.skipLunch ? '' : c.lunchOutManual,
+            lunchInManual: c.skipLunch ? '' : c.lunchInManual,
+            skipLunch: c.skipLunch,
+          },
+          { allowOpen: false },
+        );
+        if (errs.length) {
+          toast.error(`Shift ${i + 1}: ${errs[0]}`);
+          return;
+        }
       }
 
       const now = Timestamp.now();
-      const lunchMinutes = calculateLunchMinutes(
-        correctionEntry.skipLunch ? '' : (correctionEntry.lunchOutManual || ''),
-        correctionEntry.skipLunch ? '' : (correctionEntry.lunchInManual || '')
-      );
-      // S7: derive totalWorkMinutes + synchronized segments[] from the same
-      // canonical closeActiveSegment math (S6 wrap + lunch deduction) so root,
-      // segments[last], and totalWorkMinutes never diverge. 'append' mode
-      // PRESERVES the day's earlier split-shift segments and replaces only the
-      // targeted (current/last) shift in-place — the old 'replace' mode
-      // collapsed the whole multi-shift day into a single shift, destroying the
-      // other segments' minutes (data loss) and making the modal preview show
-      // "before" (full day) diverge from "after" (collapsed) even with no edits.
-      const preservedSegs = getPreservedSegmentsForEdit(originalCorrectionEntry ?? {});
-      const closePatch = buildConsistentClosePatch({
-        clockIn: correctionEntry.clockInManual,
-        clockOut: correctionEntry.clockOutManual,
-        skipLunch: !!correctionEntry.skipLunch,
-        lunchOut: correctionEntry.skipLunch ? undefined : (correctionEntry.lunchOutManual || undefined),
-        lunchIn: correctionEntry.skipLunch ? undefined : (correctionEntry.lunchInManual || undefined),
-        clockOutSystem: now.toMillis(),
-        existingSegments: preservedSegs,
-        mode: 'append',
-      });
-      const totalWorkMinutes = closePatch.totalWorkMinutes;
       const correctedUser = allUsers.find(u => u.uid === correctionUserId);
       const correctedTz = correctedUser?.timezone;
-      // Recompute the corrected shift's *System epochs from the edited manual
-      // times (the SSOT for instants). buildConsistentClosePatch stamps
-      // clockOutSystem with "now" — the moment of the edit — which made Payroll
-      // rows / Team view show the editing time as the clock-out. Recompute all
-      // four boundaries from the manual strings + entry date + employee tz.
-      const sysSeg = correctedTz
-        ? recomputeSegmentSystemTimestamps(closePatch.closedSegment, correctionEntry.date, correctedTz)
-        : closePatch.closedSegment;
-      const segments = closePatch.segments.map((s) =>
-        (s.id === closePatch.closedSegment.id ? stripUndefined(sysSeg) : s),
-      );
-      // Top-level *System fields (millis + Firestore Timestamp) so Team view /
-      // mapEntry (which read the top-level *SystemTime) show the edited
-      // instants instead of "now".
-      const systemPatch = correctedTz
-        ? stripUndefined({
-            clockInSystem: sysSeg.clockInSystem,
-            clockOutSystem: sysSeg.clockOutSystem,
-            lunchOutSystem: correctionEntry.skipLunch ? undefined : sysSeg.lunchOutSystem,
-            lunchInSystem: correctionEntry.skipLunch ? undefined : sysSeg.lunchInSystem,
-            clockInSystemTime: sysSeg.clockInSystem != null ? Timestamp.fromMillis(sysSeg.clockInSystem) : undefined,
-            clockOutSystemTime: sysSeg.clockOutSystem != null ? Timestamp.fromMillis(sysSeg.clockOutSystem) : undefined,
-            lunchOutSystemTime: correctionEntry.skipLunch || sysSeg.lunchOutSystem == null ? undefined : Timestamp.fromMillis(sysSeg.lunchOutSystem),
-            lunchInSystemTime: correctionEntry.skipLunch || sysSeg.lunchInSystem == null ? undefined : Timestamp.fromMillis(sysSeg.lunchInSystem),
-          })
-        : {};
-      // Future-time guard on the corrected epochs, same-day overlap guard,
-      // and the payroll-lock check — all before the audit write so a rejected
-      // correction produces no audit row.
-      const futureError = getFuturePunchError(sysSeg, Date.now());
-      if (futureError) {
-        toast.error(futureError);
-        return;
+
+      // Build the full segments[] from the cards: manual fields + recomputed
+      // *System epochs (the SSOT for instants) per shift, anchored on the
+      // card's attributed local date (midnight-split parts keep their own
+      // date). recalculateEntryTotals then derives every segment's
+      // workMinutes + the day total via the canonical writer.
+      const built: TimeSegment[] = correctionSegments.map((c, i) => {
+        const base: TimeSegment = {
+          id: c.key.startsWith('seg_new_') ? `seg_admin_${now.toMillis()}_${i}` : c.key,
+          clockInManual: c.clockInManual,
+          lunchOutManual: c.skipLunch ? '' : (c.lunchOutManual || ''),
+          lunchInManual: c.skipLunch ? '' : (c.lunchInManual || ''),
+          clockOutManual: c.clockOutManual,
+          skipLunch: c.skipLunch,
+          complete: true,
+          ...(c.localDate ? { localDate: c.localDate, splitFromMidnight: true } : {}),
+        };
+        return correctedTz
+          ? recomputeSegmentSystemTimestamps(base, c.localDate ?? correctionEntry.date, correctedTz)
+          : base;
+      });
+      const recalc = recalculateEntryTotals(built);
+      const segments = recalc.segments;
+      const totalWorkMinutes = recalc.totalWorkMinutes;
+
+      // Future-time guard per shift, cross-shift overlap guard, then the
+      // payroll-lock check (doc date + any split-part local dates) — all
+      // before the audit write so a rejected correction leaves no audit row.
+      for (let i = 0; i < segments.length; i++) {
+        const futureError = getFuturePunchError(segments[i], Date.now());
+        if (futureError) {
+          toast.error(`Shift ${i + 1}: ${futureError}`);
+          return;
+        }
       }
       const overlapError = getSegmentOverlapError(segments);
       if (overlapError) {
         toast.error(overlapError);
         return;
       }
-      await dbService.assertPayrollNotLocked(correctionEntry.date);
+      await dbService.assertPayrollDatesNotLocked(
+        correctionEntry.date,
+        ...correctionSegments.map((c) => c.localDate),
+      );
 
       const correctedWorkModel = correctedUser?.workModelId ? workModels.find(m => m.id === correctedUser.workModelId) ?? null : null;
       const ot = calculateDailyOvertimeBreakdown(totalWorkMinutes, correctedWorkModel, correctedUser?.workModelOverride ?? null);
@@ -728,6 +783,26 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       // Source of truth = the original loaded entry (captured at loadCorrectionEntry) + the values the admin is saving.
       const beforeSnapshot = originalCorrectionEntry
         ? JSON.parse(JSON.stringify(originalCorrectionEntry))
+        : {};
+
+      // Top-level fields mirror the LAST shift (dual-write convention).
+      const last = segments[segments.length - 1];
+      const lunchMinutes = calculateLunchMinutes(
+        last.skipLunch ? '' : (last.lunchOutManual || ''),
+        last.skipLunch ? '' : (last.lunchInManual || ''),
+      );
+      const lastHasLunch = !last.skipLunch && !!last.lunchOutManual && !!last.lunchInManual;
+      const topLevelSystem = correctedTz
+        ? stripUndefined({
+            clockInSystem: last.clockInSystem,
+            clockOutSystem: last.clockOutSystem,
+            lunchOutSystem: last.skipLunch ? undefined : last.lunchOutSystem,
+            lunchInSystem: last.skipLunch ? undefined : last.lunchInSystem,
+            clockInSystemTime: last.clockInSystem != null ? Timestamp.fromMillis(last.clockInSystem) : undefined,
+            clockOutSystemTime: last.clockOutSystem != null ? Timestamp.fromMillis(last.clockOutSystem) : undefined,
+            lunchOutSystemTime: last.skipLunch || last.lunchOutSystem == null ? undefined : Timestamp.fromMillis(last.lunchOutSystem),
+            lunchInSystemTime: last.skipLunch || last.lunchInSystem == null ? undefined : Timestamp.fromMillis(last.lunchInSystem),
+          })
         : {};
 
       const afterSnapshot = {
@@ -755,23 +830,21 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       });
 
       // Only after durable audit row exists do we mutate the time record.
-      // When the corrected shift has no lunch, explicitly NULL the top-level
-      // lunch *System fields — a prior segment's lunch epoch would otherwise
-      // linger (the Audit Viewer showed it as an out-of-order submission stamped
+      // When the last shift has no lunch, explicitly NULL the top-level lunch
+      // *System fields — a prior segment's lunch epoch would otherwise linger
+      // (the Audit Viewer showed it as an out-of-order submission stamped
       // before this shift's clock-in).
-      const shiftHasLunch =
-        !correctionEntry.skipLunch && !!correctionEntry.lunchOutManual && !!correctionEntry.lunchInManual;
       await updateDoc(doc(db, 'timeEntries', correctionEntry.id), {
-        clockInManual: correctionEntry.clockInManual,
-        lunchOutManual: correctionEntry.skipLunch ? '' : (correctionEntry.lunchOutManual || ''),
-        lunchInManual: correctionEntry.skipLunch ? '' : (correctionEntry.lunchInManual || ''),
-        clockOutManual: correctionEntry.clockOutManual,
-        lunchSkipped: !!correctionEntry.skipLunch,
+        clockInManual: last.clockInManual,
+        lunchOutManual: last.skipLunch ? '' : (last.lunchOutManual || ''),
+        lunchInManual: last.skipLunch ? '' : (last.lunchInManual || ''),
+        clockOutManual: last.clockOutManual,
+        lunchSkipped: !!last.skipLunch,
         lunchMinutes,
         totalWorkMinutes,
-        segments,
-        ...systemPatch,
-        ...(shiftHasLunch
+        segments: segments.map((s) => stripUndefined(s)),
+        ...topLevelSystem,
+        ...(lastHasLunch
           ? {}
           : { lunchOutSystem: null, lunchInSystem: null, lunchOutSystemTime: null, lunchInSystemTime: null }),
         regularMinutes: ot.regularMinutes,
@@ -789,11 +862,10 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       });
 
       toast.success('Entry corrected successfully (audit trail recorded)');
-      // Modal stays OPEN after save (2026-08 UX): the just-saved values become
-      // the new "before" baseline so the preview reflects persisted state and
-      // a follow-up tweak diffs against it. Notes clear for the next edit.
-      setOriginalCorrectionEntry(JSON.parse(JSON.stringify(correctionEntry)));
-      setAdminNotes('');
+      // Modal stays OPEN after save (2026-08 UX): reload from Firestore so
+      // the "before" baseline AND the shift cards reflect exactly what
+      // persisted; a follow-up tweak diffs against the persisted state.
+      await loadCorrectionEntry();      setAdminNotes('');
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Failed to save correction';
       // If audit log itself failed, the error message already explains the safety block.
@@ -1416,45 +1488,75 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             </div>
             {correctionEntry && (
               <>
-                {/* Chronological reading order across the 2x2 grid:
-                    Clock In (TL) → Lunch Out (TR) → Lunch In (BL) → Clock Out (BR). */}
-                <div className="grid grid-cols-2 gap-4 p-4 border rounded-lg">
-                  <div>
-                    <Label>Clock In</Label>
-                    <Input
-                      type="time"
-                      value={correctionEntry.clockInManual || ''}
-                      onChange={(e) => setCorrectionEntry({ ...correctionEntry, clockInManual: e.target.value })}
-                    />
-                  </div>
-                  {!correctionEntry.skipLunch && (
-                    <div>
-                      <Label>Lunch Out</Label>
-                      <Input
-                        type="time"
-                        value={correctionEntry.lunchOutManual || ''}
-                        onChange={(e) => setCorrectionEntry({ ...correctionEntry, lunchOutManual: e.target.value })}
-                      />
+                {/* Multi-segment editing: one card per shift of the day.
+                    Each card keeps the chronological 2x2 order: Clock In (TL),
+                    Lunch Out (TR), Lunch In (BL), Clock Out (BR). */}
+                <div className="space-y-3">
+                  {correctionSegments.map((shift, idx) => (
+                    <div key={shift.key} className="p-4 border rounded-lg space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-slate-700">Shift {idx + 1}</p>
+                        <button
+                          type="button"
+                          aria-label={`Delete shift ${idx + 1}`}
+                          disabled={correctionSegments.length <= 1}
+                          onClick={() => removeShiftCard(idx)}
+                          className="inline-flex items-center justify-center p-1.5 rounded-lg border border-red-200 bg-red-50/60 text-red-600 cursor-pointer transition-all duration-150 hover:bg-red-100 hover:border-red-300 hover:text-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label>Clock In</Label>
+                          <Input
+                            type="time"
+                            value={shift.clockInManual}
+                            onChange={(e) => updateShiftCard(idx, 'clockInManual', e.target.value)}
+                          />
+                        </div>
+                        {!shift.skipLunch && (
+                          <div>
+                            <Label>Lunch Out</Label>
+                            <Input
+                              type="time"
+                              value={shift.lunchOutManual}
+                              onChange={(e) => updateShiftCard(idx, 'lunchOutManual', e.target.value)}
+                            />
+                          </div>
+                        )}
+                        {!shift.skipLunch && (
+                          <div>
+                            <Label>Lunch In</Label>
+                            <Input
+                              type="time"
+                              value={shift.lunchInManual}
+                              onChange={(e) => updateShiftCard(idx, 'lunchInManual', e.target.value)}
+                            />
+                          </div>
+                        )}
+                        <div>
+                          <Label>Clock Out</Label>
+                          <Input
+                            type="time"
+                            value={shift.clockOutManual}
+                            onChange={(e) => updateShiftCard(idx, 'clockOutManual', e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <label className="flex items-center gap-2 text-sm text-slate-600">
+                        <Checkbox
+                          checked={shift.skipLunch}
+                          onCheckedChange={(checked) => updateShiftCard(idx, 'skipLunch', !!checked)}
+                        />
+                        Skip lunch for this shift
+                      </label>
                     </div>
-                  )}
-                  {!correctionEntry.skipLunch && (
-                    <div>
-                      <Label>Lunch In</Label>
-                      <Input
-                        type="time"
-                        value={correctionEntry.lunchInManual || ''}
-                        onChange={(e) => setCorrectionEntry({ ...correctionEntry, lunchInManual: e.target.value })}
-                      />
-                    </div>
-                  )}
-                  <div>
-                    <Label>Clock Out</Label>
-                    <Input
-                      type="time"
-                      value={correctionEntry.clockOutManual || ''}
-                      onChange={(e) => setCorrectionEntry({ ...correctionEntry, clockOutManual: e.target.value })}
-                    />
-                  </div>
+                  ))}
+                  <Button variant="outline" size="sm" onClick={addShiftCard}>
+                    <Plus className="size-4 mr-2" />
+                    Add Shift
+                  </Button>
                 </div>
                 {originalCorrectionEntry && correctionEntry && (
                   <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 space-y-1">
@@ -1484,7 +1586,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             <Button variant="outline" onClick={() => setCorrectEntryOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSaveCorrection} disabled={!correctionEntry}>
+            <Button onClick={handleSaveCorrection} disabled={!correctionEntry || correctionSegments.length === 0}>
               Save Correction
             </Button>
           </DialogFooter>
