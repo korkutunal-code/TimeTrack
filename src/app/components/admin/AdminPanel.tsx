@@ -214,6 +214,19 @@ interface EditableShift {
   localDate?: string;
 }
 
+/** Two shift cards match when every editable field is identical. */
+function shiftsMatch(a: EditableShift, b: EditableShift): boolean {
+  return (
+    a.key === b.key &&
+    a.clockInManual === b.clockInManual &&
+    a.lunchOutManual === b.lunchOutManual &&
+    a.lunchInManual === b.lunchInManual &&
+    a.clockOutManual === b.clockOutManual &&
+    a.skipLunch === b.skipLunch &&
+    (a.localDate ?? '') === (b.localDate ?? '')
+  );
+}
+
 /**
  * Build the editable shift cards from a loaded entry: every persisted segment
  * PLUS the synthesized current shift when it is not already covered by the
@@ -390,6 +403,22 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     );
     return mins / 60;
   }, [correctionEntry, correctionSegments]);
+
+  // Dirty-state guard for Save Correction. Baseline = the shift cards exactly
+  // as loaded from Firestore (rebuilt from originalCorrectionEntry, which is
+  // refreshed after every save). The note field always opens empty, so the
+  // button enables when any timestamp / segment structure differs OR the
+  // admin types a note; reverting all edits with an empty note re-disables it.
+  const baselineShifts = useMemo(
+    () => (originalCorrectionEntry ? buildEditableShifts(originalCorrectionEntry) : null),
+    [originalCorrectionEntry],
+  );
+  const isCorrectionDirty = useMemo(() => {
+    if (!baselineShifts) return false;
+    if (adminNotes.trim() !== '') return true;
+    if (correctionSegments.length !== baselineShifts.length) return true;
+    return correctionSegments.some((s, i) => !shiftsMatch(s, baselineShifts[i]));
+  }, [baselineShifts, correctionSegments, adminNotes]);
 
   const handleCreateUser = async () => {
     if (!newUser.name || !newUser.email) {
@@ -1566,13 +1595,6 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                           />
                         </div>
                       </div>
-                      <label className="flex items-center gap-2 text-sm text-slate-600">
-                        <Checkbox
-                          checked={shift.skipLunch}
-                          onCheckedChange={(checked) => updateShiftCard(idx, 'skipLunch', !!checked)}
-                        />
-                        Skip lunch for this shift
-                      </label>
                     </div>
                   ))}
                   <Button variant="outline" size="sm" onClick={addShiftCard}>
@@ -1608,7 +1630,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             <Button variant="outline" onClick={() => setCorrectEntryOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSaveCorrection} disabled={!correctionEntry || correctionSegments.length === 0}>
+            <Button onClick={handleSaveCorrection} disabled={!correctionEntry || correctionSegments.length === 0 || !isCorrectionDirty}>
               Save Correction
             </Button>
           </DialogFooter>
