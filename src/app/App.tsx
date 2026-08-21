@@ -363,7 +363,7 @@ export default function App() {
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label="Account menu"
-                className="rounded-full outline-none cursor-pointer transition-transform hover:scale-105 active:scale-95 focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                className="rounded-full outline-none cursor-pointer transition-all duration-200 hover:brightness-90 focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
               >
                 <UserAvatar
                   name={currentUser.name}
