@@ -704,7 +704,12 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                       <h3 className="text-sm font-bold text-slate-900 truncate">{summary.userName}</h3>
                       <p className="text-xs text-slate-400">Total: {summary.totalHours.toFixed(2)} hours</p>
                       {hasOpenShift && (
-                        <span className={`mt-0.5 ${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] font-semibold`}>
+                        // self-start: without it the column flexbox's default
+                        // `align-items: stretch` stretches the chip to the
+                        // block's full 150px; this shrink-wraps it to the
+                        // text (~64px) with the left edge/text position
+                        // unchanged.
+                        <span className={`mt-0.5 self-start ${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] font-semibold`}>
                           In Progress
                         </span>
                       )}
