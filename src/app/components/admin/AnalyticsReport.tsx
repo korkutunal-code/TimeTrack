@@ -711,7 +711,7 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
 
                   {expandedUserId === summary.userId && summary.dailyEntries && (
                     <div className="mt-2 pt-2 border-t border-slate-200 overflow-x-auto px-2">
-                      <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2 mb-2">
                         <p className="text-xs font-semibold text-slate-700">Daily Breakdown</p>
                         {/* Times | Flags segmented toggle (placeholder — the
                             Flags view is not implemented yet; this only
