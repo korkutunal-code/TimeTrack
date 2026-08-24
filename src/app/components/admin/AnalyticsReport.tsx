@@ -1,19 +1,19 @@
 import { useState, useEffect } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
-import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import type { DocumentData } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
 import { fetchGlobalSettings } from '../../../services/systemSettingsService';
+import { fetchAttributedTimeEntries, projectOpenShiftsAt } from '../../../services/attributedEntries';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { Badge } from '../ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
-import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, ChevronDown, ChevronRight } from 'lucide-react';
+import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, ChevronDown, ChevronRight, Radio } from 'lucide-react';
 import { generateCSV, downloadCSV } from '../../../services/exportService';
-import { ALL_USERS, USER_GROUP_OPTIONS, buildUserIdMatcher, isGroupSelection } from '../../../utils/userSelection';
+import { ALL_USERS, USER_GROUP_OPTIONS } from '../../../utils/userSelection';
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
@@ -22,11 +22,8 @@ import type { OvertimeEntry } from '../../../utils/overtimeCalculations';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
 import { formatDateShortWithWeekday } from '../../../utils/dateHelpers.js';
-import { computeSegmentWorkMinutes } from '../../lib/segmentOps';
-import type { TimeSegment } from '../../lib/database';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
-import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
-import { type TimeViewMode, displayTimeForView, explodeDocsBySegmentLocalDate } from '../../../utils/timeView';
+import { type TimeViewMode, displayTimeForView } from '../../../utils/timeView';
 
 interface AnalyticsReportProps {
   allUsers: User[];
@@ -205,72 +202,23 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
       const workModelList = await listWorkModels();
       const workModelById = new Map<string, WorkModelDef>(workModelList.map(m => [m.id, m]));
 
-      // Pull entries from Firestore (same query pattern as the old app).
-      // Group selections (All / All Employees / All Managers / All Admins)
-      // fetch the full date range, then narrow by role when grouping below.
-      // A specific user uses a server-side userId equality filter.
-      const base = collection(db, 'timeEntries');
-      const q =
-        isGroupSelection(selectedUserId)
-          ? query(base, where('workDate', '>=', startDate), where('workDate', '<=', endDate), orderBy('workDate', 'asc'))
-          : query(
-            base,
-            where('userId', '==', selectedUserId),
-            where('workDate', '>=', startDate),
-            where('workDate', '<=', endDate),
-            orderBy('workDate', 'asc')
-          );
+      // Pull entries through the Analytics read pipeline (same query shape,
+      // exclusion cutoff, segment rebuild, cross-midnight attribution, and
+      // role narrowing as Payroll) — EXCEPT completeOnly: false so open /
+      // incomplete shifts are included.
+      const attributed = await fetchAttributedTimeEntries({
+        startDate,
+        endDate,
+        selectedUserId,
+        allUsers,
+        completeOnly: false,
+        excludeBefore: payrollSettings.exclude_records_before_date,
+      });
 
-      const snap = await getDocs(q);
-      const rawEntries = filterByExclusionCutoff(
-        // Include the Firestore doc id so each entry carries a unique,
-        // collision-free key (real `${uid}_${date}` id for normal docs; the
-        // cross-midnight explosion derives `${sourceId}@${date}` synthetics).
-        snap.docs.map(d => ({ id: d.id, ...d.data() }) as DocumentData).filter(e => e.dayComplete === true),
-        payrollSettings.exclude_records_before_date,
-        (e: DocumentData) => String(e.workDate || e.date || ''),
-      ).map(e => {
-          // Rebuild the day's total from the canonical segments[] sum.
-          // Split-shift (multi-segment) docs persist only the final shift's
-          // minutes in the root totalWorkMinutes field (e.g. 353 for shift 2,
-          // not 1090+353=1443 for the full day). Feeding the stale root value
-          // into calculateWeeklyOvertimeAdjustments understated daily OT/DT.
-          //
-          // Per-segment workMinutes is also recomputed from the system
-          // timestamp delta (clockInSystem/clockOutSystem) so multi-day spans
-          // — whose stored workMinutes were capped by the old single-day
-          // heuristic — feed accurate durations into the day total and the
-          // overtime engine. Manual-only segments keep their stored value via
-          // the computeSegmentWorkMinutes fallback.
-          const segs = Array.isArray(e.segments) ? e.segments : [];
-          if (segs.length === 0) return e;
-          const rebuiltSegs = segs.map((s: DocumentData) => ({
-            ...s,
-            workMinutes: computeSegmentWorkMinutes(s as TimeSegment),
-          }));
-          const segTotal = rebuiltSegs.reduce((sum, s) => sum + (Number(s.workMinutes) || 0), 0);
-          if (segs.length > 1) {
-            return {
-              ...e,
-              segments: rebuiltSegs,
-              totalWorkMinutes: segTotal,
-              totalHours: segTotal / 60,
-              regularMinutes: undefined,
-              otMinutes: undefined,
-              doubleTimeMinutes: undefined,
-            };
-          }
-          // Single-segment docs keep root fields in sync with segments[0]
-          // (S7 invariant); rebuild defensively but trust any stored buckets.
-          return { ...e, segments: rebuiltSegs, totalWorkMinutes: segTotal, totalHours: segTotal / 60 };
-        });
-
-      // Attribute pre-fix cross-midnight split segments to their own local
-      // dates (explode 23:32→00:28 into a 07/29 doc with 23:32→23:59 and a
-      // 07/30 doc with 00:00→00:28) so payroll calculates and groups the
-      // post-midnight portion under the correct day instead of aggregating
-      // the whole shift under the punch-in date.
-      const dateAttributedEntries = explodeDocsBySegmentLocalDate(rawEntries);
+      // IN-MEMORY virtual closure: open shifts are projected forward to the
+      // current moment so their accumulated hours count toward totals and OT.
+      // Strictly read-side — nothing here is ever persisted to Firestore.
+      const dateAttributedEntries = projectOpenShiftsAt(attributed, Date.now());
 
       // Group by employee and calculate biweekly overtime totals (California rules)
       const byUser = new Map<string, OvertimeEntry[]>();
@@ -281,11 +229,7 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
       });
 
       const summaries: PayrollSummary[] = [];
-      // For role-group selections, drop grouped users whose role doesn't match.
-      // (A specific user is already server-filtered; "All" keeps everyone.)
-      const roleMatcher = buildUserIdMatcher(selectedUserId, allUsers);
       for (const [userId, entries] of byUser.entries()) {
-        if (!roleMatcher(userId)) continue;
         const userObj = allUsers.find(u => u.uid === userId);
         const userWorkModel = userObj?.workModelId ? workModelById.get(userObj.workModelId) ?? null : null;
         const userOverride = userObj?.workModelOverride ?? null;
@@ -551,6 +495,12 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
     );
   };
 
+  // Open (still-active) shifts included via the in-memory now-projection —
+  // surfaced in the UI so admins know those hours are live estimates.
+  const openShiftCount = report
+    ? report.reduce((n, s) => n + (s.dailyEntries ?? []).filter(d => d.projectedOpen).length, 0)
+    : 0;
+
   return (
     <div className="space-y-4">
       {/* Report Setup Card */}
@@ -701,18 +651,37 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
             </div>
           </div>
 
+          {/* Open-shift projection notice */}
+          {openShiftCount > 0 && (
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              <Radio className="size-4 shrink-0" />
+              <span>
+                {openShiftCount} open shift{openShiftCount === 1 ? '' : 's'} included — hours are projected to the
+                current moment (in-memory only; the database is not modified).
+              </span>
+            </div>
+          )}
+
           {/* Employee Cards - Mobile Friendly */}
           <div className="space-y-2">
             {report.map(summary => {
               // Employee's local timezone for the Req-4 'local' view mode.
               const empTz = allUsers.find(u => u.uid === summary.userId)?.timezone;
+              const hasOpenShift = (summary.dailyEntries ?? []).some(d => d.projectedOpen);
               return (
               <Card key={summary.userId} className="border-2 border-slate-200">
                 <CardContent className="py-1 px-2 [&:last-child]:pb-1">
                   <div className="flex flex-row items-center justify-between gap-4 py-1 px-2">
                     {/* Left — employee info */}
                     <div className="flex flex-col shrink-0 min-w-[150px]">
-                      <h3 className="text-sm font-bold text-slate-900">{summary.userName}</h3>
+                      <h3 className="text-sm font-bold text-slate-900">
+                        {summary.userName}
+                        {hasOpenShift && (
+                          <Badge className="ml-2 bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] px-1.5 py-0 align-middle">
+                            In Progress
+                          </Badge>
+                        )}
+                      </h3>
                       <p className="text-xs text-slate-400">Total: {summary.totalHours.toFixed(2)} hours</p>
                     </div>
 
@@ -815,6 +784,11 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                     {isMultiShift && (
                                       <span className="ml-1 text-xs font-normal text-slate-400">({segs.length} shifts)</span>
                                     )}
+                                    {day.projectedOpen && (
+                                      <Badge className="ml-1 bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] px-1 py-0">
+                                        Open
+                                      </Badge>
+                                    )}
                                   </span>
                                 </td>
                                 <td className="p-1.5">{fmtBoundary(b.clockIn, empTz)}</td>
@@ -824,7 +798,11 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                 <td className="p-1.5">
                                   {renderLunchCell(lunch.lunchIn)}
                                 </td>
-                                <td className="p-1.5">{fmtBoundary(b.clockOut, empTz)}</td>
+                                <td className="p-1.5">
+                                  {day.projectedOpen
+                                    ? <span className="inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">In Progress</span>
+                                    : fmtBoundary(b.clockOut, empTz)}
+                                </td>
                                 <td className="p-1.5 text-right">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
                                 <td className="p-1.5 text-right">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
                                 <td className="p-1.5 text-right">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
@@ -847,7 +825,11 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                     <td className="p-1.5">
                                       {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, ms: seg.lunchInSystem, dayOffset: segFieldDayOffset(seg, 'lunchInManual') }, empTz)}
                                     </td>
-                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual') }, empTz)}</td>
+                                    <td className="p-1.5">
+                                      {seg.projectedClosed
+                                        ? <span className="inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">now</span>
+                                        : fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual') }, empTz)}
+                                    </td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
@@ -879,6 +861,7 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                 <p>• <strong>Regular:</strong> First 8 hours per day, up to 40 per week</p>
                 <p>• <strong>Overtime (1.5x):</strong> Hours 8-12 per day, or over 40 per week</p>
                 <p>• <strong>Double Time (2x):</strong> Over 12 hours per day</p>
+                <p>• <strong>Open shifts:</strong> Still-active shifts are included with hours projected to the current moment (in-memory only; the database is not modified)</p>
               </div>
             </CardContent>
           </Card>
