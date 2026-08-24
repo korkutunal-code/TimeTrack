@@ -737,13 +737,13 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                         <thead className="bg-slate-50 text-slate-700 font-semibold">
                           <tr>
                             <th className="p-1.5">Date</th>
-                            <th className="p-1.5">In</th>
-                            <th className="p-1.5">L.Out</th>
-                            <th className="p-1.5">L.In</th>
-                            <th className="p-1.5">Out</th>
-                            <th className="p-1.5 text-right">Reg</th>
-                            <th className="p-1.5 text-right">OT</th>
-                            <th className="p-1.5 text-right">DT</th>
+                            <th className="p-1.5 -translate-x-[150px]">In</th>
+                            <th className="p-1.5 -translate-x-[150px]">L.Out</th>
+                            <th className="p-1.5 -translate-x-[150px]">L.In</th>
+                            <th className="p-1.5 -translate-x-[150px]">Out</th>
+                            <th className="p-1.5 text-right -translate-x-[75px]">Reg</th>
+                            <th className="p-1.5 text-right -translate-x-[50px]">OT</th>
+                            <th className="p-1.5 text-right -translate-x-[25px]">DT</th>
                             <th className="p-1.5 text-right">Total</th>
                           </tr>
                         </thead>
@@ -809,21 +809,21 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                     )}
                                   </span>
                                 </td>
-                                <td className="p-1.5">{fmtBoundary(b.clockIn, empTz)}</td>
-                                <td className="p-1.5">
+                                <td className="p-1.5 -translate-x-[150px]">{fmtBoundary(b.clockIn, empTz)}</td>
+                                <td className="p-1.5 -translate-x-[150px]">
                                   {renderLunchCell(lunch.lunchOut)}
                                 </td>
-                                <td className="p-1.5">
+                                <td className="p-1.5 -translate-x-[150px]">
                                   {renderLunchCell(lunch.lunchIn)}
                                 </td>
-                                <td className="p-1.5">
+                                <td className="p-1.5 -translate-x-[150px]">
                                   {day.projectedOpen
                                     ? <span className="inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">In Progress</span>
                                     : fmtBoundary(b.clockOut, empTz)}
                                 </td>
-                                <td className="p-1.5 text-right">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
-                                <td className="p-1.5 text-right">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
-                                <td className="p-1.5 text-right">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
+                                <td className="p-1.5 text-right -translate-x-[75px]">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
+                                <td className="p-1.5 text-right -translate-x-[50px]">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
+                                <td className="p-1.5 text-right -translate-x-[25px]">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
                                 <td className={`p-1.5 text-right font-semibold ${dayTotalHours > 8 ? 'text-red-600' : ''}`}>
                                   {dayTotalHours.toFixed(1)}
                                 </td>
@@ -836,21 +836,21 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                 rows.push(
                                   <tr key={`${rowKey}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
                                     <td className="p-1.5 pl-6 text-purple-700 font-medium">↳ Shift {i + 1}</td>
-                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockInManual, ms: seg.clockInSystem, dayOffset: 0 }, empTz)}</td>
-                                    <td className="p-1.5">
+                                    <td className="p-1.5 -translate-x-[150px]">{fmtBoundary({ time: seg.clockInManual, ms: seg.clockInSystem, dayOffset: 0 }, empTz)}</td>
+                                    <td className="p-1.5 -translate-x-[150px]">
                                       {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, ms: seg.lunchOutSystem, dayOffset: segFieldDayOffset(seg, 'lunchOutManual', viewZone) }, empTz)}
                                     </td>
-                                    <td className="p-1.5">
+                                    <td className="p-1.5 -translate-x-[150px]">
                                       {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, ms: seg.lunchInSystem, dayOffset: segFieldDayOffset(seg, 'lunchInManual', viewZone) }, empTz)}
                                     </td>
-                                    <td className="p-1.5">
+                                    <td className="p-1.5 -translate-x-[150px]">
                                       {seg.projectedClosed
                                         ? <span className="inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">now</span>
                                         : fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual', viewZone) }, empTz)}
                                     </td>
-                                    <td className="p-1.5 text-right text-slate-400">--</td>
-                                    <td className="p-1.5 text-right text-slate-400">--</td>
-                                    <td className="p-1.5 text-right text-slate-400">--</td>
+                                    <td className="p-1.5 text-right text-slate-400 -translate-x-[75px]">--</td>
+                                    <td className="p-1.5 text-right text-slate-400 -translate-x-[50px]">--</td>
+                                    <td className="p-1.5 text-right text-slate-400 -translate-x-[25px]">--</td>
                                     <td className={`p-1.5 text-right font-semibold ${shiftTotalHours > 8 ? 'text-red-600' : 'text-purple-700'}`}>
                                       {shiftTotalHours.toFixed(1)}
                                     </td>
