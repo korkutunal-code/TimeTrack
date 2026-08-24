@@ -54,6 +54,10 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
   const [loading, setLoading] = useState(false);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
+  // Daily Breakdown sub-view toggle (Times | Flags). PLACEHOLDER for now —
+  // the state switches the active pill styling only; the flags view itself
+  // is not implemented yet.
+  const [breakdownView, setBreakdownView] = useState<'times' | 'flags'>('times');
   const [payrollSettings, setPayrollSettings] = useState({
     payroll_cycle_type: 'biweekly',
     weekly_start_day: 1,
@@ -707,7 +711,28 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
 
                   {expandedUserId === summary.userId && summary.dailyEntries && (
                     <div className="mt-2 pt-2 border-t border-slate-200 overflow-x-auto px-2">
-                      <p className="text-xs font-semibold text-slate-700 mb-2">Daily Breakdown</p>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs font-semibold text-slate-700">Daily Breakdown</p>
+                        {/* Times | Flags segmented toggle (placeholder — the
+                            Flags view is not implemented yet; this only
+                            switches the active pill styling). */}
+                        <div className="inline-flex items-center rounded-full bg-slate-100 border border-slate-200 p-0.5">
+                          {(['times', 'flags'] as const).map((view) => (
+                            <button
+                              key={view}
+                              type="button"
+                              onClick={() => setBreakdownView(view)}
+                              className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold capitalize transition-colors ${
+                                breakdownView === view
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'text-slate-500 hover:text-slate-700'
+                              }`}
+                            >
+                              {view === 'times' ? 'Times' : 'Flags'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       <table className="w-full text-xs text-left text-slate-600">
                         <thead className="bg-slate-50 text-slate-700 font-semibold">
                           <tr>
