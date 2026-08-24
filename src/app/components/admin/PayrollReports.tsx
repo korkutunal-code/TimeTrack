@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
 import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
@@ -65,6 +65,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
     monthly_start_day: 1,
     exclude_records_before_date: '',
   });
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -83,6 +84,8 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
         }
       } catch (err) {
         console.error('Failed to load payroll settings', err);
+      } finally {
+        setSettingsLoaded(true);
       }
     };
     loadSettings();
@@ -90,12 +93,17 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
 
   const cycleType = payrollSettings.payroll_cycle_type;
 
-  const setQuickPeriod = (preset: 'current' | 'last') => {
-    // Anchor "today" in PT (America/Los_Angeles): admin payroll cycle
-    // boundaries run in PT per AGENTS.md. The previous toISOString() slice
-    // anchored to the browser-local UTC day, which can be one calendar day
-    // ahead of PT between ~16:00 PST / 17:00 PDT and UTC midnight — landing
-    // the Current/Last Cycle presets on the wrong block.
+  /**
+   * Pure helper: compute the start/end YMD strings for a given preset
+   * ('current' | 'last') based on the loaded payroll settings.
+   *
+   * Anchor "today" in PT (America/Los_Angeles): admin payroll cycle
+   * boundaries run in PT per AGENTS.md. The previous toISOString() slice
+   * anchored to the browser-local UTC day, which can be one calendar day
+   * ahead of PT between ~16:00 PST / 17:00 PDT and UTC midnight — landing
+   * the Current/Last Cycle presets on the wrong block.
+   */
+  const computeCycleDates = useCallback((preset: 'current' | 'last'): { start: string; end: string } => {
     const todayYmd = getCurrentPTDate();
 
     if (cycleType === 'weekly') {
@@ -112,15 +120,13 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
       currentEnd.setUTCDate(currentStart.getUTCDate() + 6);
 
       if (preset === 'current') {
-        setStartDate(currentStart.toISOString().slice(0, 10));
-        setEndDate(currentEnd.toISOString().slice(0, 10));
+        return { start: currentStart.toISOString().slice(0, 10), end: currentEnd.toISOString().slice(0, 10) };
       } else {
         const lastStart = new Date(currentStart);
         lastStart.setUTCDate(lastStart.getUTCDate() - 7);
         const lastEnd = new Date(lastStart);
         lastEnd.setUTCDate(lastStart.getUTCDate() + 6);
-        setStartDate(lastStart.toISOString().slice(0, 10));
-        setEndDate(lastEnd.toISOString().slice(0, 10));
+        return { start: lastStart.toISOString().slice(0, 10), end: lastEnd.toISOString().slice(0, 10) };
       }
     } else if (cycleType === 'biweekly' || cycleType === 'custom') {
       // Use anchor date to determine current biweekly block
@@ -141,17 +147,15 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
       currentStart.setUTCDate(anchor.getUTCDate() + (cyclesPassed * 14));
       const currentEnd = new Date(currentStart);
       currentEnd.setUTCDate(currentStart.getUTCDate() + 13);
-      
+
       if (preset === 'current') {
-        setStartDate(currentStart.toISOString().slice(0, 10));
-        setEndDate(currentEnd.toISOString().slice(0, 10));
+        return { start: currentStart.toISOString().slice(0, 10), end: currentEnd.toISOString().slice(0, 10) };
       } else {
         const lastStart = new Date(currentStart);
         lastStart.setUTCDate(lastStart.getUTCDate() - 14);
         const lastEnd = new Date(lastStart);
         lastEnd.setUTCDate(lastStart.getUTCDate() + 13);
-        setStartDate(lastStart.toISOString().slice(0, 10));
-        setEndDate(lastEnd.toISOString().slice(0, 10));
+        return { start: lastStart.toISOString().slice(0, 10), end: lastEnd.toISOString().slice(0, 10) };
       }
     } else if (cycleType === 'monthly') {
       // Configurable monthly cycle anchored on monthly_start_day (1–28).
@@ -179,8 +183,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
       currentEnd.setUTCDate(nextStart.getUTCDate() - 1);
 
       if (preset === 'current') {
-        setStartDate(currentStart.toISOString().slice(0, 10));
-        setEndDate(currentEnd.toISOString().slice(0, 10));
+        return { start: currentStart.toISOString().slice(0, 10), end: currentEnd.toISOString().slice(0, 10) };
       } else {
         // Last cycle = one month before the current cycle.
         let lastStartY = startY;
@@ -189,14 +192,23 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
         const lastStart = new Date(Date.UTC(lastStartY, lastStartM0, startDay));
         const lastEnd = new Date(currentStart);
         lastEnd.setUTCDate(currentStart.getUTCDate() - 1);
-        setStartDate(lastStart.toISOString().slice(0, 10));
-        setEndDate(lastEnd.toISOString().slice(0, 10));
+        return { start: lastStart.toISOString().slice(0, 10), end: lastEnd.toISOString().slice(0, 10) };
       }
     }
+    // Fallback: return today's date for both
+    return { start: todayYmd, end: todayYmd };
+  }, [cycleType, payrollSettings.weekly_start_day, payrollSettings.biweekly_start_date, payrollSettings.monthly_start_day]);
+
+  const setQuickPeriod = (preset: 'current' | 'last') => {
+    const { start, end } = computeCycleDates(preset);
+    setStartDate(start);
+    setEndDate(end);
   };
 
-  const generateReport = async () => {
-    if (!startDate || !endDate) {
+  const generateReport = useCallback(async (overrideStart?: string, overrideEnd?: string) => {
+    const effStart = overrideStart ?? startDate;
+    const effEnd = overrideEnd ?? endDate;
+    if (!effStart || !effEnd) {
       toast.error('Please select start and end dates');
       return;
     }
@@ -215,12 +227,12 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
       const base = collection(db, 'timeEntries');
       const q =
         isGroupSelection(selectedUserId)
-          ? query(base, where('workDate', '>=', startDate), where('workDate', '<=', endDate), orderBy('workDate', 'asc'))
+          ? query(base, where('workDate', '>=', effStart), where('workDate', '<=', effEnd), orderBy('workDate', 'asc'))
           : query(
             base,
             where('userId', '==', selectedUserId),
-            where('workDate', '>=', startDate),
-            where('workDate', '<=', endDate),
+            where('workDate', '>=', effStart),
+            where('workDate', '<=', effEnd),
             orderBy('workDate', 'asc')
           );
 
@@ -313,7 +325,39 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
     } finally {
       setLoading(false);
     }
-  };
+  }, [startDate, endDate, selectedUserId, allUsers, payrollSettings.weekly_start_day, payrollSettings.exclude_records_before_date]);
+
+  // Auto-initialize dates to Current Cycle on mount (after settings load),
+  // then immediately run the report.
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    const { start, end } = computeCycleDates('current');
+    // Defer setState to avoid cascading renders (React ESLint rule).
+    setTimeout(() => {
+      setStartDate(start);
+      setEndDate(end);
+      generateReport(start, end);
+    }, 0);
+  }, [settingsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounced auto-refresh: re-run the report whenever any control changes.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isInitialMount = useRef(true);
+  useEffect(() => {
+    // Skip the very first render — the mount effect above already handles it.
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    if (!startDate || !endDate) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      generateReport();
+    }, 400);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [startDate, endDate, selectedUserId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const exportCSV = () => {
     if (!report) return;
@@ -543,6 +587,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
           <CardTitle className="text-xl font-bold flex items-center gap-2">
             <FileText className="size-5" />
             Payroll Report Setup
+            {loading && <span className="text-xs font-normal text-blue-600 animate-pulse ml-2">Refreshing…</span>}
           </CardTitle>
           <SectionHelp
             title="Payroll Reports"
@@ -554,8 +599,8 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
             ]}
           />
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
             <div className="space-y-1">
               <Label className="text-xs">Employee</Label>
               <Select value={selectedUserId} onValueChange={setSelectedUserId}>
@@ -592,20 +637,17 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
               />
             </div>
             <div className="space-y-1">
-              <Button onClick={generateReport} disabled={loading} className="w-full h-10 bg-blue-600 hover:bg-blue-700">
-                <FileText className="size-4 mr-2" />
-                {loading ? 'Generating...' : 'Generate Report'}
+              <Label className="text-xs invisible">Cycle</Label>
+              <Button variant="outline" onClick={() => setQuickPeriod('current')} className="w-full h-10 text-xs">
+                Current On-Site Cycle
               </Button>
             </div>
-          </div>
-
-          <div className="flex flex-wrap gap-1.5">
-            <Button variant="outline" size="sm" onClick={() => setQuickPeriod('current')} className="h-8 text-xs">
-              Current Cycle
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setQuickPeriod('last')} className="h-8 text-xs">
-              Last Cycle
-            </Button>
+            <div className="space-y-1">
+              <Label className="text-xs invisible">Cycle</Label>
+              <Button variant="outline" onClick={() => setQuickPeriod('last')} className="w-full h-10 text-xs">
+                Last On-Site Cycle
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
