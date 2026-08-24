@@ -8,6 +8,7 @@ import { HistoryView } from './components/employee/HistoryView';
 import { TeamDashboard } from './components/manager/TeamDashboard';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { PayrollReports } from './components/admin/PayrollReports';
+import { AnalyticsReport } from './components/admin/AnalyticsReport';
 import { AuditViewer } from './components/admin/AuditViewer';
 import { PatternMetrics } from './components/admin/PatternMetrics';
 import { CorrectionRequests } from './components/admin/CorrectionRequests';
@@ -43,15 +44,15 @@ import {
 } from './components/ui/dropdown-menu';
 import { Toaster } from './components/ui/sonner';
 import { toast } from 'sonner';
-import { LogOut, Clock, Users, Settings, FileText, Search, TrendingUp, FileWarning, Sliders, Shield } from 'lucide-react';
+import { LogOut, Clock, Users, Settings, FileText, Search, TrendingUp, FileWarning, Sliders, Shield, BarChart } from 'lucide-react';
 import { QABar } from './components/QABar';
 import { ReportProblemButton } from './components/ReportProblemButton';
 
 type EmployeeView = 'today' | 'history';
-type AdminView = 'panel' | 'payroll' | 'audit' | 'metrics' | 'team' | 'corrections' | 'settings';
+type AdminView = 'panel' | 'payroll' | 'analytics' | 'audit' | 'metrics' | 'team' | 'corrections' | 'settings';
 
 /** All valid admin tab ids — used to validate the ?tab= deep-link param. */
-const ADMIN_TAB_VALUES: readonly AdminView[] = ['panel', 'payroll', 'audit', 'metrics', 'team', 'corrections', 'settings'];
+const ADMIN_TAB_VALUES: readonly AdminView[] = ['panel', 'payroll', 'analytics', 'audit', 'metrics', 'team', 'corrections', 'settings'];
 
 /** Read the deep-linked admin tab from the URL (?tab=payroll), or null. */
 function adminTabFromLocation(): AdminView | null {
@@ -512,10 +513,11 @@ export default function App() {
             Active-tab styling is unchanged (data-state lives on the anchor
             via the slotted trigger).
           */}
-          <TabsList className="grid grid-cols-3 sm:grid-cols-7 w-full gap-1">
+          <TabsList className="grid grid-cols-3 sm:grid-cols-8 w-full gap-1">
             {([
               { id: 'panel', icon: <Settings className="size-4 mr-0 sm:mr-2" />, full: 'User Base', short: 'User Base' },
               { id: 'payroll', icon: <FileText className="size-4 mr-0 sm:mr-2" />, full: 'Payroll', short: 'Pay' },
+              { id: 'analytics', icon: <BarChart className="size-4 mr-0 sm:mr-2" />, full: 'Analytics', short: 'Stats' },
               { id: 'audit', icon: <Search className="size-4 mr-0 sm:mr-2" />, full: 'Audit', short: 'Audit' },
               { id: 'metrics', icon: <TrendingUp className="size-4 mr-0 sm:mr-2" />, full: 'Metrics', short: 'Stats' },
               { id: 'team', icon: <Users className="size-4 mr-0 sm:mr-2" />, full: 'Team', short: 'Team' },
@@ -549,6 +551,13 @@ export default function App() {
             <TimezoneViewToggle mode={timeViewMode} onChange={setTimeViewMode} />
           </div>
           <PayrollReports allUsers={allUsers} timeViewMode={timeViewMode} />
+        </TabsContent>
+
+        <TabsContent value="analytics">
+          <div className="mb-3">
+            <TimezoneViewToggle mode={timeViewMode} onChange={setTimeViewMode} />
+          </div>
+          <AnalyticsReport allUsers={allUsers} timeViewMode={timeViewMode} />
         </TabsContent>
 
         <TabsContent value="audit">
