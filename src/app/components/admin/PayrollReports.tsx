@@ -29,6 +29,22 @@ import { listWorkModels, type WorkModel as WorkModelDef } from '../../../service
 import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
 import { type TimeViewMode, displayTimeForView, explodeDocsBySegmentLocalDate, zoneForMode, calendarDayOffsetInZone } from '../../../utils/timeView';
 
+/**
+ * Pixel-nudge wrapper for Daily Breakdown columns. The translate is applied
+ * to an inline-block CONTENT wrapper — never to the <th>/<td> box itself
+ * (CSS transforms on display:table-cell boxes are inconsistently applied
+ * across browsers; on an inline-block they render reliably everywhere).
+ * Literal class strings keep the Tailwind scanner happy.
+ */
+function Nudge({ px, children }: { px: 150 | 75 | 50 | 25; children: React.ReactNode }) {
+  const cls =
+    px === 150 ? '-translate-x-[150px]'
+      : px === 75 ? '-translate-x-[75px]'
+        : px === 50 ? '-translate-x-[50px]'
+          : '-translate-x-[25px]';
+  return <span className={`inline-block ${cls}`}>{children}</span>;
+}
+
 interface PayrollReportsProps {
   allUsers: User[];
   /**
@@ -738,13 +754,13 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                         <thead className="bg-slate-50 text-slate-700 font-semibold">
                           <tr>
                             <th className="p-1.5">Date</th>
-                            <th className="p-1.5 -translate-x-[150px]">In</th>
-                            <th className="p-1.5 -translate-x-[150px]">L.Out</th>
-                            <th className="p-1.5 -translate-x-[150px]">L.In</th>
-                            <th className="p-1.5 -translate-x-[150px]">Out</th>
-                            <th className="p-1.5 text-right -translate-x-[75px]">Reg</th>
-                            <th className="p-1.5 text-right -translate-x-[50px]">OT</th>
-                            <th className="p-1.5 text-right -translate-x-[25px]">DT</th>
+                            <th className="p-1.5"><Nudge px={150}>In</Nudge></th>
+                            <th className="p-1.5"><Nudge px={150}>L.Out</Nudge></th>
+                            <th className="p-1.5"><Nudge px={150}>L.In</Nudge></th>
+                            <th className="p-1.5"><Nudge px={150}>Out</Nudge></th>
+                            <th className="p-1.5 text-right"><Nudge px={75}>Reg</Nudge></th>
+                            <th className="p-1.5 text-right"><Nudge px={50}>OT</Nudge></th>
+                            <th className="p-1.5 text-right"><Nudge px={25}>DT</Nudge></th>
                             <th className="p-1.5 text-right">Total</th>
                           </tr>
                         </thead>
@@ -805,17 +821,13 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                                     )}
                                   </span>
                                 </td>
-                                <td className="p-1.5 -translate-x-[150px]">{fmtBoundary(b.clockIn, empTz)}</td>
-                                <td className="p-1.5 -translate-x-[150px]">
-                                  {renderLunchCell(lunch.lunchOut)}
-                                </td>
-                                <td className="p-1.5 -translate-x-[150px]">
-                                  {renderLunchCell(lunch.lunchIn)}
-                                </td>
-                                <td className="p-1.5 -translate-x-[150px]">{fmtBoundary(b.clockOut, empTz)}</td>
-                                <td className="p-1.5 text-right -translate-x-[75px]">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
-                                <td className="p-1.5 text-right -translate-x-[50px]">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
-                                <td className="p-1.5 text-right -translate-x-[25px]">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
+                                <td className="p-1.5"><Nudge px={150}>{fmtBoundary(b.clockIn, empTz)}</Nudge></td>
+                                <td className="p-1.5"><Nudge px={150}>{renderLunchCell(lunch.lunchOut)}</Nudge></td>
+                                <td className="p-1.5"><Nudge px={150}>{renderLunchCell(lunch.lunchIn)}</Nudge></td>
+                                <td className="p-1.5"><Nudge px={150}>{fmtBoundary(b.clockOut, empTz)}</Nudge></td>
+                                <td className="p-1.5 text-right"><Nudge px={75}>{((day.regularMinutes || 0) / 60).toFixed(1)}</Nudge></td>
+                                <td className="p-1.5 text-right"><Nudge px={50}>{((day.otMinutes || 0) / 60).toFixed(1)}</Nudge></td>
+                                <td className="p-1.5 text-right"><Nudge px={25}>{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</Nudge></td>
                                 <td className={`p-1.5 text-right font-semibold ${dayTotalHours > 8 ? 'text-red-600' : ''}`}>
                                   {dayTotalHours.toFixed(1)}
                                 </td>
@@ -828,17 +840,17 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                                 rows.push(
                                   <tr key={`${rowKey}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
                                     <td className="p-1.5 pl-6 text-purple-700 font-medium">↳ Shift {i + 1}</td>
-                                    <td className="p-1.5 -translate-x-[150px]">{fmtBoundary({ time: seg.clockInManual, ms: seg.clockInSystem, dayOffset: 0 }, empTz)}</td>
-                                    <td className="p-1.5 -translate-x-[150px]">
-                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, ms: seg.lunchOutSystem, dayOffset: segFieldDayOffset(seg, 'lunchOutManual', viewZone) }, empTz)}
+                                    <td className="p-1.5"><Nudge px={150}>{fmtBoundary({ time: seg.clockInManual, ms: seg.clockInSystem, dayOffset: 0 }, empTz)}</Nudge></td>
+                                    <td className="p-1.5">
+                                      <Nudge px={150}>{seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, ms: seg.lunchOutSystem, dayOffset: segFieldDayOffset(seg, 'lunchOutManual', viewZone) }, empTz)}</Nudge>
                                     </td>
-                                    <td className="p-1.5 -translate-x-[150px]">
-                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, ms: seg.lunchInSystem, dayOffset: segFieldDayOffset(seg, 'lunchInManual', viewZone) }, empTz)}
+                                    <td className="p-1.5">
+                                      <Nudge px={150}>{seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, ms: seg.lunchInSystem, dayOffset: segFieldDayOffset(seg, 'lunchInManual', viewZone) }, empTz)}</Nudge>
                                     </td>
-                                    <td className="p-1.5 -translate-x-[150px]">{fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual', viewZone) }, empTz)}</td>
-                                    <td className="p-1.5 text-right text-slate-400 -translate-x-[75px]">--</td>
-                                    <td className="p-1.5 text-right text-slate-400 -translate-x-[50px]">--</td>
-                                    <td className="p-1.5 text-right text-slate-400 -translate-x-[25px]">--</td>
+                                    <td className="p-1.5"><Nudge px={150}>{fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual', viewZone) }, empTz)}</Nudge></td>
+                                    <td className="p-1.5 text-right text-slate-400"><Nudge px={75}>--</Nudge></td>
+                                    <td className="p-1.5 text-right text-slate-400"><Nudge px={50}>--</Nudge></td>
+                                    <td className="p-1.5 text-right text-slate-400"><Nudge px={25}>--</Nudge></td>
                                     <td className={`p-1.5 text-right font-semibold ${shiftTotalHours > 8 ? 'text-red-600' : 'text-purple-700'}`}>
                                       {shiftTotalHours.toFixed(1)}
                                     </td>
