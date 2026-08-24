@@ -27,7 +27,7 @@ interface TimestampLike {
  * epoch millis. Raw docs dual-write `clockInSystem` (millis) AND
  * `clockInSystemTime` (Timestamp); legacy rows may carry only the Timestamp.
  */
-function toMillis(value: unknown): number | undefined {
+export function toMillis(value: unknown): number | undefined {
   if (value == null) return undefined;
   if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
   if (value instanceof Date) return value.getTime();

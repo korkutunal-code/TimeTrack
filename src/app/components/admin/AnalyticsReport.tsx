@@ -23,6 +23,7 @@ import type { OvertimeEntry } from '../../../utils/overtimeCalculations';
 // @ts-ignore - JS module
 import { formatDateShortWithWeekday } from '../../../utils/dateHelpers.js';
 import { epochFromLocalWallTime, getCurrentPTDate } from '../../../utils/timeCalculations';
+import { getSegmentFlags, getParentRowFlags, FLAG_LABELS, FLAG_SEVERITY } from '../../../utils/analyticsFlags';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 import { type TimeViewMode, displayTimeForView, zoneForMode, calendarDayOffsetInZone } from '../../../utils/timeView';
 
@@ -71,9 +72,9 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
   const [loading, setLoading] = useState(false);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
-  // Daily Breakdown sub-view toggle (Times | Flags). PLACEHOLDER for now —
-  // the state switches the active pill styling only; the flags view itself
-  // is not implemented yet.
+  // Daily Breakdown sub-view toggle (Times | Flags): Times shows the
+  // Reg/OT/DT metric columns; Flags swaps them for a single FLAGS column
+  // computed in-memory from the pipeline entries (utils/analyticsFlags.ts).
   const [breakdownView, setBreakdownView] = useState<'times' | 'flags'>('times');
   const [payrollSettings, setPayrollSettings] = useState({
     payroll_cycle_type: 'biweekly',
@@ -499,6 +500,27 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
     );
   };
 
+  // Render flag chips for the Flags view. Empty flag list → null (clean cell).
+  const renderFlagChips = (flags: string[]): JSX.Element | null => {
+    if (flags.length === 0) return null;
+    return (
+      <div className="flex flex-wrap gap-1">
+        {flags.map((f) => {
+          const sev = FLAG_SEVERITY[f] ?? 'amber';
+          const cls =
+            sev === 'red' ? 'bg-red-100 text-red-700 border-red-200'
+              : sev === 'purple' ? 'bg-purple-100 text-purple-700 border-purple-200'
+                : 'bg-amber-100 text-amber-700 border-amber-200';
+          return (
+            <span key={f} className={`inline-flex items-center rounded border px-1 py-0 text-[10px] font-medium leading-4 ${cls}`}>
+              {FLAG_LABELS[f] ?? f.replace(/_/g, ' ')}
+            </span>
+          );
+        })}
+      </div>
+    );
+  };
+
   // Open (still-active) shifts included via the in-memory now-projection —
   // surfaced in the UI so admins know those hours are live estimates.
   const openShiftCount = report
@@ -752,9 +774,15 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                             <th className="p-1.5"><Nudge px={150}>L.Out</Nudge></th>
                             <th className="p-1.5"><Nudge px={150}>L.In</Nudge></th>
                             <th className="p-1.5"><Nudge px={150}>Out</Nudge></th>
-                            <th className="p-1.5 text-right"><Nudge px={75}>Reg</Nudge></th>
-                            <th className="p-1.5 text-right"><Nudge px={50}>OT</Nudge></th>
-                            <th className="p-1.5 text-right"><Nudge px={25}>DT</Nudge></th>
+                            {breakdownView === 'flags' ? (
+                              <th className="p-1.5"><Nudge px={75}>FLAGS</Nudge></th>
+                            ) : (
+                              <>
+                                <th className="p-1.5 text-right"><Nudge px={75}>Reg</Nudge></th>
+                                <th className="p-1.5 text-right"><Nudge px={50}>OT</Nudge></th>
+                                <th className="p-1.5 text-right"><Nudge px={25}>DT</Nudge></th>
+                              </>
+                            )}
                             <th className="p-1.5 text-right">Total</th>
                           </tr>
                         </thead>
@@ -794,6 +822,23 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                             const isOnsite = summary.workModel === 'On-site';
                             const lunchMissing = isOnsite && !lunch.isMultiple && !lunch.lunchOut && !lunch.lunchIn;
 
+                            // Flags view: shift-level flags per segment
+                            // (doc-level auto/anomaly markers mirror the LAST
+                            // segment), aggregated with day-level flags on the
+                            // parent row only. Segment-less legacy docs use
+                            // their root fields as the single pseudo-shift.
+                            const flagSegs: DocumentData[] = segs.length > 0 ? segs : [day];
+                            const childFlags: string[][] = flagSegs.map((s, i) =>
+                              getSegmentFlags(s, {
+                                isLastSegment: i === flagSegs.length - 1,
+                                docAutoClosed: day.autoClosed === true,
+                                docAutoEndedLunch: day.autoEndedLunch === true,
+                                docAnomaly: day.anomaly_flag === true,
+                                completedAt: day.completedAt,
+                              }),
+                            );
+                            const parentFlags = getParentRowFlags(day, childFlags, lunchMissing ? ['missing_lunch'] : []);
+
                             const renderLunchCell = (boundary: TimeBoundary | undefined): JSX.Element => {
                               if (lunch.isMultiple) return <span className="italic text-slate-400">Multiple</span>;
                               if (lunchMissing) return <span className="inline-block bg-red-100 text-red-700 font-semibold border border-red-200 px-2 py-0.5 rounded">--</span>;
@@ -828,9 +873,17 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                     ? <span className="inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">In Progress</span>
                                     : fmtBoundary(b.clockOut, empTz)}</Nudge>
                                 </td>
-                                <td className="p-1.5 text-right"><Nudge px={75}>{((day.regularMinutes || 0) / 60).toFixed(1)}</Nudge></td>
-                                <td className="p-1.5 text-right"><Nudge px={50}>{((day.otMinutes || 0) / 60).toFixed(1)}</Nudge></td>
-                                <td className="p-1.5 text-right"><Nudge px={25}>{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</Nudge></td>
+                                {breakdownView === 'flags' ? (
+                                  // Parent day row: combined flags (child shift
+                                  // flags + day-level flags), as chips.
+                                  <td className="p-1.5"><Nudge px={75}>{renderFlagChips(parentFlags)}</Nudge></td>
+                                ) : (
+                                  <>
+                                    <td className="p-1.5 text-right"><Nudge px={75}>{((day.regularMinutes || 0) / 60).toFixed(1)}</Nudge></td>
+                                    <td className="p-1.5 text-right"><Nudge px={50}>{((day.otMinutes || 0) / 60).toFixed(1)}</Nudge></td>
+                                    <td className="p-1.5 text-right"><Nudge px={25}>{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</Nudge></td>
+                                  </>
+                                )}
                                 <td className={`p-1.5 text-right font-semibold ${dayTotalHours > 8 ? 'text-red-600' : ''}`}>
                                   {dayTotalHours.toFixed(1)}
                                 </td>
@@ -855,9 +908,18 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                         ? <span className="inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">now</span>
                                         : fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual', viewZone) }, empTz)}</Nudge>
                                     </td>
-                                    <td className="p-1.5 text-right text-slate-400"><Nudge px={75}>--</Nudge></td>
-                                    <td className="p-1.5 text-right text-slate-400"><Nudge px={50}>--</Nudge></td>
-                                    <td className="p-1.5 text-right text-slate-400"><Nudge px={25}>--</Nudge></td>
+                                    {breakdownView === 'flags' ? (
+                                      // Child shift row: ONLY this segment's
+                                      // shift-level flags (day-level flags
+                                      // like very_long_day stay on the parent).
+                                      <td className="p-1.5"><Nudge px={75}>{renderFlagChips(childFlags[i] ?? [])}</Nudge></td>
+                                    ) : (
+                                      <>
+                                        <td className="p-1.5 text-right text-slate-400"><Nudge px={75}>--</Nudge></td>
+                                        <td className="p-1.5 text-right text-slate-400"><Nudge px={50}>--</Nudge></td>
+                                        <td className="p-1.5 text-right text-slate-400"><Nudge px={25}>--</Nudge></td>
+                                      </>
+                                    )}
                                     <td className={`p-1.5 text-right font-semibold ${shiftTotalHours > 8 ? 'text-red-600' : 'text-purple-700'}`}>
                                       {shiftTotalHours.toFixed(1)}
                                     </td>
