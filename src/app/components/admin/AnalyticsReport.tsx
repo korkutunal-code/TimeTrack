@@ -27,21 +27,13 @@ import { getSegmentFlags, getParentRowFlags, FLAG_LABELS, FLAG_SEVERITY } from '
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 import { type TimeViewMode, displayTimeForView, zoneForMode, calendarDayOffsetInZone } from '../../../utils/timeView';
 
-/**
- * Pixel-nudge wrapper for Daily Breakdown columns. The translate is applied
- * to an inline-block CONTENT wrapper — never to the <th>/<td> box itself
- * (CSS transforms on display:table-cell boxes are inconsistently applied
- * across browsers; on an inline-block they render reliably everywhere).
- * Literal class strings keep the Tailwind scanner happy.
- */
-function Nudge({ px, children }: { px: 150 | 75 | 50 | 25; children: React.ReactNode }) {
-  const cls =
-    px === 150 ? '-translate-x-[150px]'
-      : px === 75 ? '-translate-x-[75px]'
-        : px === 50 ? '-translate-x-[50px]'
-          : '-translate-x-[25px]';
-  return <span className={`inline-block ${cls}`}>{children}</span>;
-}
+// Uniform chip geometry for every pill rendered inside Daily Breakdown rows
+// (status badges, missing-lunch marker, flag chips). h-4 + leading-none makes
+// each chip exactly 16px tall — identical to the text-xs line box of plain
+// cells — so chip rows and plain-text rows share the same baseline height and
+// a row only grows when flag chips wrap to a second line.
+const CHIP_CLASS =
+  'inline-flex items-center h-4 whitespace-nowrap rounded border px-1.5 leading-none';
 
 interface AnalyticsReportProps {
   allUsers: User[];
@@ -504,7 +496,7 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
   const renderFlagChips = (flags: string[]): JSX.Element | null => {
     if (flags.length === 0) return null;
     return (
-      <div className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap gap-1 items-center">
         {flags.map((f) => {
           const sev = FLAG_SEVERITY[f] ?? 'amber';
           const cls =
@@ -512,7 +504,7 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
               : sev === 'purple' ? 'bg-purple-100 text-purple-700 border-purple-200'
                 : 'bg-amber-100 text-amber-700 border-amber-200';
           return (
-            <span key={f} className={`inline-flex items-center rounded border px-1 py-0 text-[10px] font-medium leading-4 ${cls}`}>
+            <span key={f} className={`${CHIP_CLASS} text-[10px] font-medium ${cls}`}>
               {FLAG_LABELS[f] ?? f.replace(/_/g, ' ')}
             </span>
           );
@@ -766,24 +758,64 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                           ))}
                         </div>
                       </div>
-                      <table className="w-full text-xs text-left text-slate-600">
+                      {/* Fluid fixed grid: table-fixed + w-full pins every
+                          labeled column to an exact pixel width while the
+                          widthless column (Times: spacer, Flags: FLAGS)
+                          absorbs all remaining container width. The table
+                          therefore always matches the card's inner width —
+                          no horizontal scrollbar, and the right-aligned Total
+                          column is never clipped — while the left group
+                          (Date/Clock In/Lunch Out/Lunch In/Clock Out) sits at
+                          identical offsets in Times and Flags views. */}
+                      <table className="table-fixed w-full text-xs text-left text-slate-600">
+                        {breakdownView === 'flags' ? (
+                          <colgroup>
+                            <col className="w-4" />
+                            <col className="w-[164px]" />
+                            <col className="w-[100px]" />
+                            <col className="w-[100px]" />
+                            <col className="w-[100px]" />
+                            <col className="w-[100px]" />
+                            <col />
+                            <col className="w-14" />
+                            <col className="w-4" />
+                          </colgroup>
+                        ) : (
+                          <colgroup>
+                            <col className="w-4" />
+                            <col className="w-[164px]" />
+                            <col className="w-[100px]" />
+                            <col className="w-[100px]" />
+                            <col className="w-[100px]" />
+                            <col className="w-[100px]" />
+                            <col />
+                            <col className="w-[100px]" />
+                            <col className="w-[100px]" />
+                            <col className="w-[100px]" />
+                            <col className="w-14" />
+                            <col className="w-4" />
+                          </colgroup>
+                        )}
                         <thead className="bg-slate-50 text-slate-700 font-semibold">
                           <tr>
-                            <th className="p-1.5">Date</th>
-                            <th className="p-1.5"><Nudge px={150}>In</Nudge></th>
-                            <th className="p-1.5"><Nudge px={150}>L.Out</Nudge></th>
-                            <th className="p-1.5"><Nudge px={150}>L.In</Nudge></th>
-                            <th className="p-1.5"><Nudge px={150}>Out</Nudge></th>
+                            <th className="px-1.5 py-2"></th>
+                            <th className="px-1.5 py-2">Date</th>
+                            <th className="px-1.5 py-2">Clock In</th>
+                            <th className="px-1.5 py-2">Lunch Out</th>
+                            <th className="px-1.5 py-2">Lunch In</th>
+                            <th className="px-1.5 py-2">Clock Out</th>
                             {breakdownView === 'flags' ? (
-                              <th className="p-1.5"><Nudge px={75}>FLAGS</Nudge></th>
+                              <th className="px-1.5 py-2">Flags</th>
                             ) : (
                               <>
-                                <th className="p-1.5 text-right"><Nudge px={75}>Reg</Nudge></th>
-                                <th className="p-1.5 text-right"><Nudge px={50}>OT</Nudge></th>
-                                <th className="p-1.5 text-right"><Nudge px={25}>DT</Nudge></th>
+                                <th className="px-1.5 py-2"></th>
+                                <th className="px-1.5 py-2">Regular</th>
+                                <th className="px-1.5 py-2">OT</th>
+                                <th className="px-1.5 py-2">DT</th>
                               </>
                             )}
-                            <th className="p-1.5 text-right">Total</th>
+                            <th className="px-1.5 py-2 text-right">Total</th>
+                            <th className="px-1.5 py-2"></th>
                           </tr>
                         </thead>
                         <tbody>
@@ -844,13 +876,14 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
 
                             const renderLunchCell = (boundary: TimeBoundary | undefined): JSX.Element => {
                               if (lunch.isMultiple) return <span className="italic text-slate-400">Multiple</span>;
-                              if (lunchMissing) return <span className="inline-block bg-red-100 text-red-700 font-semibold border border-red-200 px-2 py-0.5 rounded">--</span>;
+                              if (lunchMissing) return <span className={`${CHIP_CLASS} bg-red-100 text-red-700 font-semibold border-red-200`}>--</span>;
                               return fmtBoundary(boundary, empTz);
                             };
 
                             const rows: JSX.Element[] = [
                               <tr key={rowKey} className="border-b border-slate-100 hover:bg-slate-50/50">
-                                <td className="p-1.5 font-medium">
+                                <td className="px-1.5 py-2"></td>
+                                <td className="px-1.5 py-2 font-medium align-middle">
                                   <span className={`inline-flex items-center gap-1 ${isMultiShift ? 'cursor-pointer' : ''}`} onClick={isMultiShift ? toggleDate : undefined}>
                                     {isMultiShift && (
                                       isDateExpanded
@@ -862,34 +895,37 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                       <span className="ml-1 text-xs font-normal text-slate-400">({segs.length} shifts)</span>
                                     )}
                                     {day.projectedOpen && (
-                                      <Badge className="ml-1 bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] px-1 py-0">
+                                      <span className={`ml-1 ${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] font-semibold`}>
                                         Open
-                                      </Badge>
+                                      </span>
                                     )}
                                   </span>
                                 </td>
-                                <td className="p-1.5"><Nudge px={150}>{fmtBoundary(b.clockIn, empTz)}</Nudge></td>
-                                <td className="p-1.5"><Nudge px={150}>{renderLunchCell(lunch.lunchOut)}</Nudge></td>
-                                <td className="p-1.5"><Nudge px={150}>{renderLunchCell(lunch.lunchIn)}</Nudge></td>
-                                <td className="p-1.5">
-                                  <Nudge px={150}>{day.projectedOpen
-                                    ? <span className="inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">In Progress</span>
-                                    : fmtBoundary(b.clockOut, empTz)}</Nudge>
+                                <td className="px-1.5 py-2 align-middle">{fmtBoundary(b.clockIn, empTz)}</td>
+                                <td className="px-1.5 py-2 align-middle">{renderLunchCell(lunch.lunchOut)}</td>
+                                <td className="px-1.5 py-2 align-middle">{renderLunchCell(lunch.lunchIn)}</td>
+                                <td className="px-1.5 py-2 align-middle">
+                                  {day.projectedOpen
+                                    ? <span className={`${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-xs font-semibold`}>In Progress</span>
+                                    : fmtBoundary(b.clockOut, empTz)}
                                 </td>
                                 {breakdownView === 'flags' ? (
                                   // Parent day row: combined flags (child shift
-                                  // flags + day-level flags), as chips.
-                                  <td className="p-1.5"><Nudge px={75}>{renderFlagChips(parentFlags)}</Nudge></td>
+                                  // flags + day-level flags), as chips. The cell
+                                  // grows vertically only when chips wrap.
+                                  <td className="px-1.5 py-2 align-middle">{renderFlagChips(parentFlags)}</td>
                                 ) : (
                                   <>
-                                    <td className="p-1.5 text-right"><Nudge px={75}>{((day.regularMinutes || 0) / 60).toFixed(1)}</Nudge></td>
-                                    <td className="p-1.5 text-right"><Nudge px={50}>{((day.otMinutes || 0) / 60).toFixed(1)}</Nudge></td>
-                                    <td className="p-1.5 text-right"><Nudge px={25}>{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</Nudge></td>
+                                    <td className="px-1.5 py-2"></td>
+                                    <td className="px-1.5 py-2 align-middle">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
+                                    <td className="px-1.5 py-2 align-middle">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
+                                    <td className="px-1.5 py-2 align-middle">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
                                   </>
                                 )}
-                                <td className={`p-1.5 text-right font-semibold ${dayTotalHours > 8 ? 'text-red-600' : ''}`}>
+                                <td className={`px-1.5 py-2 text-right align-middle font-semibold ${dayTotalHours > 8 ? 'text-red-600' : ''}`}>
                                   {dayTotalHours.toFixed(1)}
                                 </td>
+                                <td className="px-1.5 py-2"></td>
                               </tr>
                             ];
 
@@ -898,34 +934,37 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                 const shiftTotalHours = (seg.workMinutes || 0) / 60;
                                 rows.push(
                                   <tr key={`${rowKey}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
-                                    <td className="p-1.5 pl-6 text-purple-700 font-medium">↳ Shift {i + 1}</td>
-                                    <td className="p-1.5"><Nudge px={150}>{fmtBoundary({ time: seg.clockInManual, ms: seg.clockInSystem, dayOffset: 0 }, empTz)}</Nudge></td>
-                                    <td className="p-1.5">
-                                      <Nudge px={150}>{seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, ms: seg.lunchOutSystem, dayOffset: segFieldDayOffset(seg, 'lunchOutManual', viewZone) }, empTz)}</Nudge>
+                                    <td className="px-1.5 py-2"></td>
+                                    <td className="px-1.5 py-2 pl-6 text-purple-700 font-medium align-middle">↳ Shift {i + 1}</td>
+                                    <td className="px-1.5 py-2 align-middle">{fmtBoundary({ time: seg.clockInManual, ms: seg.clockInSystem, dayOffset: 0 }, empTz)}</td>
+                                    <td className="px-1.5 py-2 align-middle">
+                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, ms: seg.lunchOutSystem, dayOffset: segFieldDayOffset(seg, 'lunchOutManual', viewZone) }, empTz)}
                                     </td>
-                                    <td className="p-1.5">
-                                      <Nudge px={150}>{seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, ms: seg.lunchInSystem, dayOffset: segFieldDayOffset(seg, 'lunchInManual', viewZone) }, empTz)}</Nudge>
+                                    <td className="px-1.5 py-2 align-middle">
+                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, ms: seg.lunchInSystem, dayOffset: segFieldDayOffset(seg, 'lunchInManual', viewZone) }, empTz)}
                                     </td>
-                                    <td className="p-1.5">
-                                      <Nudge px={150}>{seg.projectedClosed
-                                        ? <span className="inline-flex items-center rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700 border border-emerald-200">now</span>
-                                        : fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual', viewZone) }, empTz)}</Nudge>
+                                    <td className="px-1.5 py-2 align-middle">
+                                      {seg.projectedClosed
+                                        ? <span className={`${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-xs font-semibold`}>now</span>
+                                        : fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual', viewZone) }, empTz)}
                                     </td>
                                     {breakdownView === 'flags' ? (
                                       // Child shift row: ONLY this segment's
                                       // shift-level flags (day-level flags
                                       // like very_long_day stay on the parent).
-                                      <td className="p-1.5"><Nudge px={75}>{renderFlagChips(childFlags[i] ?? [])}</Nudge></td>
+                                      <td className="px-1.5 py-2 align-middle">{renderFlagChips(childFlags[i] ?? [])}</td>
                                     ) : (
                                       <>
-                                        <td className="p-1.5 text-right text-slate-400"><Nudge px={75}>--</Nudge></td>
-                                        <td className="p-1.5 text-right text-slate-400"><Nudge px={50}>--</Nudge></td>
-                                        <td className="p-1.5 text-right text-slate-400"><Nudge px={25}>--</Nudge></td>
+                                        <td className="px-1.5 py-2"></td>
+                                        <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
+                                        <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
+                                        <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
                                       </>
                                     )}
-                                    <td className={`p-1.5 text-right font-semibold ${shiftTotalHours > 8 ? 'text-red-600' : 'text-purple-700'}`}>
+                                    <td className={`px-1.5 py-2 text-right align-middle font-semibold ${shiftTotalHours > 8 ? 'text-red-600' : 'text-purple-700'}`}>
                                       {shiftTotalHours.toFixed(1)}
                                     </td>
+                                    <td className="px-1.5 py-2"></td>
                                   </tr>
                                 );
                               });
