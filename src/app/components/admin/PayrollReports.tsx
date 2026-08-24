@@ -22,6 +22,7 @@ import type { OvertimeEntry } from '../../../utils/overtimeCalculations';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
 import { formatDateShortWithWeekday } from '../../../utils/dateHelpers.js';
+import { epochFromLocalWallTime, getCurrentPTDate } from '../../../utils/timeCalculations';
 import { computeSegmentWorkMinutes } from '../../lib/segmentOps';
 import type { TimeSegment } from '../../lib/database';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
@@ -90,13 +91,17 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
   const cycleType = payrollSettings.payroll_cycle_type;
 
   const setQuickPeriod = (preset: 'current' | 'last') => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Anchor "today" in PT (America/Los_Angeles): admin payroll cycle
+    // boundaries run in PT per AGENTS.md. The previous toISOString() slice
+    // anchored to the browser-local UTC day, which can be one calendar day
+    // ahead of PT between ~16:00 PST / 17:00 PDT and UTC midnight — landing
+    // the Current/Last Cycle presets on the wrong block.
+    const todayYmd = getCurrentPTDate();
 
     if (cycleType === 'weekly') {
       // Bug fix: was `today.getDay()` (local TZ) — inconsistent for non-UTC users.
-      // Now derived from a UTC-anchored YMD so the week boundary is stable.
-      const todayYmd = today.toISOString().slice(0, 10);
+      // Now derived from a PT-anchored YMD with UTC math so the week boundary
+      // is stable.
       const [ty, tm, td] = todayYmd.split('-').map(Number);
       const day = new Date(Date.UTC(ty, tm - 1, td)).getUTCDay();
       const startDay = payrollSettings.weekly_start_day;
@@ -125,7 +130,6 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
       const [ay, am, ad] = anchorStr.split('-').map(Number);
       const anchor = new Date(Date.UTC(ay, am - 1, ad));
 
-      const todayYmd = today.toISOString().slice(0, 10);
       const [ty, tm, td] = todayYmd.split('-').map(Number);
       const todayUtc = new Date(Date.UTC(ty, tm - 1, td));
 
@@ -155,7 +159,6 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
       // browser-local Date (TZ bug). Now UTC-anchored (matching the weekly/
       // biweekly branches) and derived from the configured start day.
       const startDay = Math.min(28, Math.max(1, payrollSettings.monthly_start_day || 1));
-      const todayYmd = today.toISOString().slice(0, 10);
       const [ty, tm, td] = todayYmd.split('-').map(Number);
 
       // Cycle start = day `startDay` of the month containing today's cycle.
@@ -394,44 +397,36 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
         clockOut: { time: day.clockOutManual, ms: outMs, dayOffset: outOffset },
       };
     }
-    // Earliest clock-in and latest clock-out across all segments, using system
-    // timestamps for true chronology (falls back to manual minutes).
-    let earliest: { time: string; ms?: number; abs: number } | null = null;
-    let latest: { time: string; ms?: number; abs: number; manualWrapped: boolean } | null = null;
+    // Earliest clock-in and latest clock-out across all segments. All
+    // candidates are normalized to ONE unit (epoch ms) before comparing:
+    // manual-only HH:MM strings are anchored to the row's workDate in the
+    // display zone via epochFromLocalWallTime (wrapFrom the clock-in for
+    // clock-outs). The previous `inMs ?? inM` mixed epoch-ms (~1.7e12) with
+    // minutes-of-day (0–1440) in a single </> comparison, silently dropping
+    // manual-only segments from the aggregate In/Out whenever any sibling
+    // segment carried a *System timestamp.
+    let earliest: { time: string; ms?: number; absMs: number } | null = null;
+    let latest: { time: string; ms?: number; absMs: number } | null = null;
     for (const s of segs) {
       const inMs = typeof s.clockInSystem === 'number' ? s.clockInSystem : undefined;
-      const inM = toMinutes(s.clockInManual);
-      const inAbs = inMs ?? (Number.isNaN(inM) ? NaN : inM);
-      if (!Number.isNaN(inAbs) && (!earliest || inAbs < earliest.abs)) {
-        earliest = { time: s.clockInManual, ms: inMs, abs: inAbs };
+      const inAbsMs = inMs ?? epochFromLocalWallTime(s.clockInManual, day.workDate, zone) ?? NaN;
+      if (!Number.isNaN(inAbsMs) && (!earliest || inAbsMs < earliest.absMs)) {
+        earliest = { time: s.clockInManual, ms: inMs, absMs: inAbsMs };
       }
       const outMs = typeof s.clockOutSystem === 'number' ? s.clockOutSystem : undefined;
-      const outM = toMinutes(s.clockOutManual);
-      let outAbs: number;
-      const wrapped = !Number.isNaN(inM) && !Number.isNaN(outM) && outM < inM;
-      if (outMs !== undefined) {
-        outAbs = outMs;
-      } else if (!Number.isNaN(inM) && !Number.isNaN(outM)) {
-        outAbs = wrapped ? outM + 1440 : outM;
-      } else {
-        outAbs = NaN;
-      }
-      if (!Number.isNaN(outAbs) && (!latest || outAbs > latest.abs)) {
-        latest = { time: s.clockOutManual, ms: outMs, abs: outAbs, manualWrapped: wrapped };
+      const outAbsMs =
+        outMs ??
+        epochFromLocalWallTime(s.clockOutManual, day.workDate, zone, s.clockInManual) ??
+        NaN;
+      if (!Number.isNaN(outAbsMs) && (!latest || outAbsMs > latest.absMs)) {
+        latest = { time: s.clockOutManual, ms: outMs, absMs: outAbsMs };
       }
     }
-    // Day offset for the latest clock-out, relative to the earliest clock-in.
-    let outOffset = 0;
-    if (earliest?.ms !== undefined && latest?.ms !== undefined) {
-      outOffset = dayOffsetFromSystem(earliest.ms, latest.ms, zone);
-    } else if (earliest && latest && earliest.ms === undefined && latest.ms === undefined) {
-      // All-manual: infer from absolute-minute gap.
-      const gap = latest.abs - earliest.abs;
-      outOffset = gap >= 1440 ? Math.floor(gap / 1440) : (latest.manualWrapped ? 1 : 0);
-    } else if (latest) {
-      // Mixed system/manual: fall back to the latest segment's own wrap.
-      outOffset = latest.manualWrapped ? 1 : 0;
-    }
+    // Day offset for the latest clock-out relative to the earliest clock-in —
+    // both anchors are epoch ms now, so the same zone-aware calendar
+    // comparison covers system, manual, and mixed rows alike.
+    const outOffset =
+      earliest && latest ? Math.max(0, dayOffsetFromSystem(earliest.absMs, latest.absMs, zone)) : 0;
     return {
       clockIn: earliest ? { time: earliest.time, ms: earliest.ms, dayOffset: 0 } : undefined,
       clockOut: latest ? { time: latest.time, ms: latest.ms, dayOffset: outOffset } : undefined,

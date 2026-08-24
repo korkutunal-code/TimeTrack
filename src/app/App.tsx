@@ -517,7 +517,7 @@ export default function App() {
             {([
               { id: 'panel', icon: <Settings className="size-4 mr-0 sm:mr-2" />, full: 'User Base', short: 'User Base' },
               { id: 'payroll', icon: <FileText className="size-4 mr-0 sm:mr-2" />, full: 'Payroll', short: 'Pay' },
-              { id: 'analytics', icon: <BarChart className="size-4 mr-0 sm:mr-2" />, full: 'Analytics', short: 'Stats' },
+              { id: 'analytics', icon: <BarChart className="size-4 mr-0 sm:mr-2" />, full: 'Analytics', short: 'Anlyt' },
               { id: 'audit', icon: <Search className="size-4 mr-0 sm:mr-2" />, full: 'Audit', short: 'Audit' },
               { id: 'metrics', icon: <TrendingUp className="size-4 mr-0 sm:mr-2" />, full: 'Metrics', short: 'Stats' },
               { id: 'team', icon: <Users className="size-4 mr-0 sm:mr-2" />, full: 'Team', short: 'Team' },
