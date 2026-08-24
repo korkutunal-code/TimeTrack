@@ -109,6 +109,42 @@ describe('getSegmentFlags — audit gap flags', () => {
     const fakeTs = { toMillis: () => pt(0, 20, 0), toDate: () => new Date(pt(0, 20, 0)) };
     expect(getSegmentFlags(seg(), { ...LAST, completedAt: fakeTs })).toContain('after_hours_submission');
   });
+
+  it('compares in the EMPLOYEE zone: a punctual non-PT clock-in is not a false gap', () => {
+    // NY employee (EDT = UTC-4) punches at 08:00 local = 12:00Z = 05:00 PT.
+    const s = seg({ clockInSystem: Date.UTC(2026, 7, 24, 12, 0, 0) }); // manual '08:00'
+    // Without a timezone the legacy PT comparison sees 05:00 vs 08:00 → -180.
+    expect(getSegmentFlags(s, NOT_LAST)).toContain('late_submission');
+    // In the employee's own zone the gap is 0 — no false flag.
+    expect(getSegmentFlags(s, { ...NOT_LAST, timezone: 'America/New_York' })).not.toContain('late_submission');
+  });
+});
+
+describe('getSegmentFlags — projected (still-open) shifts', () => {
+  it('suppresses lunch-pattern and batch flags on in-memory projections', () => {
+    // A live shift projected to "now": 3-minute span, 100-minute open lunch.
+    const projected = seg({
+      complete: true,
+      projectedClosed: true,
+      clockInSystem: Date.UTC(2026, 7, 24, 15, 0, 0),
+      clockOutSystem: Date.UTC(2026, 7, 24, 15, 3, 0), // 3-min span
+      lunchOutManual: '12:00',
+      lunchInManual: '13:40', // 100 min — but lunch is still ongoing in reality
+    });
+    const flags = getSegmentFlags(projected, NOT_LAST);
+    expect(flags).not.toContain('batch_submission');
+    expect(flags).not.toContain('long_lunch');
+    expect(flags).not.toContain('short_lunch');
+  });
+
+  it('still reports real clock-IN gaps on projected shifts (that punch happened)', () => {
+    const projected = seg({
+      complete: true,
+      projectedClosed: true,
+      clockInSystem: pt(0, 8, 45), // manual '08:00' vs system 08:45 PT
+    });
+    expect(getSegmentFlags(projected, NOT_LAST)).toContain('late_submission');
+  });
 });
 
 describe('getDayLevelFlags — parent rows only', () => {

@@ -835,6 +835,9 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                 docAutoEndedLunch: day.autoEndedLunch === true,
                                 docAnomaly: day.anomaly_flag === true,
                                 completedAt: day.completedAt,
+                                // Gap math runs in the EMPLOYEE's zone (manual
+                                // strings are stored in their local wall clock).
+                                timezone: empTz,
                               }),
                             );
                             const parentFlags = getParentRowFlags(day, childFlags, lunchMissing ? ['missing_lunch'] : []);

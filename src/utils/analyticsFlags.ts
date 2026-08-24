@@ -21,6 +21,7 @@
 
 import type { DocumentData } from 'firebase/firestore';
 import { toMillis } from './openShiftProjection';
+import { PT_ZONE } from './timeView';
 
 // Thresholds — same values as calculateFlags / AuditViewer.
 const SHORT_LUNCH_MIN = 20;
@@ -91,6 +92,15 @@ export interface SegmentFlagContext {
   docAnomaly?: boolean;
   /** Doc-level completedAt (epoch ms | Timestamp) — for after-hours audit. */
   completedAt?: unknown;
+  /**
+   * Employee's IANA timezone — REQUIRED for the late-submission gap math:
+   * manual HH:MM strings are stored in the employee's local wall clock
+   * (AGENTS.md dual-zone rule), so the system instant must be converted to
+   * THIS zone before comparing. Falls back to PT (legacy behavior) when
+   * absent. Omitting it for a non-PT employee turns their UTC offset into a
+   * spurious multi-hour "gap".
+   */
+  timezone?: string;
 }
 
 function minutesOf(time: unknown): number {
@@ -115,12 +125,20 @@ function segmentLunchMinutes(seg: DocumentData): number | null {
   return diff < 0 ? diff + 1440 : diff;
 }
 
-/* --- Audit gap math (PT wall clock, ported from AuditViewer) -------------- */
+/* --- Audit gap math --------------------------------------------------------
+ * The gap compares the employee's MANUAL claim (stored in the employee's
+ * local wall clock) against the system instant converted to THE SAME zone —
+ * the employee's own timezone (ctx.timezone), never unconditionally PT. (The
+ * original Audit tab compared local manual strings against PT-converted
+ * system minutes, which turned a non-PT employee's UTC offset into a false
+ * multi-hour "late submission" gap.) The after-hours rule stays in PT — it is
+ * an admin-defined company-hours threshold, and PT is the canonical admin
+ * zone (AGENTS.md). */
 
-function ptHourAndMinutes(millis: number): { h: number; m: number } | null {
+function hourAndMinutesInZone(millis: number, zone: string): { h: number; m: number } | null {
   if (typeof millis !== 'number' || !Number.isFinite(millis)) return null;
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Los_Angeles',
+    timeZone: zone,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
@@ -130,11 +148,11 @@ function ptHourAndMinutes(millis: number): { h: number; m: number } | null {
   return { h: h === 24 ? 0 : h, m };
 }
 
-function gapMinutes(manual: unknown, systemMillis: number | undefined): number | undefined {
+function gapMinutes(manual: unknown, systemMillis: number | undefined, zone: string): number | undefined {
   if (typeof manual !== 'string' || !manual || systemMillis === undefined) return undefined;
   const mM = minutesOf(manual);
   if (Number.isNaN(mM)) return undefined;
-  const hm = ptHourAndMinutes(systemMillis);
+  const hm = hourAndMinutesInZone(systemMillis, zone);
   if (!hm) return undefined;
   let gap = hm.h * 60 + hm.m - mM;
   if (gap < -720) gap += 1440; // next-day submission wrap
@@ -147,6 +165,12 @@ function gapMinutes(manual: unknown, systemMillis: number | undefined): number |
  */
 export function getSegmentFlags(seg: DocumentData, ctx: SegmentFlagContext): string[] {
   const flags: string[] = [];
+  // In-memory now-projections mark still-open shifts complete with a virtual
+  // clockOut = now. They are estimates, NOT real completions: lunch-pattern
+  // and batch-span flags must not fire on them (an ongoing lunch clamped to
+  // "now" is not a 90-minute lunch; a 3-minute-old live shift is not a batch
+  // submission). late_submission's clock-IN gap stays — that punch is real.
+  const isProjection = seg.projectedClosed === true;
 
   // Guardrail markers. Routine midnight-split parts stamp autoClosed without
   // being guardrail closes — same exemption as the canonical calculateFlags.
@@ -157,9 +181,9 @@ export function getSegmentFlags(seg: DocumentData, ctx: SegmentFlagContext): str
   const autoEndedLunch = seg.autoEndedLunch === true || (ctx.isLastSegment && ctx.docAutoEndedLunch === true);
   if (autoEndedLunch) flags.push('auto_ended_lunch');
 
-  // Pattern flags — only for completed shifts (mirrors calculateFlags' gate
-  // on entry.complete; the now-projection marks projected segments complete).
-  if (seg.complete === true) {
+  // Pattern flags — only for genuinely completed shifts (mirrors
+  // calculateFlags' gate on entry.complete), never on projected live shifts.
+  if (seg.complete === true && !isProjection) {
     const lunch = segmentLunchMinutes(seg);
     if (lunch !== null) {
       if (lunch < SHORT_LUNCH_MIN) flags.push('short_lunch');
@@ -169,23 +193,28 @@ export function getSegmentFlags(seg: DocumentData, ctx: SegmentFlagContext): str
 
   if (ctx.isLastSegment && ctx.docAnomaly === true) flags.push('anomaly_detected');
 
-  // Audit gap flags (manual claim vs system reality, PT wall clock).
+  // Audit gap flags — manual claim vs system reality, compared in the
+  // EMPLOYEE's zone (ctx.timezone; PT fallback preserves legacy behavior).
+  const zone = ctx.timezone || PT_ZONE;
   const inMs = toMillis(seg.clockInSystemTime) ?? toMillis(seg.clockInSystem);
   const outMs = toMillis(seg.clockOutSystemTime) ?? toMillis(seg.clockOutSystem);
-  const inGap = gapMinutes(seg.clockInManual, inMs);
-  const outGap = gapMinutes(seg.clockOutManual, outMs);
+  const inGap = gapMinutes(seg.clockInManual, inMs, zone);
+  const outGap = gapMinutes(seg.clockOutManual, outMs, zone);
   if ((inGap !== undefined && Math.abs(inGap) > LATE_SUBMISSION_GAP_MIN) ||
     (outGap !== undefined && Math.abs(outGap) > LATE_SUBMISSION_GAP_MIN)) {
     flags.push('late_submission');
   }
-  if (inMs !== undefined && outMs !== undefined) {
+  // Batch submission (whole shift punched within 5 minutes) — a span, so
+  // zone-invariant; suppressed for projected live shifts.
+  if (!isProjection && inMs !== undefined && outMs !== undefined) {
     const spanMin = Math.abs(outMs - inMs) / 60000;
     if (spanMin < BATCH_SUBMISSION_SPAN_MIN) flags.push('batch_submission');
   }
+  // After-hours completion — admin-defined company-hours threshold in PT.
   if (ctx.isLastSegment && ctx.completedAt != null) {
     const completedMs = toMillis(ctx.completedAt);
     if (completedMs !== undefined) {
-      const hm = ptHourAndMinutes(completedMs);
+      const hm = hourAndMinutesInZone(completedMs, PT_ZONE);
       if (hm && (hm.h >= 18 || hm.h < 6)) flags.push('after_hours_submission');
     }
   }
