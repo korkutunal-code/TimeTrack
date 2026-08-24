@@ -7,7 +7,6 @@ import { fetchAttributedTimeEntries, projectOpenShiftsAt } from '../../../servic
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { Badge } from '../ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
@@ -694,17 +693,21 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
               <Card key={summary.userId} className="border-2 border-slate-200">
                 <CardContent className="py-1 px-2 [&:last-child]:pb-1">
                   <div className="flex flex-row items-center justify-between gap-4 py-1 px-2">
-                    {/* Left — employee info */}
-                    <div className="flex flex-col shrink-0 min-w-[150px]">
-                      <h3 className="text-sm font-bold text-slate-900">
-                        {summary.userName}
-                        {hasOpenShift && (
-                          <Badge className="ml-2 bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] px-1.5 py-0 align-middle">
-                            In Progress
-                          </Badge>
-                        )}
-                      </h3>
+                    {/* Left — employee info. Fixed width (w-[150px], not
+                        min-w) so the In Progress badge can never widen the
+                        block and shift the Regular/OT/DT boxes to the right;
+                        the badge stacks as a third line below the Total text
+                        instead of sitting inline with the name. The parent
+                        row's items-center keeps the whole block vertically
+                        centered against the metric boxes and View Details. */}
+                    <div className="flex flex-col shrink-0 w-[150px]">
+                      <h3 className="text-sm font-bold text-slate-900 truncate">{summary.userName}</h3>
                       <p className="text-xs text-slate-400">Total: {summary.totalHours.toFixed(2)} hours</p>
+                      {hasOpenShift && (
+                        <span className={`mt-0.5 ${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] font-semibold`}>
+                          In Progress
+                        </span>
+                      )}
                     </div>
 
                     {/* Center — metric boxes */}
