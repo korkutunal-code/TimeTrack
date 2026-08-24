@@ -26,6 +26,30 @@ export function zoneForMode(mode: TimeViewMode, employeeTimezone?: string | null
   return mode === 'pt' ? PT_ZONE : getEmployeeTimezone(employeeTimezone ?? undefined);
 }
 
+/**
+ * Calendar-day offset between two epoch-ms instants as seen in `timeZone`:
+ * 0 when both land on the same calendar date in that zone, 1 when `targetMs`
+ * falls on the next date, etc. Used for the "+Nd" badges in the Payroll and
+ * Analytics daily breakdowns. The zone MUST be the zone the row's times are
+ * displayed in (see zoneForMode) — comparing PT dates while rendering
+ * employee-local times produced false-positive "+1d" badges on same-local-day
+ * shifts that merely straddled the PT midnight (e.g. 12:00 AM → 11:59 PM).
+ */
+export function calendarDayOffsetInZone(anchorMs: number, targetMs: number, timeZone: string): number {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const a = fmt.format(new Date(anchorMs));
+  const b = fmt.format(new Date(targetMs));
+  const [ay, am, ad] = a.split('-').map(Number);
+  const [by, bm, bd] = b.split('-').map(Number);
+  if (!ay || !by) return 0;
+  const dayA = Date.UTC(ay, am - 1, ad);
+  const dayB = Date.UTC(by, bm - 1, bd);
+  return Math.round((dayB - dayA) / (1000 * 60 * 60 * 24));
+}
+
 /** HH:MM (24h) of an instant in the given zone. */
 export function hhmmInZone(epochMs: number, zone: string): string {
   return new Intl.DateTimeFormat('en-US', {

@@ -26,7 +26,7 @@ import { computeSegmentWorkMinutes } from '../../lib/segmentOps';
 import type { TimeSegment } from '../../lib/database';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 import { filterByExclusionCutoff } from '../../../utils/exclusionFilter';
-import { type TimeViewMode, displayTimeForView, explodeDocsBySegmentLocalDate } from '../../../utils/timeView';
+import { type TimeViewMode, displayTimeForView, explodeDocsBySegmentLocalDate, zoneForMode, calendarDayOffsetInZone } from '../../../utils/timeView';
 
 interface PayrollReportsProps {
   allUsers: User[];
@@ -366,28 +366,16 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
     return parts[0] * 60 + parts[1];
   };
 
-  // PT (America/Los_Angeles) YYYY-MM-DD for an epoch-ms instant. Per AGENTS.md
-  // the canonical timezone for all payroll date math is PT.
-  const ptDateStr = (ms: number): string =>
-    new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Los_Angeles',
-      year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(new Date(ms));
+  // Calendar-day difference between two epoch-ms instants, computed in the
+  // DISPLAY zone (the zone the row's times are rendered in — employee local
+  // for the 'local' view, PT for the 'pt' view). The badge zone must match
+  // the display zone: comparing PT dates while rendering local times produced
+  // false-positive +1d badges on same-local-day shifts that merely straddled
+  // the PT midnight (e.g. 12:00 AM → 11:59 PM local).
+  const dayOffsetFromSystem = (anchorMs: number, targetMs: number, zone: string): number =>
+    calendarDayOffsetInZone(anchorMs, targetMs, zone);
 
-  // Calendar-day difference (PT) between two epoch-ms instants. Used to label
-  // how many days a clock-out/lunch falls after the shift's clock-in.
-  const dayOffsetFromSystem = (anchorMs: number, targetMs: number): number => {
-    const a = ptDateStr(anchorMs);
-    const b = ptDateStr(targetMs);
-    const [ay, am, ad] = a.split('-').map(Number);
-    const [by, bm, bd] = b.split('-').map(Number);
-    if (!ay || !by) return 0;
-    const dayA = Date.UTC(ay, am - 1, ad);
-    const dayB = Date.UTC(by, bm - 1, bd);
-    return Math.round((dayB - dayA) / (1000 * 60 * 60 * 24));
-  };
-
-  const getDayBoundaries = (day: DocumentData): { clockIn?: TimeBoundary; clockOut?: TimeBoundary } => {
+  const getDayBoundaries = (day: DocumentData, zone: string): { clockIn?: TimeBoundary; clockOut?: TimeBoundary } => {
     const segs = day.segments;
     if (!Array.isArray(segs) || segs.length === 0) {
       // Legacy single-shift doc.
@@ -395,7 +383,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
       const outMs = typeof day.clockOutSystem === 'number' ? day.clockOutSystem : undefined;
       let outOffset = 0;
       if (inMs !== undefined && outMs !== undefined) {
-        outOffset = dayOffsetFromSystem(inMs, outMs);
+        outOffset = dayOffsetFromSystem(inMs, outMs, zone);
       } else {
         const inM = toMinutes(day.clockInManual);
         const outM = toMinutes(day.clockOutManual);
@@ -435,7 +423,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
     // Day offset for the latest clock-out, relative to the earliest clock-in.
     let outOffset = 0;
     if (earliest?.ms !== undefined && latest?.ms !== undefined) {
-      outOffset = dayOffsetFromSystem(earliest.ms, latest.ms);
+      outOffset = dayOffsetFromSystem(earliest.ms, latest.ms, zone);
     } else if (earliest && latest && earliest.ms === undefined && latest.ms === undefined) {
       // All-manual: infer from absolute-minute gap.
       const gap = latest.abs - earliest.abs;
@@ -452,7 +440,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
 
   // 3-way lunch summary: 0 breaks → none; 1 break → its times; 2+ → multiple.
   // dayOffset for a break is relative to the owning segment's clock-in.
-  const getDayLunch = (day: DocumentData): { lunchOut?: TimeBoundary; lunchIn?: TimeBoundary; isMultiple: boolean } => {
+  const getDayLunch = (day: DocumentData, zone: string): { lunchOut?: TimeBoundary; lunchIn?: TimeBoundary; isMultiple: boolean } => {
     const segs = day.segments;
     if (!Array.isArray(segs) || segs.length === 0) {
       const hasBreak = !!day.lunchOutManual && !!day.lunchInManual;
@@ -463,9 +451,9 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
       const inM = toMinutes(day.clockInManual);
       const loM = toMinutes(day.lunchOutManual);
       const liM = toMinutes(day.lunchInManual);
-      const loOffset = inMs !== undefined && loMs !== undefined ? dayOffsetFromSystem(inMs, loMs)
+      const loOffset = inMs !== undefined && loMs !== undefined ? dayOffsetFromSystem(inMs, loMs, zone)
         : (!Number.isNaN(inM) && !Number.isNaN(loM) && loM < inM ? 1 : 0);
-      const liOffset = inMs !== undefined && liMs !== undefined ? dayOffsetFromSystem(inMs, liMs)
+      const liOffset = inMs !== undefined && liMs !== undefined ? dayOffsetFromSystem(inMs, liMs, zone)
         : (!Number.isNaN(inM) && !Number.isNaN(liM) && liM < inM ? 1 : 0);
       return {
         lunchOut: { time: day.lunchOutManual, ms: loMs, dayOffset: loOffset },
@@ -482,9 +470,9 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
       const inM = toMinutes(s.clockInManual);
       const loM = toMinutes(s.lunchOutManual);
       const liM = toMinutes(s.lunchInManual);
-      const loOffset = inMs !== undefined && loMs !== undefined ? dayOffsetFromSystem(inMs, loMs)
+      const loOffset = inMs !== undefined && loMs !== undefined ? dayOffsetFromSystem(inMs, loMs, zone)
         : (!Number.isNaN(inM) && !Number.isNaN(loM) && loM < inM ? 1 : 0);
-      const liOffset = inMs !== undefined && liMs !== undefined ? dayOffsetFromSystem(inMs, liMs)
+      const liOffset = inMs !== undefined && liMs !== undefined ? dayOffsetFromSystem(inMs, liMs, zone)
         : (!Number.isNaN(inM) && !Number.isNaN(liM) && liM < inM ? 1 : 0);
       breaks.push({
         lunchOut: { time: s.lunchOutManual, ms: loMs, dayOffset: loOffset },
@@ -504,6 +492,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
   const segFieldDayOffset = (
     seg: DocumentData,
     field: 'clockOutManual' | 'lunchOutManual' | 'lunchInManual',
+    zone: string,
   ): number => {
     const inMs = typeof seg.clockInSystem === 'number' ? seg.clockInSystem : undefined;
     const sysField = field === 'clockOutManual' ? 'clockOutSystem'
@@ -511,7 +500,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
       : 'lunchInSystem';
     const tMs = typeof seg[sysField] === 'number' ? seg[sysField] : undefined;
     if (inMs !== undefined && tMs !== undefined) {
-      return Math.max(0, dayOffsetFromSystem(inMs, tMs));
+      return Math.max(0, dayOffsetFromSystem(inMs, tMs, zone));
     }
     const inM = toMinutes(seg.clockInManual);
     const t = toMinutes(seg[field]);
@@ -706,6 +695,10 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
             {report.map(summary => {
               // Employee's local timezone for the Req-4 'local' view mode.
               const empTz = allUsers.find(u => u.uid === summary.userId)?.timezone;
+              // The +Nd day-offset badges must be computed in the same zone the
+              // times are displayed in, or same-local-day shifts that straddle
+              // the PT midnight get a false-positive +1d badge.
+              const viewZone = zoneForMode(timeViewMode, empTz);
               return (
               <Card key={summary.userId} className="border-2 border-slate-200">
                 <CardContent className="py-1 px-2 [&:last-child]:pb-1">
@@ -762,8 +755,8 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                         </thead>
                         <tbody>
                           {summary.dailyEntries.flatMap((day: DocumentData) => {
-                            const b = getDayBoundaries(day);
-                            const lunch = getDayLunch(day);
+                            const b = getDayBoundaries(day, viewZone);
+                            const lunch = getDayLunch(day, viewZone);
                             const segs = Array.isArray(day.segments) ? day.segments : [];
                             const isMultiShift = segs.length > 1;
                             // Unique, collision-free row key. Real entries use
@@ -842,12 +835,12 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                                     <td className="p-1.5 pl-6 text-purple-700 font-medium">↳ Shift {i + 1}</td>
                                     <td className="p-1.5">{fmtBoundary({ time: seg.clockInManual, ms: seg.clockInSystem, dayOffset: 0 }, empTz)}</td>
                                     <td className="p-1.5">
-                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, ms: seg.lunchOutSystem, dayOffset: segFieldDayOffset(seg, 'lunchOutManual') }, empTz)}
+                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, ms: seg.lunchOutSystem, dayOffset: segFieldDayOffset(seg, 'lunchOutManual', viewZone) }, empTz)}
                                     </td>
                                     <td className="p-1.5">
-                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, ms: seg.lunchInSystem, dayOffset: segFieldDayOffset(seg, 'lunchInManual') }, empTz)}
+                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, ms: seg.lunchInSystem, dayOffset: segFieldDayOffset(seg, 'lunchInManual', viewZone) }, empTz)}
                                     </td>
-                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual') }, empTz)}</td>
+                                    <td className="p-1.5">{fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual', viewZone) }, empTz)}</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>
                                     <td className="p-1.5 text-right text-slate-400">--</td>

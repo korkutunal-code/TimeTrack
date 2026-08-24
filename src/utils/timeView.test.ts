@@ -1,4 +1,4 @@
-import { explodeDocBySegmentLocalDate, explodeDocsBySegmentLocalDate, writeDocId, type ExplodableDoc } from './timeView';
+import { explodeDocBySegmentLocalDate, explodeDocsBySegmentLocalDate, writeDocId, calendarDayOffsetInZone, PT_ZONE, type ExplodableDoc } from './timeView';
 
 describe('explodeDocBySegmentLocalDate', () => {
   it('splits a pre-fix cross-midnight doc into one doc per local date (23:32→00:28 bug)', () => {
@@ -207,5 +207,51 @@ describe('exploded entry — synthetic/source markers + per-part fields', () => 
     expect(realDoc!.id).toBe('u1_2026-07-30');
     // Both still attribute workDate correctly (day-attribution preserved).
     expect(syntheticPart!.workDate).toBe('2026-07-30');
+  });
+});
+
+describe('calendarDayOffsetInZone (+Nd badge math)', () => {
+  it('returns 0 for a same-day shift in the same zone (PT)', () => {
+    // 2026-08-24 08:00 PDT → 17:00 PDT
+    const inMs = Date.UTC(2026, 7, 24, 15, 0, 0);
+    const outMs = Date.UTC(2026, 7, 25, 0, 0, 0); // 17:00 PDT same day
+    expect(calendarDayOffsetInZone(inMs, outMs, PT_ZONE)).toBe(0);
+  });
+
+  it('returns 1 for a genuine cross-midnight shift (PT 23:32 → 00:28)', () => {
+    // 2026-07-29 23:32 PDT → 2026-07-30 00:28 PDT
+    const inMs = Date.UTC(2026, 7, 30, 6, 32, 0);
+    const outMs = Date.UTC(2026, 7, 30, 7, 28, 0);
+    expect(calendarDayOffsetInZone(inMs, outMs, PT_ZONE)).toBe(1);
+  });
+
+  it('returns 2 for a shift spanning two midnights', () => {
+    const inMs = Date.UTC(2026, 7, 24, 15, 0, 0); // 08-24 08:00 PDT
+    const outMs = Date.UTC(2026, 7, 26, 22, 0, 0); // 08-26 15:00 PDT
+    expect(calendarDayOffsetInZone(inMs, outMs, PT_ZONE)).toBe(2);
+  });
+
+  it('REGRESSION: same-LOCAL-day shift (00:00→23:59 Riyadh) is 0 in the display zone, not 1 (false +1d badge)', () => {
+    // Employee in Asia/Riyadh (UTC+3): 2026-08-24 00:00 → 23:59 local.
+    const inMs = Date.UTC(2026, 7, 23, 21, 0, 0); // = 2026-08-24 00:00 +03:00
+    const outMs = Date.UTC(2026, 7, 24, 20, 59, 0); // = 2026-08-24 23:59 +03:00
+    // In the employee's display zone both instants share one calendar date.
+    expect(calendarDayOffsetInZone(inMs, outMs, 'Asia/Riyadh')).toBe(0);
+    // The old bug: the badge compared PT dates (08-23 14:00 → 08-24 13:59
+    // PDT), yielding +1d next to an 11:59 PM same-day clock-out.
+    expect(calendarDayOffsetInZone(inMs, outMs, PT_ZONE)).toBe(1);
+  });
+
+  it('REGRESSION: exploded day-2 slice (00:00→23:59:59 local, Riyadh) gets no +1d badge', () => {
+    // midnightSplit day-1 boundary: local 23:59:59 = epoch midnight − 1s.
+    const inMs = Date.UTC(2026, 7, 23, 21, 0, 0); // 2026-08-24 00:00:00 +03:00
+    const outMs = Date.UTC(2026, 7, 24, 20, 59, 59); // 2026-08-24 23:59:59 +03:00
+    expect(calendarDayOffsetInZone(inMs, outMs, 'Asia/Riyadh')).toBe(0);
+  });
+
+  it('still badges a genuinely late local clock-out (Riyadh 22:00 → 01:00 next day)', () => {
+    const inMs = Date.UTC(2026, 7, 24, 19, 0, 0); // 2026-08-24 22:00 +03:00
+    const outMs = Date.UTC(2026, 7, 24, 22, 0, 0); // 2026-08-25 01:00 +03:00
+    expect(calendarDayOffsetInZone(inMs, outMs, 'Asia/Riyadh')).toBe(1);
   });
 });
