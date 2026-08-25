@@ -33,7 +33,7 @@ Welcome to the **TimeTrack** codebase. This document helps AI agents understand 
 ### 2. Guardrails (Non-Negotiable)
 - **Timezone Integrity**: Never use browser `Date`/`new Date().toISOString()` directly for any value that affects pay or an entry's calendar date. Employee-facing dates/times use the employee's local zone via helpers in `src/utils/timeCalculations.ts` (`getLocalDate`, `getEmployeeTimezone`, `getLocalTimeHHMM`) and local-midnight splitting via `src/utils/midnightSplit.ts`. Admin payroll controls (Lock Payroll Period, Exclude Records From Analysis, OT buckets) stay in `America/Los_Angeles` via `src/utils/dateHelpers.js` / `src/utils/timeView.ts`.
 - **Soft Deletions**: Never call `.delete()` on Firestore documents. Use `status: 'voided' | 'archived'`.
-- **Audit Requirement**: Every correction to a time record must produce an immutable entry in the `auditLogs` collection including a mandatory reason.
+- **Audit Requirement**: Every correction to a time record must produce an immutable entry in the `auditLogs` collection. A human-provided `reason` is **mandatory for employee self-edits** (≤24h Quick Edit path) but **optional for admin/manager-initiated corrections** (policy change 2026-08: admin edits may have an empty reason; the audit row is still written).
 - **Role-Based Access**: Permissions are enforced via `src/utils/permissions.js` and `firestore.rules`.
 - **California Overtime**: Calculations follow specific CA rules (8h daily OT, 12h daily DT, 40h weekly OT). See [overtimeCalculations.ts](src/utils/overtimeCalculations.ts).
 
@@ -92,7 +92,7 @@ These live in `.kilo/personas/`. Reference them explicitly in prompts or via the
 ### Automation You Must Use
 - `.kilo/setup-script` — Runs automatically on new worktree creation.
 - `.kilo/run-script` — Starts the Vite dev server (and optionally emulators) for that worktree.
-- `.kilo/rules/*.md` — Short injectable guardrails (timezone, mandatory audit reason, soft-delete + segments). Add these to your `instructions` array in global or project config.
+- `.kilo/rules/*.md` — Short injectable guardrails (timezone, mandatory audit reason for employees, soft-delete + segments). Add these to your `instructions` array in global or project config.
 
 ### Persistence & Recovery (Do Not Lose Your Setup Again)
 All real configuration lives in `.kilo/` and **must be committed to git**:

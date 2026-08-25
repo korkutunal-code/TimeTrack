@@ -57,8 +57,11 @@ export class AuditLogService {
 
   /**
    * Write a single immutable audit log entry for a time correction.
-   * REQUIRES non-empty reason (enforced here + UI + future rules).
-   * Throws on empty/whitespace reason or failed write.
+   * REQUIRES non-empty reason for EMPLOYEE self-edits (enforced here + UI +
+   * Firestore rules). Admin / manager / system actions MAY omit the reason
+   * (policy change 2026-08: admin edits are exempt from mandatory audit
+   * notes — the immutable audit row is still written, with an empty reason).
+   * Throws on empty/whitespace reason for employees, or on failed write.
    */
   async logTimeCorrection(params: {
     actorUid: string;
@@ -71,9 +74,10 @@ export class AuditLogService {
     reason: string;
     correctionRequestId?: string;
   }): Promise<string> {
+    const actorRole = params.actorRole ?? 'admin';
     const trimmedReason = (params.reason || '').trim();
 
-    if (!trimmedReason) {
+    if (!trimmedReason && actorRole === 'employee') {
       throw new Error('Audit log rejected: reason is required and must be non-empty');
     }
 
@@ -81,7 +85,7 @@ export class AuditLogService {
       occurredAt: Timestamp.now(),
       actorUid: params.actorUid,
       actorName: params.actorName,
-      actorRole: params.actorRole ?? 'admin',
+      actorRole,
       action: params.action ?? 'time_correction',
       targetCollection: 'timeEntries',
       targetId: params.targetId,

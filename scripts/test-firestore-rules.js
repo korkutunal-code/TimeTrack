@@ -242,10 +242,27 @@ async function main() {
       dref(dbOf(admin), "auditLogs", auditLogId).set(validAuditLog),
     );
 
-    // admin cannot create audit log without reason
-    await assertFails(
+    // admin CAN create audit log without reason (policy change 2026-08:
+    // admin edits are exempt from mandatory audit notes)
+    await assertSucceeds(
       dref(dbOf(admin), "auditLogs", "test-audit-no-reason").set({
         ...validAuditLog,
+        reason: "",
+      }),
+    );
+
+    // employee CANNOT create audit log without reason (employee path still
+    // enforces mandatory reason for self-edits)
+    await assertFails(
+      dref(dbOf(emp1), "auditLogs", "test-audit-emp-no-reason").set({
+        occurredAt: new Date(),
+        actorUid: "emp-1",
+        actorRole: "employee",
+        action: "time_correction",
+        targetCollection: "timeEntries",
+        targetId: "emp-1_2025-12-22",
+        before: { clockInManual: "08:00" },
+        after: { clockInManual: "08:15" },
         reason: "",
       }),
     );

@@ -718,15 +718,12 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   }, [correctEntryOpen, correctionUserId, correctionDate]);
 
   const handleSaveCorrection = async () => {
-    // Admin notes are REQUIRED (.kilo/rules/audit-mandatory-reason.md): every
-    // correction's audit row must carry a non-empty, HUMAN-PROVIDED reason —
-    // a machine-generated fallback string is not an acceptable substitute.
+    // Admin notes are OPTIONAL (policy change 2026-08): admin edits no longer
+    // require a mandatory audit reason. The immutable audit row is still
+    // written (with an empty reason when the note is blank) so the audit
+    // trail remains complete. Employee self-edits still require a reason.
     if (!correctionEntry) return;
     const auditReason = adminNotes.trim();
-    if (!auditReason) {
-      toast.error('Admin notes are required');
-      return;
-    }
 
     try {
       // --- Multi-segment validation --------------------------------------
@@ -870,7 +867,8 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       };
 
       // Write audit log FIRST. This is the non-repudiable record.
-      // The service itself enforces non-empty reason.
+      // Admin edits may have an empty reason (policy change 2026-08);
+      // employee self-edits still require a non-empty reason.
       await auditLogService.logTimeCorrection({
         actorUid: currentUser.uid,
         actorName: currentUser.name,
@@ -1616,11 +1614,11 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                   </div>
                 )}
                 <div className="mt-4">
-                  <Label>Admin Notes (Required — becomes the audit reason)</Label>
+                  <Label>Admin Notes (Optional — becomes the audit reason)</Label>
                   <Textarea
                     value={adminNotes}
                     onChange={(e) => setAdminNotes(e.target.value)}
-                    placeholder="Explain the reason for this correction..."
+                    placeholder="Explain the reason for this correction (optional for admin edits)..."
                   />
                 </div>
               </>

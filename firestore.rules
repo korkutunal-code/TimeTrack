@@ -126,28 +126,41 @@ service cloud.firestore {
       allow read: if hasRole('admin') || hasRole('manager');
       
       // Create: admins (any correction) OR employees performing a SELF direct
-      // edit (≤24h Quick Edit path). The employee branch is tightly scoped so a
-      // user can only audit their OWN self-correction:
+      // edit (≤24h Quick Edit path).
+      //
+      // ADMIN PATH (policy change 2026-08): admins may create audit logs with
+      // an EMPTY reason — the immutable audit row is still written, but the
+      // mandatory-note requirement is lifted for admin-initiated edits.
+      //
+      // EMPLOYEE PATH: tightly scoped so a user can only audit their OWN
+      // self-correction:
       //   - actorRole == 'employee'
       //   - actorUid == the authenticated user
       //   - action == 'time_correction' on 'timeEntries' only
       //   - targetId is their own entry doc (uid_YYYY-MM-DD)
+      //   - reason is a non-empty string (mandatory for employees)
       // This keeps the mandatory-audit rule (AGENTS.md / .kilo/rules/
       // audit-mandatory-reason.md) intact for employee-initiated direct edits
       // without letting users forge audit rows for other people's records.
-      allow create: if (hasRole('admin') || (
-                    isAuthenticated() &&
-                    request.resource.data.actorRole == 'employee' &&
-                    request.resource.data.actorUid == request.auth.uid &&
-                    request.resource.data.action == 'time_correction' &&
-                    request.resource.data.targetCollection == 'timeEntries' &&
-                    request.resource.data.targetId is string &&
-                    request.resource.data.targetId.matches(request.auth.uid + '_.*')
-                  )) &&
-                  request.resource.data.reason is string &&
-                  request.resource.data.reason.size() > 0 &&
-                  request.resource.data.targetCollection is string &&
-                  request.resource.data.occurredAt != null;
+      allow create: if (
+                    // Admin path: reason optional (may be empty string or omitted)
+                    (hasRole('admin') &&
+                      request.resource.data.targetCollection is string &&
+                      request.resource.data.occurredAt != null)
+                    ||
+                    // Employee self-edit path: reason mandatory
+                    (isAuthenticated() &&
+                      request.resource.data.actorRole == 'employee' &&
+                      request.resource.data.actorUid == request.auth.uid &&
+                      request.resource.data.action == 'time_correction' &&
+                      request.resource.data.targetCollection == 'timeEntries' &&
+                      request.resource.data.targetId is string &&
+                      request.resource.data.targetId.matches(request.auth.uid + '_.*') &&
+                      request.resource.data.reason is string &&
+                      request.resource.data.reason.size() > 0 &&
+                      request.resource.data.occurredAt != null
+                    )
+                  );
       
       // IMMUTABLE: no updates or deletes for any role
       allow update, delete: if false;
