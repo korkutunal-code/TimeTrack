@@ -63,9 +63,9 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
   const [loading, setLoading] = useState(false);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
-  // Daily Breakdown sub-view toggle (Times | Flags): Times shows the
-  // Reg/OT/DT metric columns; Flags swaps them for a single FLAGS column
-  // computed in-memory from the pipeline entries (utils/analyticsFlags.ts).
+  // Daily Breakdown: merged view always shows the flag chips AND the
+  // Reg/OT/DT metric columns computed from the pipeline entries
+  // (utils/analyticsFlags.ts).
   const [payrollSettings, setPayrollSettings] = useState({
     payroll_cycle_type: 'biweekly',
     weekly_start_day: 1,
