@@ -102,6 +102,16 @@ describe('validateSegmentChronology', () => {
     expect(errors).toContain('Lunch out must be before clock out');
   });
 
+  it('accepts lunch-in equal to clock-out (same-minute punch)', () => {
+    const errors = validateSegmentChronology({
+      clockInManual: '09:00',
+      lunchOutManual: '12:00',
+      lunchInManual: '17:00',
+      clockOutManual: '17:00',
+    });
+    expect(errors).not.toContain('Lunch in must be before clock out');
+  });
+
   it('rejects lunch-in after clock-out', () => {
     const errors = validateSegmentChronology({
       clockInManual: '09:00',

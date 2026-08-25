@@ -498,7 +498,7 @@ export function validateSegmentChronology(
     if (outM !== null && hasLo && wrap(loM) >= wrap(outM)) {
       errors.push('Lunch out must be before clock out');
     }
-    if (outM !== null && hasLi && wrap(liM!) >= wrap(outM)) {
+    if (outM !== null && hasLi && wrap(liM!) > wrap(outM)) {
       errors.push('Lunch in must be before clock out');
     }
   }
