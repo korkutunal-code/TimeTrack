@@ -232,10 +232,18 @@ function validateDraftSegment(seg: DraftSegment): Map<EditField, string> {
 
 /**
  * Live metric recalculation for a draft day's visible (non-deleted) shifts:
- * per-segment minutes → day total → daily CA OT buckets. Open segments
+ * per-segment minutes → day total → daily OT buckets. Open segments
  * (no clock-out) contribute their manual-derived minutes when computable.
+ *
+ * The employee's resolved work model is threaded through so the per-day
+ * Reg/OT/DT preview matches BOTH the weekly summary preview AND the
+ * post-save report (previously this used bare CA defaults, which made the
+ * day cells disagree with the summary card for non-default work models).
  */
-function draftDayTotals(day: DraftDay): { totalWorkMinutes: number; regularMinutes: number; otMinutes: number; doubleTimeMinutes: number } {
+function draftDayTotals(
+  day: DraftDay,
+  workModelDef?: WorkModelDef | null,
+): { totalWorkMinutes: number; regularMinutes: number; otMinutes: number; doubleTimeMinutes: number } {
   const live = day.segments.filter(s => !s.deleted);
   let total = 0;
   for (const s of live) {
@@ -256,7 +264,7 @@ function draftDayTotals(day: DraftDay): { totalWorkMinutes: number; regularMinut
     }
     total += work;
   }
-  const daily = calculateDailyOvertimeBreakdown(total);
+  const daily = calculateDailyOvertimeBreakdown(total, workModelDef ?? null, null);
   return { totalWorkMinutes: total, ...daily };
 }
 
@@ -342,9 +350,9 @@ export function DailyBreakdownTable({
   // Live recalculated per-day metrics, keyed by rowKey.
   const liveTotals = useMemo(() => {
     const m = new Map<string, ReturnType<typeof draftDayTotals>>();
-    for (const d of drafts.values()) m.set(d.rowKey, draftDayTotals(d));
+    for (const d of drafts.values()) m.set(d.rowKey, draftDayTotals(d, workModelDef));
     return m;
-  }, [drafts]);
+  }, [drafts, workModelDef]);
 
   // Live summary-card totals: recompute the WHOLE employee range through the
   // canonical weekly-OT pipeline with edited days swapped in, so the summary
