@@ -950,11 +950,6 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                     {isMultiShift && (
                                       <span className="ml-1 text-xs font-normal text-slate-400">({segs.length} shifts)</span>
                                     )}
-                                    {day.projectedOpen && (
-                                      <span className={`ml-1 ${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] font-semibold`}>
-                                        Open
-                                      </span>
-                                    )}
                                   </span>
                                 </td>
                                 <td className="px-1.5 py-2 align-middle">{fmtBoundary(b.clockIn, empTz)}</td>
