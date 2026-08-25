@@ -773,19 +773,20 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                   </div>
 
                   {expandedUserId === summary.userId && summary.dailyEntries && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 overflow-x-auto px-2">
+                    <div className="mt-2 pt-2 border-t border-slate-200 overflow-x-auto px-[10px]">
                       <p className="text-xs font-semibold text-slate-700 mb-2">Daily Breakdown</p>
                       {/* Fluid fixed grid: table-fixed + w-full pins every
-                          labeled column to an exact pixel width (16 | 164 |
-                          100×4 | … | 100×3 | 56 | 16) while the widthless
+                          labeled column to an exact pixel width (164 |
+                          100×4 | … | 100×3 | 56) while the widthless
                           spacer column absorbs all remaining container width.
                           The table therefore always matches the card's inner
                           width — no horizontal scrollbar, and the right-aligned
                           Total column is never clipped — and column positions
-                          match the Analytics Times view exactly. */}
+                          match the Analytics Times view exactly. Edge inset is
+                          a uniform 10px: Date cells use pl-[10px], Total cells
+                          use pr-[10px] (no bookend spacer columns). */}
                       <table className="table-fixed w-full text-xs text-left text-slate-600">
                         <colgroup>
-                          <col className="w-4" />
                           <col className="w-[164px]" />
                           <col className="w-[100px]" />
                           <col className="w-[100px]" />
@@ -796,12 +797,10 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                           <col className="w-[100px]" />
                           <col className="w-[100px]" />
                           <col className="w-14" />
-                          <col className="w-4" />
                         </colgroup>
                         <thead className="bg-slate-50 text-slate-700 font-semibold">
                           <tr>
-                            <th className="px-1.5 py-2"></th>
-                            <th className="px-1.5 py-2">Date</th>
+                            <th className="py-2 pl-[10px] pr-1.5">Date</th>
                             <th className="px-1.5 py-2">Clock In</th>
                             <th className="px-1.5 py-2">Lunch Out</th>
                             <th className="px-1.5 py-2">Lunch In</th>
@@ -810,8 +809,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                             <th className="px-1.5 py-2">Regular</th>
                             <th className="px-1.5 py-2">OT</th>
                             <th className="px-1.5 py-2">DT</th>
-                            <th className="px-1.5 py-2 text-right">Total</th>
-                            <th className="px-1.5 py-2"></th>
+                            <th className="py-2 pl-1.5 pr-[10px] text-right">Total</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -861,8 +859,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
 
                             const rows: JSX.Element[] = [
                               <tr key={rowKey} className="border-b border-slate-100 hover:bg-slate-50/50">
-                                <td className="px-1.5 py-2"></td>
-                                <td className="px-1.5 py-2 font-medium align-middle">
+                                <td className="py-2 pl-[10px] pr-1.5 font-medium align-middle">
                                   <span className={`inline-flex items-center gap-1 ${isMultiShift ? 'cursor-pointer' : ''}`} onClick={isMultiShift ? toggleDate : undefined}>
                                     {isMultiShift && (
                                       isDateExpanded
@@ -883,10 +880,9 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                                 <td className="px-1.5 py-2 align-middle">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
                                 <td className="px-1.5 py-2 align-middle">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
                                 <td className="px-1.5 py-2 align-middle">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
-                                <td className={`px-1.5 py-2 text-right align-middle font-semibold ${dayTotalHours > 8 ? 'text-red-600' : ''}`}>
+                                <td className={`py-2 pl-1.5 pr-[10px] text-right align-middle font-semibold ${dayTotalHours > 8 ? 'text-red-600' : ''}`}>
                                   {dayTotalHours.toFixed(1)}
                                 </td>
-                                <td className="px-1.5 py-2"></td>
                               </tr>
                             ];
 
@@ -895,8 +891,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                                 const shiftTotalHours = (seg.workMinutes || 0) / 60;
                                 rows.push(
                                   <tr key={`${rowKey}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
-                                    <td className="px-1.5 py-2"></td>
-                                    <td className="px-1.5 py-2 pl-6 text-purple-700 font-medium align-middle">↳ Shift {i + 1}</td>
+                                    <td className="py-2 pl-[10px] pr-1.5 text-purple-700 font-medium align-middle">↳ Shift {i + 1}</td>
                                     <td className="px-1.5 py-2 align-middle">{fmtBoundary({ time: seg.clockInManual, ms: seg.clockInSystem, dayOffset: 0 }, empTz)}</td>
                                     <td className="px-1.5 py-2 align-middle">
                                       {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, ms: seg.lunchOutSystem, dayOffset: segFieldDayOffset(seg, 'lunchOutManual', viewZone) }, empTz)}
@@ -909,10 +904,9 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                                     <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
                                     <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
                                     <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
-                                    <td className={`px-1.5 py-2 text-right align-middle font-semibold ${shiftTotalHours > 8 ? 'text-red-600' : 'text-purple-700'}`}>
+                                    <td className={`py-2 pl-1.5 pr-[10px] text-right align-middle font-semibold ${shiftTotalHours > 8 ? 'text-red-600' : 'text-purple-700'}`}>
                                       {shiftTotalHours.toFixed(1)}
                                     </td>
-                                    <td className="px-1.5 py-2"></td>
                                   </tr>
                                 );
                               });
