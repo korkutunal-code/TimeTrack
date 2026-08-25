@@ -66,7 +66,6 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
   // Daily Breakdown sub-view toggle (Times | Flags): Times shows the
   // Reg/OT/DT metric columns; Flags swaps them for a single FLAGS column
   // computed in-memory from the pipeline entries (utils/analyticsFlags.ts).
-  const [breakdownView, setBreakdownView] = useState<'times' | 'flags'>('times');
   const [payrollSettings, setPayrollSettings] = useState({
     payroll_cycle_type: 'biweekly',
     weekly_start_day: 1,
@@ -797,64 +796,29 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
 
                   {expandedUserId === summary.userId && summary.dailyEntries && (
                     <div className="mt-2 pt-2 border-t border-slate-200 overflow-x-auto px-[10px]">
-                      <div className="flex items-center gap-2 mb-2">
-                        <p className="text-xs font-semibold text-slate-700">Daily Breakdown</p>
-                        {/* Times | Flags segmented toggle (placeholder — the
-                            Flags view is not implemented yet; this only
-                            switches the active pill styling). */}
-                        <div className="inline-flex items-center rounded-full bg-slate-100 border border-slate-200 p-0.5">
-                          {(['times', 'flags'] as const).map((view) => (
-                            <button
-                              key={view}
-                              type="button"
-                              onClick={() => setBreakdownView(view)}
-                              className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold capitalize transition-colors ${
-                                breakdownView === view
-                                  ? 'bg-indigo-600 text-white'
-                                  : 'text-slate-500 hover:text-slate-700'
-                              }`}
-                            >
-                              {view === 'times' ? 'Times' : 'Flags'}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      {/* Fluid fixed grid: table-fixed + w-full pins every
+                      <p className="text-xs font-semibold text-slate-700 mb-2">Daily Breakdown</p>
+                      {/* Unified fixed grid: table-fixed + w-full pins every
                           labeled column to an exact pixel width while the
-                          widthless column (Times: spacer, Flags: FLAGS)
-                          absorbs all remaining container width. The table
-                          therefore always matches the card's inner width —
-                          no horizontal scrollbar, and the right-aligned Total
-                          column is never clipped — while the left group
-                          (Date/Clock In/Lunch Out/Lunch In/Clock Out) sits at
-                          identical offsets in Times and Flags views. Edge inset
-                          is a uniform 10px: Date cells use pl-[10px], Total
-                          cells use pr-[10px] (no bookend spacer columns). */}
+                          widthless FLAGS column absorbs all remaining container
+                          width (its chips wrap via flex-wrap, growing the row
+                          height as needed). The table therefore always matches
+                          the card's inner width — no horizontal scrollbar, and
+                          the right-aligned Total column is never clipped. Edge
+                          inset is a uniform 10px: Date cells use pl-[10px],
+                          Total cells use pr-[10px] (no bookend spacer columns). */}
                       <table className="table-fixed w-full text-xs text-left text-slate-600">
-                        {breakdownView === 'flags' ? (
-                          <colgroup>
-                            <col className="w-[164px]" />
-                            <col className="w-[100px]" />
-                            <col className="w-[100px]" />
-                            <col className="w-[100px]" />
-                            <col className="w-[100px]" />
-                            <col />
-                            <col className="w-14" />
-                          </colgroup>
-                        ) : (
-                          <colgroup>
-                            <col className="w-[164px]" />
-                            <col className="w-[100px]" />
-                            <col className="w-[100px]" />
-                            <col className="w-[100px]" />
-                            <col className="w-[100px]" />
-                            <col />
-                            <col className="w-[100px]" />
-                            <col className="w-[100px]" />
-                            <col className="w-[100px]" />
-                            <col className="w-14" />
-                          </colgroup>
-                        )}
+                        <colgroup>
+                          <col className="w-[164px]" />
+                          <col className="w-[100px]" />
+                          <col className="w-[100px]" />
+                          <col className="w-[100px]" />
+                          <col className="w-[100px]" />
+                          <col />
+                          <col className="w-[100px]" />
+                          <col className="w-[100px]" />
+                          <col className="w-[100px]" />
+                          <col className="w-14" />
+                        </colgroup>
                         <thead className="bg-slate-50 text-slate-700 font-semibold">
                           <tr>
                             <th className="py-2 pl-[10px] pr-1.5">Date</th>
@@ -862,16 +826,10 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                             <th className="px-1.5 py-2">Lunch Out</th>
                             <th className="px-1.5 py-2">Lunch In</th>
                             <th className="px-1.5 py-2">Clock Out</th>
-                            {breakdownView === 'flags' ? (
-                              <th className="px-1.5 py-2">Flags</th>
-                            ) : (
-                              <>
-                                <th className="px-1.5 py-2"></th>
-                                <th className="px-1.5 py-2">Regular</th>
-                                <th className="px-1.5 py-2">OT</th>
-                                <th className="px-1.5 py-2">DT</th>
-                              </>
-                            )}
+                            <th className="px-1.5 py-2">Flags</th>
+                            <th className="px-1.5 py-2">Regular</th>
+                            <th className="px-1.5 py-2">OT</th>
+                            <th className="px-1.5 py-2">DT</th>
                             <th className="py-2 pl-1.5 pr-[10px] text-right">Total</th>
                           </tr>
                         </thead>
@@ -960,19 +918,13 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                     ? <span className={`${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-xs font-semibold`}>In Progress</span>
                                     : fmtBoundary(b.clockOut, empTz)}
                                 </td>
-                                {breakdownView === 'flags' ? (
-                                  // Parent day row: combined flags (child shift
-                                  // flags + day-level flags), as chips. The cell
-                                  // grows vertically only when chips wrap.
-                                  <td className="px-1.5 py-2 align-middle">{renderFlagChips(parentFlags)}</td>
-                                ) : (
-                                  <>
-                                    <td className="px-1.5 py-2"></td>
-                                    <td className="px-1.5 py-2 align-middle">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
-                                    <td className="px-1.5 py-2 align-middle">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
-                                    <td className="px-1.5 py-2 align-middle">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
-                                  </>
-                                )}
+                                {/* Parent day row: combined flags (child shift
+                                    flags + day-level flags), as chips. The cell
+                                    grows vertically only when chips wrap. */}
+                                <td className="px-1.5 py-2 align-middle">{renderFlagChips(parentFlags)}</td>
+                                <td className="px-1.5 py-2 align-middle">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
+                                <td className="px-1.5 py-2 align-middle">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
+                                <td className="px-1.5 py-2 align-middle">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
                                 <td className={`py-2 pl-1.5 pr-[10px] text-right align-middle font-semibold ${dayTotalHours > 8 ? 'text-red-600' : ''}`}>
                                   {dayTotalHours.toFixed(1)}
                                 </td>
@@ -997,19 +949,13 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                                         ? <span className={`${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-xs font-semibold`}>now</span>
                                         : fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual', viewZone) }, empTz)}
                                     </td>
-                                    {breakdownView === 'flags' ? (
-                                      // Child shift row: ONLY this segment's
-                                      // shift-level flags (day-level flags
-                                      // like very_long_day stay on the parent).
-                                      <td className="px-1.5 py-2 align-middle">{renderFlagChips(childFlags[i] ?? [])}</td>
-                                    ) : (
-                                      <>
-                                        <td className="px-1.5 py-2"></td>
-                                        <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
-                                        <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
-                                        <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
-                                      </>
-                                    )}
+                                    {/* Child shift row: ONLY this segment's
+                                        shift-level flags (day-level flags
+                                        like very_long_day stay on the parent). */}
+                                    <td className="px-1.5 py-2 align-middle">{renderFlagChips(childFlags[i] ?? [])}</td>
+                                    <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
+                                    <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
+                                    <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
                                     <td className={`py-2 pl-1.5 pr-[10px] text-right align-middle font-semibold ${shiftTotalHours > 8 ? 'text-red-600' : 'text-purple-700'}`}>
                                       {shiftTotalHours.toFixed(1)}
                                     </td>
