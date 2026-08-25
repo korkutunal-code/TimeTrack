@@ -46,6 +46,7 @@ import { calculateLunchMinutes } from '../../../utils/timeCalculations';
 import {
   calculateDailyOvertimeBreakdown,
   calculateWeeklyOvertimeAdjustments,
+  formatMinutesToHHMM,
   getWorkWeekStartDate,
   DEFAULT_WORKWEEK_START_DAY,
   type OvertimeEntry,
@@ -98,6 +99,11 @@ export interface DailyBreakdownTableProps {
     userId: string;
     userName: string;
     workModel: string;
+    /** Direct HH:MM duration strings from the OT pipeline (display-only here). */
+    regularHours: string;
+    overtimeHours: string;
+    doubleTimeHours: string;
+    totalHours: string;
     dailyEntries?: DocumentData[];
   };
   /** The signed-in user (must be admin for Bulk Edit to appear). */
@@ -113,7 +119,7 @@ export interface DailyBreakdownTableProps {
    * (so the employee summary card can update dynamically before save).
    * Called with `null` when bulk edit exits (cancel or save).
    */
-  onLiveTotals?: (totals: { regularHours: number; overtimeHours: number; doubleTimeHours: number; totalHours: number } | null) => void;
+  onLiveTotals?: (totals: { regularHours: string; overtimeHours: string; doubleTimeHours: string; totalHours: string } | null) => void;
   /** Render helpers injected by the parent (display-zone aware). */
   renderParentBoundary: (day: DocumentData, which: 'in' | 'out') => JSX.Element;
   renderParentLunch: (day: DocumentData, which: 'out' | 'in') => JSX.Element;
@@ -388,7 +394,13 @@ export function DailyBreakdownTable({
         tot += e.totalWorkMinutes || 0;
       }
     }
-    return { regularHours: reg / 60, overtimeHours: ot / 60, doubleTimeHours: dt / 60, totalHours: tot / 60 };
+    // Direct HH:MM outputs (same format as the pipeline summary strings).
+    return {
+      regularHours: formatMinutesToHHMM(reg),
+      overtimeHours: formatMinutesToHHMM(ot),
+      doubleTimeHours: formatMinutesToHHMM(dt),
+      totalHours: formatMinutesToHHMM(tot),
+    };
   }, [bulkEdit, drafts, dailyEntries, liveTotals, workModelDef]);
 
   // Report the live preview totals up to the parent summary card while
@@ -772,7 +784,8 @@ export function DailyBreakdownTable({
                 return n;
               });
 
-            const dayTotalHours = (day.totalWorkMinutes || 0) / 60;
+            const dayTotalMinutes = day.totalWorkMinutes || 0;
+            const dayTotalHours = dayTotalMinutes / 60; // retained for the >8h red-tint threshold
             const draft = drafts.get(rowKey);
             const live = draft ? liveTotals.get(rowKey) : undefined;
             const changed = draft ? dayDraftChanged(draft) : false;
@@ -795,18 +808,22 @@ export function DailyBreakdownTable({
                   <td className="px-1.5 py-2 align-middle">{renderParentLunch(day, 'in')}</td>
                   <td className="px-1.5 py-2 align-middle">{renderParentBoundary(day, 'out')}</td>
                   <td className="px-1.5 py-2 align-middle">{renderParentFlags(day)}</td>
-                  <td className="px-1.5 py-2 align-middle">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
-                  <td className="px-1.5 py-2 align-middle">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
-                  <td className="px-1.5 py-2 align-middle">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
+                  {/* Direct HH:MM strings produced by the OT engine on each
+                      adjusted entry (fall back to formatting the raw minutes
+                      for any entry that pre-dates the annotation). */}
+                  <td className="px-1.5 py-2 align-middle">{day.regularTime ?? formatMinutesToHHMM(day.regularMinutes || 0)}</td>
+                  <td className="px-1.5 py-2 align-middle">{day.otTime ?? formatMinutesToHHMM(day.otMinutes || 0)}</td>
+                  <td className="px-1.5 py-2 align-middle">{day.doubleTimeTime ?? formatMinutesToHHMM(day.doubleTimeMinutes || 0)}</td>
                   <td className={`py-2 pl-1.5 pr-[10px] text-right align-middle font-semibold ${dayTotalHours > 8 ? 'text-red-600' : ''}`}>
-                    {dayTotalHours.toFixed(1)}
+                    {day.totalTime ?? formatMinutesToHHMM(dayTotalMinutes)}
                   </td>
                 </tr>
               );
               const rows = [parentRow];
               if (multi && isExpanded) {
                 segmentsOf(day).forEach((seg: DocumentData, i: number) => {
-                  const shiftTotalHours = (seg.workMinutes || 0) / 60;
+                  const shiftTotalMinutes = seg.workMinutes || 0;
+                  const shiftTotalHours = shiftTotalMinutes / 60;
                   rows.push(
                     <tr key={`${rowKey}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
                       <td className="py-2 pl-[10px] pr-1.5 text-purple-700 font-medium align-middle">↳ Shift {i + 1}</td>
@@ -823,7 +840,7 @@ export function DailyBreakdownTable({
                       <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
                       <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
                       <td className={`py-2 pl-1.5 pr-[10px] text-right align-middle font-semibold ${shiftTotalHours > 8 ? 'text-red-600' : 'text-purple-700'}`}>
-                        {shiftTotalHours.toFixed(1)}
+                        {formatMinutesToHHMM(shiftTotalMinutes)}
                       </td>
                     </tr>,
                   );
@@ -919,11 +936,11 @@ export function DailyBreakdownTable({
                     </button>
                   </div>
                 </td>
-                <td className={metricCls(changed)}>{live ? (live.regularMinutes / 60).toFixed(1) : ((day.regularMinutes || 0) / 60).toFixed(1)}</td>
-                <td className={metricCls(changed)}>{live ? (live.otMinutes / 60).toFixed(1) : ((day.otMinutes || 0) / 60).toFixed(1)}</td>
-                <td className={metricCls(changed)}>{live ? (live.doubleTimeMinutes / 60).toFixed(1) : ((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
+                <td className={metricCls(changed)}>{live ? formatMinutesToHHMM(live.regularMinutes) : (day.regularTime ?? formatMinutesToHHMM(day.regularMinutes || 0))}</td>
+                <td className={metricCls(changed)}>{live ? formatMinutesToHHMM(live.otMinutes) : (day.otTime ?? formatMinutesToHHMM(day.otMinutes || 0))}</td>
+                <td className={metricCls(changed)}>{live ? formatMinutesToHHMM(live.doubleTimeMinutes) : (day.doubleTimeTime ?? formatMinutesToHHMM(day.doubleTimeMinutes || 0))}</td>
                 <td className={`py-2 pl-1.5 pr-[10px] text-right align-middle font-semibold ${dayTotalLive > 8 ? 'text-red-600' : ''} ${changed ? 'bg-amber-100/70' : ''}`}>
-                  {dayTotalLive.toFixed(1)}
+                  {live ? formatMinutesToHHMM(live.totalWorkMinutes) : (day.totalTime ?? formatMinutesToHHMM(dayTotalMinutes))}
                 </td>
               </tr>
             );
@@ -992,7 +1009,7 @@ export function DailyBreakdownTable({
                             skipLunch: seg.skipLunch,
                             complete: !!seg.clockOutManual,
                           } as TimeSegment);
-                          return (wm / 60).toFixed(1);
+                          return formatMinutesToHHMM(wm);
                         })())}
                     </td>
                   </tr>,
@@ -1009,10 +1026,10 @@ export function DailyBreakdownTable({
       {bulkEdit && liveSummary && (
         <div className="mt-2 flex items-center gap-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
           <span className="font-semibold text-slate-600">Preview totals:</span>
-          <span>Regular <strong>{liveSummary.regularHours.toFixed(1)}</strong></span>
-          <span>OT <strong className="text-orange-700">{liveSummary.overtimeHours.toFixed(1)}</strong></span>
-          <span>DT <strong className="text-red-700">{liveSummary.doubleTimeHours.toFixed(1)}</strong></span>
-          <span>Total <strong>{liveSummary.totalHours.toFixed(1)}</strong></span>
+          <span>Regular <strong>{liveSummary.regularHours}</strong></span>
+          <span>OT <strong className="text-orange-700">{liveSummary.overtimeHours}</strong></span>
+          <span>DT <strong className="text-red-700">{liveSummary.doubleTimeHours}</strong></span>
+          <span>Total <strong>{liveSummary.totalHours}</strong></span>
         </div>
       )}
     </div>

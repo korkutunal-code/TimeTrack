@@ -117,7 +117,7 @@ There is, however, a **genuine hard cap**: the legacy `TodayEntry` auto-close wa
 
 - **`functions/src/seed.ts:71-73`** — the `Math.min(totalMinutes, 8*60)` / `12*60` lines are in a *seed-data generator* that fabricates demo entries; they do not affect production calculations.
 - **`Math.floor` in `clockService.getPunchStatus`** (`clockService.ts:297`) — truncates the live "today so far" estimate to whole minutes for display; totals stored on the doc use exact segment minutes. No data loss.
-- **`formatMinutesToHoursDecimal` `.toFixed(2)`** (`overtimeCalculations.ts:300`) — display rounding only; the underlying minute totals are exact.
+- **`formatMinutesToHHMM`** (`overtimeCalculations.ts`) — display formatting only (replaced the old decimal `formatMinutesToHoursDecimal`); the underlying minute totals are exact.
 
 ---
 

@@ -203,7 +203,11 @@ export function calculateDailyOvertimeBreakdown(
     };
 }
 
-// Partial TimeEntry with enough info for overtime calcs, plus the optional weekly adjustment field
+// Partial TimeEntry with enough info for overtime calcs, plus the optional weekly adjustment field.
+// The *Time fields are direct HH:MM display strings (e.g. '8:54') calculated
+// from the numeric minute buckets by the OT engine — report UIs render them
+// directly without re-formatting. The numeric *Minutes fields remain the
+// canonical values (Firestore persistence SSOT); the strings are additive.
 export type OvertimeEntry = Partial<TimeEntry> & {
     workDate: string;
     totalWorkMinutes?: number;
@@ -211,6 +215,14 @@ export type OvertimeEntry = Partial<TimeEntry> & {
     otMinutes?: number;
     doubleTimeMinutes?: number;
     weeklyOtAdjustment?: number;
+    /** HH:MM display string of regularMinutes (set by the OT engine). */
+    regularTime?: string;
+    /** HH:MM display string of otMinutes (set by the OT engine). */
+    otTime?: string;
+    /** HH:MM display string of doubleTimeMinutes (set by the OT engine). */
+    doubleTimeTime?: string;
+    /** HH:MM display string of totalWorkMinutes (set by the OT engine). */
+    totalTime?: string;
 };
 
 /**
@@ -242,7 +254,7 @@ export function calculateWeeklyOvertimeAdjustments(
     // When noOvertime is set, daily breakdown already zeroed OT/DT; the weekly
     // >regularMax conversion is also skipped so nothing becomes OT.
     if (rules.noOvertime) {
-        return entriesWithDaily;
+        return entriesWithDaily.map(withHHMMDisplayFields);
     }
 
     // Sum up regular minutes for the week
@@ -284,11 +296,26 @@ export function calculateWeeklyOvertimeAdjustments(
             return entry;
         });
 
-        return adjustedEntries;
+        return adjustedEntries.map(withHHMMDisplayFields);
     }
 
     // No weekly OT needed
-    return entriesWithDaily;
+    return entriesWithDaily.map(withHHMMDisplayFields);
+}
+
+/**
+ * Attach the direct HH:MM display strings (regularTime/otTime/doubleTimeTime/
+ * totalTime) calculated from the entry's numeric minute buckets. The numeric
+ * fields remain canonical; the strings are the report-display outputs.
+ */
+function withHHMMDisplayFields(entry: OvertimeEntry): OvertimeEntry {
+    return {
+        ...entry,
+        regularTime: formatMinutesToHHMM(entry.regularMinutes || 0),
+        otTime: formatMinutesToHHMM(entry.otMinutes || 0),
+        doubleTimeTime: formatMinutesToHHMM(entry.doubleTimeMinutes || 0),
+        totalTime: formatMinutesToHHMM(entry.totalWorkMinutes || 0),
+    };
 }
 
 /**
@@ -409,26 +436,34 @@ export function calculateBiweeklyOvertimeTotals(
 }
 
 /**
- * Format minutes to hours with 2 decimals
- * @param minutes
- * @returns Hours with 2 decimal places
+ * Format minutes as a direct HH:MM duration string (e.g. 97:12, 18:12, 8:54,
+ * 0:00). This is the canonical display output for calculated durations in the
+ * Analytics and Payroll reports — hours are unpadded (may exceed 24), minutes
+ * are zero-padded, negatives clamp to 0:00 (a duration is never negative).
+ *
+ * @param minutes - Raw minutes
+ * @returns HH:MM string
  */
-export function formatMinutesToHoursDecimal(minutes: number): string {
-    const hours = minutes / 60;
-    return hours.toFixed(2);
+export function formatMinutesToHHMM(minutes: number): string {
+    const totalMinutes = Math.max(0, Math.round(Number(minutes) || 0));
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    return `${h}:${String(m).padStart(2, '0')}`;
 }
 
 /**
- * Get OT summary for display
+ * Get OT summary for display. Returns direct HH:MM strings calculated from
+ * the raw minute totals (e.g. { regular: '36:12', overtime: '4:30', ... }).
+ *
  * @param totals - { regularMinutes, otMinutes, doubleTimeMinutes }
- * @returns Formatted summary
+ * @returns HH:MM-formatted summary
  */
 export function getOvertimeSummary(totals: WeeklyTotals) {
     return {
-        regular: formatMinutesToHoursDecimal(totals.regularMinutes),
-        overtime: formatMinutesToHoursDecimal(totals.otMinutes),
-        doubleTime: formatMinutesToHoursDecimal(totals.doubleTimeMinutes),
-        total: formatMinutesToHoursDecimal(
+        regular: formatMinutesToHHMM(totals.regularMinutes),
+        overtime: formatMinutesToHHMM(totals.otMinutes),
+        doubleTime: formatMinutesToHHMM(totals.doubleTimeMinutes),
+        total: formatMinutesToHHMM(
             totals.regularMinutes + totals.otMinutes + totals.doubleTimeMinutes
         )
     };

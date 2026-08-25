@@ -17,7 +17,7 @@ import { ALL_USERS, USER_GROUP_OPTIONS, buildUserIdMatcher, isGroupSelection } f
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
-import { calculateBiweeklyOvertimeTotals } from '../../../utils/overtimeCalculations.js';
+import { calculateBiweeklyOvertimeTotals, formatMinutesToHHMM } from '../../../utils/overtimeCalculations.js';
 import type { OvertimeEntry } from '../../../utils/overtimeCalculations';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
@@ -43,10 +43,11 @@ interface PayrollSummary {
   userId: string;
   userName: string;
   workModel: string;
-  regularHours: number;
-  overtimeHours: number;
-  doubleTimeHours: number;
-  totalHours: number;
+  /** Direct HH:MM duration strings (e.g. '97:12') from the OT pipeline. */
+  regularHours: string;
+  overtimeHours: string;
+  doubleTimeHours: string;
+  totalHours: string;
   dailyEntries?: DocumentData[];
 }
 
@@ -307,10 +308,11 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
           userId,
           userName: allUsers.find(u => u.uid === userId)?.name || 'Unknown',
           workModel: userWorkModel?.name || userObj?.workModel || 'On-site',
-          regularHours: (ot.grandTotals.regularMinutes || 0) / 60,
-          overtimeHours: (ot.grandTotals.otMinutes || 0) / 60,
-          doubleTimeHours: (ot.grandTotals.doubleTimeMinutes || 0) / 60,
-          totalHours: (ot.grandTotals.totalMinutes || 0) / 60,
+          // Direct HH:MM outputs calculated from the raw minute totals.
+          regularHours: formatMinutesToHHMM(ot.grandTotals.regularMinutes || 0),
+          overtimeHours: formatMinutesToHHMM(ot.grandTotals.otMinutes || 0),
+          doubleTimeHours: formatMinutesToHHMM(ot.grandTotals.doubleTimeMinutes || 0),
+          totalHours: formatMinutesToHHMM(ot.grandTotals.totalMinutes || 0),
           dailyEntries: ot.adjustedEntries.sort((a, b) => b.workDate.localeCompare(a.workDate))
         });
       }
@@ -362,12 +364,13 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
     if (!report) return;
 
     const headers = ['Employee', 'Regular Hours', 'Overtime (1.5x)', 'Double Time (2x)', 'Total Hours'];
+    // Values are already direct HH:MM strings from the calculation pipeline.
     const rows = report.map(r => [
       r.userName,
-      r.regularHours.toFixed(2),
-      r.overtimeHours.toFixed(2),
-      r.doubleTimeHours.toFixed(2),
-      r.totalHours.toFixed(2),
+      r.regularHours,
+      r.overtimeHours,
+      r.doubleTimeHours,
+      r.totalHours,
     ]);
 
     const csvContent = generateCSV(headers, rows);
@@ -379,10 +382,16 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
     window.print();
   };
 
-  const totalRegular = report?.reduce((acc, r) => acc + r.regularHours, 0) || 0;
-  const totalOvertime = report?.reduce((acc, r) => acc + r.overtimeHours, 0) || 0;
-  const totalDouble = report?.reduce((acc, r) => acc + r.doubleTimeHours, 0) || 0;
-  const grandTotal = report?.reduce((acc, r) => acc + r.totalHours, 0) || 0;
+  // Cross-employee totals: aggregate each day's RAW MINUTES (HH:MM strings
+  // can't be summed), then format the final sums as HH:MM.
+  const totalRegular = formatMinutesToHHMM(
+    report?.reduce((acc, r) => acc + (r.dailyEntries ?? []).reduce((s, d) => s + (d.regularMinutes || 0), 0), 0) || 0);
+  const totalOvertime = formatMinutesToHHMM(
+    report?.reduce((acc, r) => acc + (r.dailyEntries ?? []).reduce((s, d) => s + (d.otMinutes || 0), 0), 0) || 0);
+  const totalDouble = formatMinutesToHHMM(
+    report?.reduce((acc, r) => acc + (r.dailyEntries ?? []).reduce((s, d) => s + (d.doubleTimeMinutes || 0), 0), 0) || 0);
+  const grandTotal = formatMinutesToHHMM(
+    report?.reduce((acc, r) => acc + (r.dailyEntries ?? []).reduce((s, d) => s + (d.totalWorkMinutes || 0), 0), 0) || 0);
 
   // Multi-shift aggregation for the Daily Breakdown table. A day's `segments[]`
   // (if present) holds the individual shifts; the parent row must reflect the
@@ -665,7 +674,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                     </div>
                     <div>
                       <p className="text-xs text-slate-600">Regular</p>
-                      <p className="text-2xl font-bold text-slate-900">{totalRegular.toFixed(1)}</p>
+                      <p className="text-2xl font-bold text-slate-900">{totalRegular}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -679,7 +688,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                     </div>
                     <div>
                       <p className="text-xs text-slate-600">OT (1.5x)</p>
-                      <p className="text-2xl font-bold text-slate-900">{totalOvertime.toFixed(1)}</p>
+                      <p className="text-2xl font-bold text-slate-900">{totalOvertime}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -693,7 +702,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                     </div>
                     <div>
                       <p className="text-xs text-slate-600">DT (2x)</p>
-                      <p className="text-2xl font-bold text-slate-900">{totalDouble.toFixed(1)}</p>
+                      <p className="text-2xl font-bold text-slate-900">{totalDouble}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -707,7 +716,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                     </div>
                     <div>
                       <p className="text-xs text-slate-600">Total</p>
-                      <p className="text-2xl font-bold text-slate-900">{grandTotal.toFixed(1)}</p>
+                      <p className="text-2xl font-bold text-slate-900">{grandTotal}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -742,22 +751,22 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                     {/* Left — employee info */}
                     <div className="flex flex-col shrink-0 min-w-[150px]">
                       <h3 className="text-sm font-bold text-slate-900">{summary.userName}</h3>
-                      <p className="text-xs text-slate-400">Total: {summary.totalHours.toFixed(2)} hours</p>
+                      <p className="text-xs text-slate-400">Total: {summary.totalHours} hours</p>
                     </div>
 
                     {/* Center — metric boxes */}
                     <div className="flex-1 grid grid-cols-3 gap-3 items-center">
                       <div className="bg-slate-50 py-1.5 px-3 rounded-lg border border-slate-200">
                         <p className="text-xs text-slate-600 mb-0.5">Regular</p>
-                        <p className="text-lg font-bold text-slate-900">{summary.regularHours.toFixed(1)}</p>
+                        <p className="text-lg font-bold text-slate-900">{summary.regularHours}</p>
                       </div>
                       <div className="bg-orange-50 py-1.5 px-3 rounded-lg border border-orange-200">
                         <p className="text-xs text-orange-700 mb-0.5">OT 1.5x</p>
-                        <p className="text-lg font-bold text-orange-700">{summary.overtimeHours.toFixed(1)}</p>
+                        <p className="text-lg font-bold text-orange-700">{summary.overtimeHours}</p>
                       </div>
                       <div className="bg-red-50 py-1.5 px-3 rounded-lg border border-red-200">
                         <p className="text-xs text-red-700 mb-0.5">DT 2x</p>
-                        <p className="text-lg font-bold text-red-700">{summary.doubleTimeHours.toFixed(1)}</p>
+                        <p className="text-lg font-bold text-red-700">{summary.doubleTimeHours}</p>
                       </div>
                     </div>
 
@@ -877,11 +886,14 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                                 <td className="px-1.5 py-2 align-middle">{renderLunchCell(lunch.lunchIn)}</td>
                                 <td className="px-1.5 py-2 align-middle">{fmtBoundary(b.clockOut, empTz)}</td>
                                 <td className="px-1.5 py-2"></td>
-                                <td className="px-1.5 py-2 align-middle">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
-                                <td className="px-1.5 py-2 align-middle">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
-                                <td className="px-1.5 py-2 align-middle">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
+                                {/* Direct HH:MM strings produced by the OT
+                                    engine on each adjusted entry (fall back to
+                                    formatting raw minutes for legacy entries). */}
+                                <td className="px-1.5 py-2 align-middle">{day.regularTime ?? formatMinutesToHHMM(day.regularMinutes || 0)}</td>
+                                <td className="px-1.5 py-2 align-middle">{day.otTime ?? formatMinutesToHHMM(day.otMinutes || 0)}</td>
+                                <td className="px-1.5 py-2 align-middle">{day.doubleTimeTime ?? formatMinutesToHHMM(day.doubleTimeMinutes || 0)}</td>
                                 <td className={`py-2 pl-1.5 pr-[10px] text-right align-middle font-semibold ${dayTotalHours > 8 ? 'text-red-600' : ''}`}>
-                                  {dayTotalHours.toFixed(1)}
+                                  {day.totalTime ?? formatMinutesToHHMM(day.totalWorkMinutes || 0)}
                                 </td>
                               </tr>
                             ];
@@ -905,7 +917,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
                                     <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
                                     <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
                                     <td className={`py-2 pl-1.5 pr-[10px] text-right align-middle font-semibold ${shiftTotalHours > 8 ? 'text-red-600' : 'text-purple-700'}`}>
-                                      {shiftTotalHours.toFixed(1)}
+                                      {formatMinutesToHHMM(seg.workMinutes || 0)}
                                     </td>
                                   </tr>
                                 );
