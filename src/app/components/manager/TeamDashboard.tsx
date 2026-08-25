@@ -386,10 +386,13 @@ export function TeamDashboard({ user, allUsers, timeViewMode = 'local' }: TeamDa
         correctionNotes: adminNotes.trim(),
       };
 
-      // Write audit log FIRST. The service enforces non-empty reason.
+      // Write audit log FIRST. Manager-initiated correction; reason optional
+      // (policy change 2026-08). Pass actorRole explicitly so the audit row
+      // reflects the actual actor (the service defaults to 'admin').
       await auditLogService.logTimeCorrection({
         actorUid: user.uid,
         actorName: user.name || user.email,
+        actorRole: 'manager',
         targetId: originalEditingEntry.id,
         before: beforeSnapshot,
         after: afterSnapshot,

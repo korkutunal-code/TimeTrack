@@ -251,6 +251,37 @@ async function main() {
       }),
     );
 
+    // manager CAN create audit log without reason (same exemption as admin)
+    await assertSucceeds(
+      dref(dbOf(manager), "auditLogs", "test-audit-mgr-no-reason").set({
+        occurredAt: new Date(),
+        actorUid: "manager-1",
+        actorRole: "manager",
+        action: "time_correction",
+        targetCollection: "timeEntries",
+        targetId: "emp-1_2025-12-22",
+        before: { clockInManual: "08:00" },
+        after: { clockInManual: "08:15" },
+        reason: "",
+      }),
+    );
+
+    // manager CAN create audit log with reason (redundant but ensures
+    // both branches work)
+    await assertSucceeds(
+      dref(dbOf(manager), "auditLogs", "test-audit-mgr-with-reason").set({
+        occurredAt: new Date(),
+        actorUid: "manager-1",
+        actorRole: "manager",
+        action: "time_correction",
+        targetCollection: "timeEntries",
+        targetId: "emp-1_2025-12-22",
+        before: { clockInManual: "08:00" },
+        after: { clockInManual: "08:15" },
+        reason: "Manager correction with reason",
+      }),
+    );
+
     // employee CANNOT create audit log without reason (employee path still
     // enforces mandatory reason for self-edits)
     await assertFails(
