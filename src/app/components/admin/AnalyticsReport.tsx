@@ -73,6 +73,10 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
     biweekly_start_date: '2024-01-01',
     monthly_start_day: 1,
     exclude_records_before_date: '',
+    // Automated Actions guardrails — drive the open-shift lunch projection
+    // policy (under max = actual elapsed; at/over max = recorded cap).
+    onsiteLunchMaxMinutes: 120,
+    onsiteLunchRecordedMinutes: 60,
   });
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
@@ -89,6 +93,8 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
             biweekly_start_date: s.biweekly_start_date,
             monthly_start_day: s.monthly_start_day,
             exclude_records_before_date: s.exclude_records_before_date || '',
+            onsiteLunchMaxMinutes: s.onsiteLunchMaxMinutes,
+            onsiteLunchRecordedMinutes: s.onsiteLunchRecordedMinutes,
           });
         }
       } catch (err) {
@@ -245,7 +251,13 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
       // IN-MEMORY virtual closure: open shifts are projected forward to the
       // current moment so their accumulated hours count toward totals and OT.
       // Strictly read-side — nothing here is ever persisted to Firestore.
-      const dateAttributedEntries = projectOpenShiftsAt(attributed, Date.now());
+      // Lunch projection mirrors the autoGuardrails cron: under the max-open
+      // threshold the actual elapsed lunch is deducted; at/over it the
+      // deduction caps to the recorded minutes.
+      const dateAttributedEntries = projectOpenShiftsAt(attributed, Date.now(), {
+        lunchMaxMinutes: payrollSettings.onsiteLunchMaxMinutes,
+        lunchRecordedMinutes: payrollSettings.onsiteLunchRecordedMinutes,
+      });
 
       // Group by employee and calculate biweekly overtime totals (California rules)
       const byUser = new Map<string, OvertimeEntry[]>();
@@ -281,7 +293,7 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, selectedUserId, allUsers, payrollSettings.weekly_start_day, payrollSettings.exclude_records_before_date]);
+  }, [startDate, endDate, selectedUserId, allUsers, payrollSettings.weekly_start_day, payrollSettings.exclude_records_before_date, payrollSettings.onsiteLunchMaxMinutes, payrollSettings.onsiteLunchRecordedMinutes]);
 
   // Auto-initialize dates to Current Cycle on mount (after settings load),
   // then immediately run the report.

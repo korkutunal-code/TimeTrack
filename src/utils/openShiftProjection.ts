@@ -15,6 +15,28 @@
 import type { DocumentData } from 'firebase/firestore';
 import { computeSegmentWorkMinutes } from '../app/lib/segmentOps';
 import type { TimeSegment } from '../app/lib/database';
+import { DEFAULT_GUARDRAIL_LIMITS } from './guardrailLimits';
+
+/**
+ * In-progress lunch projection policy (mirrors the autoGuardrails cron):
+ *
+ * - Elapsed < `lunchMaxMinutes`  → the cron has NOT fired; the lunch is
+ *   legitimately still open. Deduct the ACTUAL elapsed time (lunchOut → now).
+ * - Elapsed >= `lunchMaxMinutes` → the cron would have (or will) auto-end the
+ *   lunch, stamping `lunchIn = lunchOut + lunchRecordedMinutes`. Mirror that:
+ *   cap the deduction to `lunchRecordedMinutes`.
+ *
+ * Without the over-threshold cap, a forgotten lunch-start deducts every
+ * minute from lunch start to `now` — potentially hours — producing wildly
+ * inconsistent projections between employees who clocked in minutes apart
+ * (e.g. 8:05 AM vs 8:19 AM showing 8.23h vs 6.13h).
+ */
+export interface OpenShiftProjectionOptions {
+  /** Settings → Automated Actions: max minutes an on-site lunch may stay open. */
+  lunchMaxMinutes?: number;
+  /** Settings → Automated Actions: lunch duration recorded when the max is hit. */
+  lunchRecordedMinutes?: number;
+}
 
 /** Structural type for Firestore Timestamp-like values (avoids `any` casts). */
 interface TimestampLike {
@@ -44,25 +66,42 @@ function sysMillis(obj: DocumentData, base: string): number | undefined {
 
 /**
  * Virtually close one open segment at `nowMs` (copies; input untouched).
- * An in-progress lunch is ended at the same instant so it is deducted from
- * the projected span — mirroring the cron's clamp (functions/src/
- * autoGuardrails.ts). Returns null when the segment has no usable clock-in
- * anchor (or `nowMs` precedes it — clock skew).
+ * An in-progress lunch is deducted from the projected span per the
+ * threshold-aware policy documented on OpenShiftProjectionOptions:
+ * under the cron's max threshold the ACTUAL elapsed lunch is deducted;
+ * at/over the threshold the deduction is capped to the recorded minutes
+ * (mirroring what the cron stamps when it auto-ends the lunch).
+ * Returns null when the segment has no usable clock-in anchor (or `nowMs`
+ * precedes it — clock skew).
  */
-function virtuallyCloseSegment(seg: DocumentData, nowMs: number): DocumentData | null {
+function virtuallyCloseSegment(
+  seg: DocumentData,
+  nowMs: number,
+  lunchMaxMs: number,
+  lunchRecordedMs: number,
+): DocumentData | null {
   const inMs = sysMillis(seg, 'clockInSystem');
   if (inMs === undefined || nowMs < inMs) return null; // no anchor / clock skew
   const skipLunch = seg.skipLunch === true || seg.lunchSkipped === true;
   const loMs = sysMillis(seg, 'lunchOutSystem');
   const liMs = sysMillis(seg, 'lunchInSystem');
+  // In-progress lunch (started, never ended): decide the projected lunch-in.
+  // - elapsed < max  → still legitimately open: end at nowMs (actual elapsed).
+  // - elapsed >= max → cron would auto-end with recorded minutes: cap.
+  let projectedLiMs = liMs;
+  if (liMs === undefined && loMs !== undefined) {
+    const elapsedMs = nowMs - loMs;
+    projectedLiMs = elapsedMs < lunchMaxMs ? nowMs : loMs + lunchRecordedMs;
+  }
   const closed: DocumentData = {
     ...seg,
     clockInSystem: inMs,
     clockOutSystem: nowMs,
     skipLunch,
-    // In-progress lunch ends at the virtual close; a completed lunch is kept.
+    // In-progress lunch ends at the virtual close (threshold-aware); a
+    // completed lunch is kept as-is.
     lunchOutSystem: skipLunch ? undefined : loMs,
-    lunchInSystem: skipLunch ? undefined : (liMs ?? (loMs !== undefined ? nowMs : undefined)),
+    lunchInSystem: skipLunch ? undefined : projectedLiMs,
     complete: true,
     // Display-layer markers (in-memory only — nothing here is persisted).
     projectedClosed: true,
@@ -98,7 +137,15 @@ function virtuallyCloseSegment(seg: DocumentData, nowMs: number): DocumentData |
  * doc's workDate) even when `now` has crossed midnight — the same attribution
  * Team/History give a live open shift today.
  */
-export function projectOpenShiftsAt(entries: DocumentData[], nowMs: number): DocumentData[] {
+export function projectOpenShiftsAt(
+  entries: DocumentData[],
+  nowMs: number,
+  options: OpenShiftProjectionOptions = {},
+): DocumentData[] {
+  const lunchMaxMs =
+    (options.lunchMaxMinutes ?? DEFAULT_GUARDRAIL_LIMITS.onsiteLunchMaxMinutes) * 60 * 1000;
+  const lunchRecordedMs =
+    (options.lunchRecordedMinutes ?? DEFAULT_GUARDRAIL_LIMITS.onsiteLunchRecordedMinutes) * 60 * 1000;
   return entries.map(e => {
     if (e.status === 'voided' || e.status === 'archived') return e;
 
@@ -111,7 +158,7 @@ export function projectOpenShiftsAt(entries: DocumentData[], nowMs: number): Doc
 
     let newSegs: DocumentData[];
     if (openIdx >= 0) {
-      const closed = virtuallyCloseSegment(segs[openIdx], nowMs);
+      const closed = virtuallyCloseSegment(segs[openIdx], nowMs, lunchMaxMs, lunchRecordedMs);
       if (!closed) return e; // no clock-in anchor — leave unprojected
       newSegs = segs.slice();
       newSegs[openIdx] = closed;
@@ -134,7 +181,7 @@ export function projectOpenShiftsAt(entries: DocumentData[], nowMs: number): Doc
         lunchInSystem: sysMillis(e, 'lunchInSystem'),
         skipLunch: e.skipLunch === true || e.lunchSkipped === true,
         complete: false,
-      }, nowMs);
+      }, nowMs, lunchMaxMs, lunchRecordedMs);
       if (!closed) return e;
       newSegs = [...segs, closed];
     } else {

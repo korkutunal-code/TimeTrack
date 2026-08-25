@@ -71,6 +71,123 @@ describe('projectOpenShiftsAt', () => {
     expect(out.segments[0].lunchInSystem).toBe(NOW);
   });
 
+  it('deducts the ACTUAL elapsed lunch when under the max-open threshold', () => {
+    // Cron hasn't fired yet (112 min < 150 max): the lunch is legitimately
+    // still open, so the projection deducts the real elapsed duration.
+    const doc: DocumentData = {
+      id: 'u1_2026-08-24',
+      userId: 'u1',
+      workDate: '2026-08-24',
+      dayComplete: false,
+      segments: [openSeg({
+        clockInSystem: NOW - 8 * HOUR,
+        lunchOutSystem: NOW - 112 * 60 * 1000, // lunch started 112 min ago
+      })],
+    };
+    const [out] = projectOpenShiftsAt([doc], NOW, {
+      lunchMaxMinutes: 150,
+      lunchRecordedMinutes: 60,
+    });
+    expect(out.projectedOpen).toBe(true);
+    // 8h gross − 112min actual lunch = 368 min
+    expect(out.totalWorkMinutes).toBe(368);
+    // lunchInSystem ends at nowMs (actual elapsed), NOT capped
+    expect(out.segments[0].lunchInSystem).toBe(NOW);
+  });
+
+  it('caps an over-threshold in-progress lunch to the recorded minutes', () => {
+    // Reproduces the ~2h discrepancy: two employees clock in 14 min apart,
+    // but one has a forgotten lunch-start past the 150-min max. The cron
+    // would stamp lunchIn = lunchOut + 60min — the projection mirrors that.
+    const doc: DocumentData = {
+      id: 'u1_2026-08-24',
+      userId: 'u1',
+      workDate: '2026-08-24',
+      dayComplete: false,
+      segments: [openSeg({
+        clockInSystem: NOW - 8 * HOUR,        // clocked in 8h ago
+        lunchOutSystem: NOW - 3 * HOUR,        // started lunch 3h ago (>= 150 max), never ended
+      })],
+    };
+    const [out] = projectOpenShiftsAt([doc], NOW, {
+      lunchMaxMinutes: 150,
+      lunchRecordedMinutes: 60,
+    });
+    expect(out.projectedOpen).toBe(true);
+    // 8h gross − 60min capped lunch = 420 min (not 8h − 3h = 300 min)
+    expect(out.totalWorkMinutes).toBe(420);
+    // lunchInSystem is capped at loMs + 60min, NOT nowMs
+    const loMs = NOW - 3 * HOUR;
+    expect(out.segments[0].lunchInSystem).toBe(loMs + 60 * 60 * 1000);
+  });
+
+  it('uses the default guardrail limits (120 max / 60 recorded) when no options are passed', () => {
+    const doc: DocumentData = {
+      id: 'u1_2026-08-24',
+      userId: 'u1',
+      workDate: '2026-08-24',
+      dayComplete: false,
+      segments: [openSeg({
+        clockInSystem: NOW - 8 * HOUR,
+        lunchOutSystem: NOW - 3 * HOUR, // 180 min elapsed >= 120 default max
+      })],
+    };
+    const [out] = projectOpenShiftsAt([doc], NOW);
+    // 8h gross − 60min recorded cap = 420 min
+    expect(out.totalWorkMinutes).toBe(420);
+    const loMs = NOW - 3 * HOUR;
+    expect(out.segments[0].lunchInSystem).toBe(loMs + 60 * 60 * 1000);
+  });
+
+  it('boundary: lunch elapsed exactly at the max threshold is capped', () => {
+    const doc: DocumentData = {
+      id: 'u1_2026-08-24',
+      userId: 'u1',
+      workDate: '2026-08-24',
+      dayComplete: false,
+      segments: [openSeg({
+        clockInSystem: NOW - 8 * HOUR,
+        lunchOutSystem: NOW - 150 * 60 * 1000, // exactly 150 min elapsed
+      })],
+    };
+    const [out] = projectOpenShiftsAt([doc], NOW, {
+      lunchMaxMinutes: 150,
+      lunchRecordedMinutes: 60,
+    });
+    // elapsed >= max → capped to 60 recorded minutes: 480 − 60 = 420
+    expect(out.totalWorkMinutes).toBe(420);
+  });
+
+  it('two employees clocked in 14 min apart project consistently (over-threshold lunch)', () => {
+    // Mutlu: clocked in 8:05 AM, no lunch
+    const mutlu: DocumentData = {
+      id: 'mutlu_2026-08-24',
+      userId: 'mutlu',
+      workDate: '2026-08-24',
+      dayComplete: false,
+      segments: [openSeg({ clockInSystem: NOW - 8 * HOUR - 14 * 60 * 1000 })],
+    };
+    // Gary: clocked in 8:19 AM (14 min later), forgot to end lunch 3h ago
+    const gary: DocumentData = {
+      id: 'gary_2026-08-24',
+      userId: 'gary',
+      workDate: '2026-08-24',
+      dayComplete: false,
+      segments: [openSeg({
+        clockInSystem: NOW - 8 * HOUR,
+        lunchOutSystem: NOW - 3 * HOUR,
+      })],
+    };
+    const opts = { lunchMaxMinutes: 150, lunchRecordedMinutes: 60 };
+    const [mOut, gOut] = projectOpenShiftsAt([mutlu, gary], NOW, opts);
+    // Mutlu: 8h14m gross, no lunch = 494 min
+    expect(mOut.totalWorkMinutes).toBe(494);
+    // Gary: 8h gross − 60min capped lunch = 420 min
+    expect(gOut.totalWorkMinutes).toBe(420);
+    // Difference: 494 − 420 = 74 min ≈ 14 min clock-in delta + 60 min lunch
+    // (without the cap, Gary would show 8h − 3h = 300 min, a 194-min gap)
+  });
+
   it('keeps a completed lunch as-is (not extended to now)', () => {
     const doc: DocumentData = {
       id: 'u1_2026-08-24',
