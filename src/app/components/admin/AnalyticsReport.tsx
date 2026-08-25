@@ -10,9 +10,10 @@ import { Label } from '../ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
-import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, ChevronDown, ChevronRight, Radio } from 'lucide-react';
+import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, Radio } from 'lucide-react';
 import { generateCSV, downloadCSV } from '../../../services/exportService';
 import { ALL_USERS, USER_GROUP_OPTIONS } from '../../../utils/userSelection';
+import { DailyBreakdownTable } from './DailyBreakdownTable';
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
@@ -36,6 +37,8 @@ const CHIP_CLASS =
 
 interface AnalyticsReportProps {
   allUsers: User[];
+  /** The signed-in user (drives admin-only Bulk Edit in Daily Breakdown). */
+  currentUser: User;
   /**
    * Admin timezone view (Req 4). 'local' = employee local tz (default),
    * 'pt' = America/Los_Angeles. Display-only; conversion uses the absolute
@@ -55,14 +58,20 @@ interface PayrollSummary {
   dailyEntries?: DocumentData[];
 }
 
-export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsReportProps) {
+export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' }: AnalyticsReportProps) {
   const [selectedUserId, setSelectedUserId] = useState<string>(ALL_USERS);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [report, setReport] = useState<PayrollSummary[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
-  const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
+  // Per-user resolved work-model definition (drives the Bulk Edit live OT
+  // preview in DailyBreakdownTable). Captured during generateReport.
+  const [workModelByUser, setWorkModelByUser] = useState<Map<string, WorkModelDef | null>>(new Map());
+  // Live Bulk Edit preview totals reported up from DailyBreakdownTable while
+  // the admin edits (null = not editing). The employee summary card swaps to
+  // these so the totals update dynamically BEFORE the batch save.
+  const [liveTotalsByUser, setLiveTotalsByUser] = useState<Map<string, { regularHours: number; overtimeHours: number; doubleTimeHours: number; totalHours: number } | null>>(new Map());
   // Daily Breakdown: merged view always shows the flag chips AND the
   // Reg/OT/DT metric columns computed from the pipeline entries
   // (utils/analyticsFlags.ts).
@@ -265,10 +274,12 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
       });
 
       const summaries: PayrollSummary[] = [];
+      const wmByUser = new Map<string, WorkModelDef | null>();
       for (const [userId, entries] of byUser.entries()) {
         const userObj = allUsers.find(u => u.uid === userId);
         const userWorkModel = userObj?.workModelId ? workModelById.get(userObj.workModelId) ?? null : null;
         const userOverride = userObj?.workModelOverride ?? null;
+        wmByUser.set(userId, userWorkModel);
         const ot = calculateBiweeklyOvertimeTotals(entries, payrollSettings.weekly_start_day, userWorkModel, userOverride);
         summaries.push({
           userId,
@@ -283,6 +294,7 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
       }
 
       summaries.sort((a, b) => a.userName.localeCompare(b.userName));
+      setWorkModelByUser(wmByUser);
       setReport(summaries);
       toast.success('Report generated');
     } catch {
@@ -523,6 +535,12 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
     return `${dh}:${m} ${ampm}`;
   };
 
+  // Resolved work-model definition for a given employee (drives the Bulk Edit
+  // live OT preview). Populated during generateReport; falls back to null
+  // (CA defaults) when the report hasn't run yet.
+  const workModelByIdForUser = (uid: string): WorkModelDef | null =>
+    workModelByUser.get(uid) ?? null;
+
   // Dynamic day-offset badge: "+1d", "+2d", "+3d" … rendered when a timestamp
   // falls on a later calendar day than its shift's clock-in. Used in both the
   // parent summary row and the per-shift sub-rows.
@@ -754,7 +772,7 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                         centered against the metric boxes and View Details. */}
                     <div className="flex flex-col shrink-0 w-[150px]">
                       <h3 className="text-sm font-bold text-slate-900 truncate">{summary.userName}</h3>
-                      <p className="text-xs text-slate-400">Total: {summary.totalHours.toFixed(2)} hours</p>
+                      <p className="text-xs text-slate-400">Total: {(liveTotalsByUser.get(summary.userId)?.totalHours ?? summary.totalHours).toFixed(2)} hours</p>
                       {hasOpenShift && (
                         // self-start: without it the column flexbox's default
                         // `align-items: stretch` stretches the chip to the
@@ -767,21 +785,29 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                       )}
                     </div>
 
-                    {/* Center — metric boxes */}
-                    <div className="flex-1 grid grid-cols-3 gap-3 items-center">
-                      <div className="bg-slate-50 py-1.5 px-3 rounded-lg border border-slate-200">
-                        <p className="text-xs text-slate-600 mb-0.5">Regular</p>
-                        <p className="text-lg font-bold text-slate-900">{summary.regularHours.toFixed(1)}</p>
-                      </div>
-                      <div className="bg-orange-50 py-1.5 px-3 rounded-lg border border-orange-200">
-                        <p className="text-xs text-orange-700 mb-0.5">OT 1.5x</p>
-                        <p className="text-lg font-bold text-orange-700">{summary.overtimeHours.toFixed(1)}</p>
-                      </div>
-                      <div className="bg-red-50 py-1.5 px-3 rounded-lg border border-red-200">
-                        <p className="text-xs text-red-700 mb-0.5">DT 2x</p>
-                        <p className="text-lg font-bold text-red-700">{summary.doubleTimeHours.toFixed(1)}</p>
-                      </div>
-                    </div>
+                    {/* Center — metric boxes. During Bulk Edit these swap to
+                        the live preview totals (amber tint) so the admin sees
+                        the impact of pending edits before saving. */}
+                    {(() => {
+                      const live = liveTotalsByUser.get(summary.userId) ?? null;
+                      const boxLive = 'ring-1 ring-amber-300 bg-amber-50/60';
+                      return (
+                        <div className="flex-1 grid grid-cols-3 gap-3 items-center">
+                          <div className={`py-1.5 px-3 rounded-lg border ${live ? boxLive : 'bg-slate-50 border-slate-200'}`}>
+                            <p className="text-xs text-slate-600 mb-0.5">Regular</p>
+                            <p className="text-lg font-bold text-slate-900">{(live?.regularHours ?? summary.regularHours).toFixed(1)}</p>
+                          </div>
+                          <div className={`py-1.5 px-3 rounded-lg border ${live ? boxLive : 'bg-orange-50 border-orange-200'}`}>
+                            <p className="text-xs text-orange-700 mb-0.5">OT 1.5x</p>
+                            <p className="text-lg font-bold text-orange-700">{(live?.overtimeHours ?? summary.overtimeHours).toFixed(1)}</p>
+                          </div>
+                          <div className={`py-1.5 px-3 rounded-lg border ${live ? boxLive : 'bg-red-50 border-red-200'}`}>
+                            <p className="text-xs text-red-700 mb-0.5">DT 2x</p>
+                            <p className="text-lg font-bold text-red-700">{(live?.doubleTimeHours ?? summary.doubleTimeHours).toFixed(1)}</p>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Right — view details */}
                     <Button
@@ -795,180 +821,81 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
                   </div>
 
                   {expandedUserId === summary.userId && summary.dailyEntries && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 overflow-x-auto px-[10px]">
-                      <p className="text-xs font-semibold text-slate-700 mb-2">Daily Breakdown</p>
-                      {/* Unified fixed grid: table-fixed + w-full pins every
-                          labeled column to an exact pixel width while the
-                          widthless FLAGS column absorbs all remaining container
-                          width (its chips wrap via flex-wrap, growing the row
-                          height as needed). The table therefore always matches
-                          the card's inner width — no horizontal scrollbar, and
-                          the right-aligned Total column is never clipped. Edge
-                          inset is a uniform 10px: Date cells use pl-[10px],
-                          Total cells use pr-[10px] (no bookend spacer columns). */}
-                      <table className="table-fixed w-full text-xs text-left text-slate-600">
-                        <colgroup>
-                          <col className="w-[164px]" />
-                          <col className="w-[100px]" />
-                          <col className="w-[100px]" />
-                          <col className="w-[100px]" />
-                          <col className="w-[100px]" />
-                          <col />
-                          <col className="w-[100px]" />
-                          <col className="w-[100px]" />
-                          <col className="w-[100px]" />
-                          <col className="w-14" />
-                        </colgroup>
-                        <thead className="bg-slate-50 text-slate-700 font-semibold">
-                          <tr>
-                            <th className="py-2 pl-[10px] pr-1.5">Date</th>
-                            <th className="px-1.5 py-2">Clock In</th>
-                            <th className="px-1.5 py-2">Lunch Out</th>
-                            <th className="px-1.5 py-2">Lunch In</th>
-                            <th className="px-1.5 py-2">Clock Out</th>
-                            <th className="px-1.5 py-2">Flags</th>
-                            <th className="px-1.5 py-2">Regular</th>
-                            <th className="px-1.5 py-2">OT</th>
-                            <th className="px-1.5 py-2">DT</th>
-                            <th className="py-2 pl-1.5 pr-[10px] text-right">Total</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {summary.dailyEntries.flatMap((day: DocumentData) => {
-                            const b = getDayBoundaries(day, viewZone);
-                            const lunch = getDayLunch(day, viewZone);
-                            const segs = Array.isArray(day.segments) ? day.segments : [];
-                            const isMultiShift = segs.length > 1;
-                            // Unique, collision-free row key. Real entries use
-                            // their Firestore `${uid}_${date}` id; exploded
-                            // cross-midnight parts use `${sourceId}@${date}` —
-                            // so a real 07/30 shift and a synthetic 07/30 part
-                            // never share a key (workDate alone could collide).
-                            const rowKey = String(day.id ?? day.workDate);
-                            const dateKey = `${summary.userId}|${rowKey}`;
-                            const isDateExpanded = expandedDates.has(dateKey);
-                            const toggleDate = () => {
-                              setExpandedDates(prev => {
-                                const next = new Set(prev);
-                                if (next.has(dateKey)) next.delete(dateKey);
-                                else next.add(dateKey);
-                                return next;
-                              });
-                            };
-                            const dayTotalHours = (day.totalWorkMinutes || 0) / 60;
-
-                            // Missing-lunch flag for the daily aggregate row.
-                            // Applies ONLY to On-site employees. Lunch is
-                            // "missing" when no break was recorded anywhere in
-                            // the day — i.e. getDayLunch returned no lunchOut/
-                            // lunchIn and isMultiple is false (0 breaks total
-                            // across all shifts). If any shift took a lunch,
-                            // getDayLunch returns either the single break's
-                            // times or isMultiple:true, so the row is not
-                            // flagged. Sub-shift rows are intentionally exempt.
-                            const isOnsite = summary.workModel === 'On-site';
-                            const lunchMissing = isOnsite && !lunch.isMultiple && !lunch.lunchOut && !lunch.lunchIn;
-
-                            // Flags view: shift-level flags per segment
-                            // (doc-level auto/anomaly markers mirror the LAST
-                            // segment), aggregated with day-level flags on the
-                            // parent row only. Segment-less legacy docs use
-                            // their root fields as the single pseudo-shift.
-                            const flagSegs: DocumentData[] = segs.length > 0 ? segs : [day];
-                            const childFlags: string[][] = flagSegs.map((s, i) =>
-                              getSegmentFlags(s, {
-                                isLastSegment: i === flagSegs.length - 1,
-                                docAutoClosed: day.autoClosed === true,
-                                docAutoEndedLunch: day.autoEndedLunch === true,
-                                docAnomaly: day.anomaly_flag === true,
-                                completedAt: day.completedAt,
-                                // Gap math runs in the EMPLOYEE's zone (manual
-                                // strings are stored in their local wall clock).
-                                timezone: empTz,
-                              }),
-                            );
-                            const parentFlags = getParentRowFlags(day, childFlags, lunchMissing ? ['missing_lunch'] : []);
-
-                            const renderLunchCell = (boundary: TimeBoundary | undefined): JSX.Element => {
-                              if (lunch.isMultiple) return <span className="italic text-slate-400">Multiple</span>;
-                              if (lunchMissing) return <span className={`${CHIP_CLASS} bg-red-100 text-red-700 font-semibold border-red-200`}>--</span>;
-                              return fmtBoundary(boundary, empTz);
-                            };
-
-                            const rows: JSX.Element[] = [
-                              <tr key={rowKey} className="border-b border-slate-100 hover:bg-slate-50/50">
-                                <td className="py-2 pl-[10px] pr-1.5 font-medium align-middle">
-                                  <span className={`inline-flex items-center gap-1 ${isMultiShift ? 'cursor-pointer' : ''}`} onClick={isMultiShift ? toggleDate : undefined}>
-                                    {isMultiShift && (
-                                      isDateExpanded
-                                        ? <ChevronDown className="size-3.5 text-slate-500" />
-                                        : <ChevronRight className="size-3.5 text-slate-500" />
-                                    )}
-                                    {formatDateShortWithWeekday(day.workDate)}
-                                    {isMultiShift && (
-                                      <span className="ml-1 text-xs font-normal text-slate-400">({segs.length} shifts)</span>
-                                    )}
-                                  </span>
-                                </td>
-                                <td className="px-1.5 py-2 align-middle">{fmtBoundary(b.clockIn, empTz)}</td>
-                                <td className="px-1.5 py-2 align-middle">{renderLunchCell(lunch.lunchOut)}</td>
-                                <td className="px-1.5 py-2 align-middle">{renderLunchCell(lunch.lunchIn)}</td>
-                                <td className="px-1.5 py-2 align-middle">
-                                  {day.projectedOpen
-                                    ? <span className={`${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-xs font-semibold`}>In Progress</span>
-                                    : fmtBoundary(b.clockOut, empTz)}
-                                </td>
-                                {/* Parent day row: combined flags (child shift
-                                    flags + day-level flags), as chips. The cell
-                                    grows vertically only when chips wrap. */}
-                                <td className="px-1.5 py-2 align-middle">{renderFlagChips(parentFlags)}</td>
-                                <td className="px-1.5 py-2 align-middle">{((day.regularMinutes || 0) / 60).toFixed(1)}</td>
-                                <td className="px-1.5 py-2 align-middle">{((day.otMinutes || 0) / 60).toFixed(1)}</td>
-                                <td className="px-1.5 py-2 align-middle">{((day.doubleTimeMinutes || 0) / 60).toFixed(1)}</td>
-                                <td className={`py-2 pl-1.5 pr-[10px] text-right align-middle font-semibold ${dayTotalHours > 8 ? 'text-red-600' : ''}`}>
-                                  {dayTotalHours.toFixed(1)}
-                                </td>
-                              </tr>
-                            ];
-
-                            if (isMultiShift && isDateExpanded) {
-                              segs.forEach((seg: DocumentData, i: number) => {
-                                const shiftTotalHours = (seg.workMinutes || 0) / 60;
-                                rows.push(
-                                  <tr key={`${rowKey}-seg-${i}`} className="bg-purple-50/40 hover:bg-purple-50/70 border-b border-purple-100">
-                                    <td className="py-2 pl-[10px] pr-1.5 text-purple-700 font-medium align-middle">↳ Shift {i + 1}</td>
-                                    <td className="px-1.5 py-2 align-middle">{fmtBoundary({ time: seg.clockInManual, ms: seg.clockInSystem, dayOffset: 0 }, empTz)}</td>
-                                    <td className="px-1.5 py-2 align-middle">
-                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchOutManual, ms: seg.lunchOutSystem, dayOffset: segFieldDayOffset(seg, 'lunchOutManual', viewZone) }, empTz)}
-                                    </td>
-                                    <td className="px-1.5 py-2 align-middle">
-                                      {seg.skipLunch ? <span className="italic text-slate-400">skipped</span> : fmtBoundary({ time: seg.lunchInManual, ms: seg.lunchInSystem, dayOffset: segFieldDayOffset(seg, 'lunchInManual', viewZone) }, empTz)}
-                                    </td>
-                                    <td className="px-1.5 py-2 align-middle">
-                                      {seg.projectedClosed
-                                        ? <span className={`${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-xs font-semibold`}>now</span>
-                                        : fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual', viewZone) }, empTz)}
-                                    </td>
-                                    {/* Child shift row: ONLY this segment's
-                                        shift-level flags (day-level flags
-                                        like very_long_day stay on the parent). */}
-                                    <td className="px-1.5 py-2 align-middle">{renderFlagChips(childFlags[i] ?? [])}</td>
-                                    <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
-                                    <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
-                                    <td className="px-1.5 py-2 align-middle text-slate-400">--</td>
-                                    <td className={`py-2 pl-1.5 pr-[10px] text-right align-middle font-semibold ${shiftTotalHours > 8 ? 'text-red-600' : 'text-purple-700'}`}>
-                                      {shiftTotalHours.toFixed(1)}
-                                    </td>
-                                  </tr>
-                                );
-                              });
-                            }
-
-                            return rows;
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                    <DailyBreakdownTable
+                      summary={summary}
+                      currentUser={currentUser}
+                      employeeTimezone={empTz}
+                      workModelDef={workModelByIdForUser(summary.userId)}
+                      onSaved={generateReport}
+                      onLiveTotals={(totals) =>
+                        setLiveTotalsByUser(prev => {
+                          const next = new Map(prev);
+                          if (totals) next.set(summary.userId, totals);
+                          else next.delete(summary.userId);
+                          return next;
+                        })
+                      }
+                      formatDate={(ymd: string) => formatDateShortWithWeekday(ymd)}
+                      isMultiShift={(day: DocumentData) => (Array.isArray(day.segments) ? day.segments : []).length > 1}
+                      segmentsOf={(day: DocumentData) => (Array.isArray(day.segments) ? day.segments : [])}
+                      renderParentBoundary={(day: DocumentData, which: 'in' | 'out') => {
+                        const b = getDayBoundaries(day, viewZone);
+                        if (which === 'in') return fmtBoundary(b.clockIn, empTz);
+                        return day.projectedOpen
+                          ? <span className={`${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-xs font-semibold`}>In Progress</span>
+                          : fmtBoundary(b.clockOut, empTz);
+                      }}
+                      renderParentLunch={(day: DocumentData, which: 'out' | 'in') => {
+                        const lunch = getDayLunch(day, viewZone);
+                        const isOnsite = summary.workModel === 'On-site';
+                        const lunchMissing = isOnsite && !lunch.isMultiple && !lunch.lunchOut && !lunch.lunchIn;
+                        const boundary = which === 'out' ? lunch.lunchOut : lunch.lunchIn;
+                        if (lunch.isMultiple) return <span className="italic text-slate-400">Multiple</span>;
+                        if (lunchMissing) return <span className={`${CHIP_CLASS} bg-red-100 text-red-700 font-semibold border-red-200`}>--</span>;
+                        return fmtBoundary(boundary, empTz);
+                      }}
+                      renderSegBoundary={(seg: DocumentData, field) => {
+                        if (field === 'clockInManual') return fmtBoundary({ time: seg.clockInManual, ms: seg.clockInSystem, dayOffset: 0 }, empTz);
+                        if (field === 'clockOutManual') {
+                          return seg.projectedClosed
+                            ? <span className={`${CHIP_CLASS} bg-emerald-100 text-emerald-700 border-emerald-200 text-xs font-semibold`}>now</span>
+                            : fmtBoundary({ time: seg.clockOutManual, ms: seg.clockOutSystem, dayOffset: segFieldDayOffset(seg, 'clockOutManual', viewZone) }, empTz);
+                        }
+                        const sysField = field === 'lunchOutManual' ? 'lunchOutSystem' : 'lunchInSystem';
+                        return fmtBoundary({ time: seg[field], ms: seg[sysField], dayOffset: segFieldDayOffset(seg, field, viewZone) }, empTz);
+                      }}
+                      renderParentFlags={(day: DocumentData) => {
+                        const lunch = getDayLunch(day, viewZone);
+                        const isOnsite = summary.workModel === 'On-site';
+                        const lunchMissing = isOnsite && !lunch.isMultiple && !lunch.lunchOut && !lunch.lunchIn;
+                        const segs = Array.isArray(day.segments) ? day.segments : [];
+                        const flagSegs: DocumentData[] = segs.length > 0 ? segs : [day];
+                        const childFlags: string[][] = flagSegs.map((s, i) =>
+                          getSegmentFlags(s, {
+                            isLastSegment: i === flagSegs.length - 1,
+                            docAutoClosed: day.autoClosed === true,
+                            docAutoEndedLunch: day.autoEndedLunch === true,
+                            docAnomaly: day.anomaly_flag === true,
+                            completedAt: day.completedAt,
+                            timezone: empTz,
+                          }),
+                        );
+                        return renderFlagChips(getParentRowFlags(day, childFlags, lunchMissing ? ['missing_lunch'] : []));
+                      }}
+                      renderSegFlags={(day: DocumentData, index: number) => {
+                        const segs = Array.isArray(day.segments) ? day.segments : [];
+                        const flagSegs: DocumentData[] = segs.length > 0 ? segs : [day];
+                        const flags = getSegmentFlags(flagSegs[index] ?? day, {
+                          isLastSegment: index === flagSegs.length - 1,
+                          docAutoClosed: day.autoClosed === true,
+                          docAutoEndedLunch: day.autoEndedLunch === true,
+                          docAnomaly: day.anomaly_flag === true,
+                          completedAt: day.completedAt,
+                          timezone: empTz,
+                        });
+                        return renderFlagChips(flags);
+                      }}
+                    />
                   )}
                 </CardContent>
               </Card>

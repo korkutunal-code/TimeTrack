@@ -557,7 +557,7 @@ export default function App() {
           <div className="mb-3">
             <TimezoneViewToggle mode={timeViewMode} onChange={setTimeViewMode} />
           </div>
-          <AnalyticsReport allUsers={allUsers} timeViewMode={timeViewMode} />
+          <AnalyticsReport allUsers={allUsers} currentUser={currentUser} timeViewMode={timeViewMode} />
         </TabsContent>
 
         <TabsContent value="audit">
