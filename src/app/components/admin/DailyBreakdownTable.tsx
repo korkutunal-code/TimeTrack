@@ -42,6 +42,7 @@ import {
   computeSegmentWorkMinutes,
 } from '../../lib/database';
 import { validateSegmentChronology } from '../../../utils/timeValidation';
+import { calculateLunchMinutes } from '../../../utils/timeCalculations';
 import {
   calculateDailyOvertimeBreakdown,
   calculateWeeklyOvertimeAdjustments,
@@ -535,6 +536,14 @@ export function DailyBreakdownTable({
             clockOutManual: edit.clockOutManual,
             skipLunch: edit.skipLunch,
             complete: !!edit.clockOutManual,
+            // A cleared manual boundary must not keep its stale system epoch:
+            // recomputeSegmentSystemTimestamps only refreshes non-empty
+            // manuals, so an emptied clock-out would otherwise linger with
+            // yesterday's clockOutSystem instant. stripUndefined drops these
+            // keys from the persisted array element.
+            ...(edit.skipLunch || !edit.lunchOutManual ? { lunchOutSystem: undefined } : {}),
+            ...(edit.skipLunch || !edit.lunchInManual ? { lunchInSystem: undefined } : {}),
+            ...(!edit.clockOutManual ? { clockOutSystem: undefined } : {}),
           };
           rebuilt.push(recomputeSegmentSystemTimestamps(merged, anchor, employeeTimezone));
         }
@@ -587,20 +596,43 @@ export function DailyBreakdownTable({
           reason: '',
         });
 
+        // Mirror the LAST segment onto the root fields (dual-write invariant:
+        // root mirrors the last persisted segment). Every value is coerced to
+        // string or null — updateDoc REJECTS undefined (the pre-fix crash: an
+        // open last segment has no clockOutSystem and threw, failing the whole
+        // save). null explicitly clears a previously-set field (e.g. a shift
+        // that went from closed to open clears root clockOutSystem).
+        const mirror = lastClosed
+          ? {
+            clockInManual: lastClosed.clockInManual ?? '',
+            clockOutManual: lastClosed.clockOutManual ?? '',
+            lunchOutManual: lastClosed.skipLunch ? '' : (lastClosed.lunchOutManual ?? ''),
+            lunchInManual: lastClosed.skipLunch ? '' : (lastClosed.lunchInManual ?? ''),
+            lunchSkipped: finalSegs.every(s => s.skipLunch === true),
+            lunchMinutes: lastClosed.skipLunch
+              ? 0
+              : calculateLunchMinutes(lastClosed.lunchOutManual ?? '', lastClosed.lunchInManual ?? ''),
+            clockInSystem: lastClosed.clockInSystem ?? null,
+            clockOutSystem: lastClosed.clockOutSystem ?? null,
+            lunchOutSystem: lastClosed.skipLunch ? null : (lastClosed.lunchOutSystem ?? null),
+            lunchInSystem: lastClosed.skipLunch ? null : (lastClosed.lunchInSystem ?? null),
+            clockInSystemTime: lastClosed.clockInSystem != null ? Timestamp.fromMillis(lastClosed.clockInSystem) : null,
+            clockOutSystemTime: lastClosed.clockOutSystem != null ? Timestamp.fromMillis(lastClosed.clockOutSystem) : null,
+            lunchOutSystemTime: !lastClosed.skipLunch && lastClosed.lunchOutSystem != null
+              ? Timestamp.fromMillis(lastClosed.lunchOutSystem) : null,
+            lunchInSystemTime: !lastClosed.skipLunch && lastClosed.lunchInSystem != null
+              ? Timestamp.fromMillis(lastClosed.lunchInSystem) : null,
+          }
+          : null;
+
         await updateDoc(doc(db, 'timeEntries', sourceId), {
           segments: finalSegs.map(s => stripUndefined(s)),
           totalWorkMinutes: recalc.totalWorkMinutes,
           totalHours: recalc.totalHours,
-          // Mirror the last shift onto the root fields (dual-write invariant).
-          ...(lastClosed
-            ? {
-              clockInManual: finalSegs[0]?.clockInManual ?? persisted.clockInManual,
-              clockOutManual: lastClosed.clockOutManual,
-              clockOutSystem: lastClosed.clockOutSystem,
-              lunchSkipped: finalSegs.every(s => s.skipLunch === true),
-            }
-            : {}),
-          ...(allComplete ? { dayComplete: true, currentStep: 'complete' } : {}),
+          ...(mirror ?? {}),
+          dayComplete: allComplete,
+          complete: allComplete,
+          ...(allComplete ? { currentStep: 'complete' } : {}),
           status: 'corrected',
           updatedAt: Timestamp.now(),
           updatedBy: currentUser.uid,
