@@ -220,10 +220,8 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
     setEndDate(end);
   };
 
-  const generateReport = useCallback(async (overrideStart?: string, overrideEnd?: string) => {
-    const effStart = overrideStart ?? startDate;
-    const effEnd = overrideEnd ?? endDate;
-    if (!effStart || !effEnd) {
+  const generateReport = useCallback(async () => {
+    if (!startDate || !endDate) {
       toast.error('Please select start and end dates');
       return;
     }
@@ -240,8 +238,8 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
       // role narrowing as Payroll) — EXCEPT completeOnly: false so open /
       // incomplete shifts are included.
       const attributed = await fetchAttributedTimeEntries({
-        startDate: effStart,
-        endDate: effEnd,
+        startDate,
+        endDate,
         selectedUserId,
         allUsers,
         completeOnly: false,
@@ -295,8 +293,10 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
     }
   }, [startDate, endDate, selectedUserId, allUsers, payrollSettings.weekly_start_day, payrollSettings.exclude_records_before_date, payrollSettings.onsiteLunchMaxMinutes, payrollSettings.onsiteLunchRecordedMinutes]);
 
-  // Auto-initialize dates to Current Cycle on mount (after settings load),
-  // then immediately run the report.
+  // Auto-initialize dates to Current Cycle on mount (after settings load).
+  // The state change re-triggers the debounced auto-refresh effect below,
+  // which is the single source of report runs — calling generateReport()
+  // directly here too would double-fetch (the setState fires the debounce).
   useEffect(() => {
     if (!settingsLoaded) return;
     const { start, end } = computeCycleDates('current');
@@ -304,7 +304,6 @@ export function AnalyticsReport({ allUsers, timeViewMode = 'local' }: AnalyticsR
     setTimeout(() => {
       setStartDate(start);
       setEndDate(end);
-      generateReport(start, end);
     }, 0);
   }, [settingsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
