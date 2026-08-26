@@ -86,11 +86,13 @@ interface DraftSegment {
   /** Original manual values, for modified-cell highlighting. */
   orig: { clockInManual: string; lunchOutManual: string; lunchInManual: string; clockOutManual: string };
   /**
-   * The persisted pipeline segment this draft came from (undefined for
-   * added/legacy-synthesized rows). Carries the epoch-derived `workMinutes`
-   * so the live preview matches the read-only report exactly for UNEDITED
-   * segments (the HH:MM strings are minute-truncated and would drift the
-   * recomputed day total by up to ±1 min per shift).
+   * The persisted pipeline data this draft came from: the segment for normal
+   * rows, or the whole DAY doc for legacy segment-less rows (whose root-level
+   * fields carry the shift data). Undefined only for shifts ADDED during bulk
+   * edit. Carries the epoch-derived `workMinutes` so the live preview matches
+   * the read-only report exactly for UNEDITED segments (the HH:MM strings are
+   * minute-truncated and would drift the recomputed day total by up to ±1 min
+   * per shift).
    */
   source?: TimeSegment;
 }
