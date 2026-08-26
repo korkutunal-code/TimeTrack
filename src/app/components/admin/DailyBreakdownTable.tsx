@@ -933,7 +933,13 @@ export function DailyBreakdownTable({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={cancelBulkEdit} disabled={saving}>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs bg-white hover:bg-slate-50 text-slate-700 border-slate-300"
+              onClick={cancelBulkEdit}
+              disabled={saving}
+            >
               Cancel
             </Button>
             <Button
