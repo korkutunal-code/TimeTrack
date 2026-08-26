@@ -83,8 +83,12 @@ interface DraftSegment {
   isNew: boolean;
   /** true when the admin marked this persisted shift for deletion. */
   deleted: boolean;
-  /** Original manual values, for modified-cell highlighting. */
-  orig: { clockInManual: string; lunchOutManual: string; lunchInManual: string; clockOutManual: string };
+  /** Original values (times + skip flag), for modified-cell highlighting and
+      the clean/dirty evaluation. */
+  orig: { clockInManual: string; lunchOutManual: string; lunchInManual: string; clockOutManual: string; skipLunch: boolean };
+  /** Lunch values captured when skip-lunch was toggled ON, restored exactly
+      when it is toggled back OFF (so on→off returns the row to pristine). */
+  preSkipLunch?: { lunchOutManual: string; lunchInManual: string };
   /**
    * The persisted pipeline data this draft came from: the segment for normal
    * rows, or the whole DAY doc for legacy segment-less rows (whose root-level
@@ -169,7 +173,7 @@ function freshDraft(): DraftSegment {
     skipLunch: false,
     isNew: true,
     deleted: false,
-    orig: { clockInManual: '', lunchOutManual: '', lunchInManual: '', clockOutManual: '' },
+    orig: { clockInManual: '', lunchOutManual: '', lunchInManual: '', clockOutManual: '', skipLunch: false },
   };
 }
 
@@ -188,6 +192,7 @@ function segToDraft(s: DocumentData): DraftSegment {
       lunchOutManual: s.lunchOutManual ?? '',
       lunchInManual: s.lunchInManual ?? '',
       clockOutManual: s.clockOutManual ?? '',
+      skipLunch: s.skipLunch === true,
     },
     // Full persisted segment (epoch systems + stored workMinutes) so the live
     // preview can reuse the canonical epoch-precision minutes for UNEDITED
@@ -202,6 +207,22 @@ const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function isModified(seg: DraftSegment, field: EditField): boolean {
   return seg[field] !== seg.orig[field];
+}
+
+/**
+ * True when any editable value (a time field OR the skip-lunch flag) differs
+ * from its original. skipLunch is included so a skip-only change counts as a
+ * modification (it must persist), while a skip on→off round-trip returns the
+ * row to pristine (every field back to orig → not dirty).
+ */
+function isDraftModified(s: DraftSegment): boolean {
+  return (
+    isModified(s, 'clockInManual') ||
+    isModified(s, 'lunchOutManual') ||
+    isModified(s, 'lunchInManual') ||
+    isModified(s, 'clockOutManual') ||
+    s.skipLunch !== s.orig.skipLunch
+  );
 }
 
 /** Minutes-of-day for HH:MM, NaN when invalid/empty. */
@@ -378,9 +399,7 @@ export function DailyBreakdownTable({
     () =>
       drafts.size > 0 &&
       [...drafts.values()].some(d =>
-        d.segments.some(s => s.deleted || s.isNew
-          ? true
-          : (isModified(s, 'clockInManual') || isModified(s, 'lunchOutManual') || isModified(s, 'lunchInManual') || isModified(s, 'clockOutManual'))),
+        d.segments.some(s => (s.deleted || s.isNew ? true : isDraftModified(s))),
       ),
     [drafts],
   );
@@ -570,11 +589,29 @@ export function DailyBreakdownTable({
       if (!day) return prev;
       next.set(dayKey, {
         ...day,
-        segments: day.segments.map(s =>
-          s.key === segKey
-            ? { ...s, skipLunch: checked, ...(checked ? { lunchOutManual: '', lunchInManual: '' } : {}) }
-            : s,
-        ),
+        segments: day.segments.map(s => {
+          if (s.key !== segKey) return s;
+          if (checked) {
+            // ON: stash the current lunch values, then blank them (skipped
+            // lunch has no punch times).
+            return {
+              ...s,
+              skipLunch: true,
+              preSkipLunch: { lunchOutManual: s.lunchOutManual, lunchInManual: s.lunchInManual },
+              lunchOutManual: '',
+              lunchInManual: '',
+            };
+          }
+          // OFF: restore the stashed lunch values (fall back to the persisted
+          // originals). Toggling on→off with no other edits returns every
+          // field to its original value, so the row evaluates pristine.
+          return {
+            ...s,
+            skipLunch: false,
+            lunchOutManual: s.preSkipLunch?.lunchOutManual ?? s.orig.lunchOutManual,
+            lunchInManual: s.preSkipLunch?.lunchInManual ?? s.orig.lunchInManual,
+          };
+        }),
       });
       return next;
     });
@@ -620,10 +657,7 @@ export function DailyBreakdownTable({
       // parts merge back into the single source doc.
       const byDoc = new Map<string, DraftDay[]>();
       for (const d of drafts.values()) {
-        const touched = d.segments.some(s =>
-          s.deleted || s.isNew ||
-          isModified(s, 'clockInManual') || isModified(s, 'lunchOutManual') ||
-          isModified(s, 'lunchInManual') || isModified(s, 'clockOutManual'));
+        const touched = d.segments.some(s => s.deleted || s.isNew || isDraftModified(s));
         if (!touched) continue;
         if (!byDoc.has(d.sourceId)) byDoc.set(d.sourceId, []);
         byDoc.get(d.sourceId)!.push(d);
@@ -845,12 +879,12 @@ export function DailyBreakdownTable({
     errors.get(`${dayKey}|${segKey}|${field}`);
 
   const inputCls = (dayKey: string, seg: DraftSegment, field: EditField): string => {
-    // 101px pill so locale time strings with AM/PM render untruncated inside
-    // the 115px column. Each variant sets exactly ONE bg class (Tailwind
+    // 96px pill so locale time strings with AM/PM render untruncated inside
+    // the 110px column. Each variant sets exactly ONE bg class (Tailwind
     // conflicts resolve by stylesheet order, not attribute order, so a base
     // bg-slate-100 + appended bg-amber-100 would be unreliable).
     const base =
-      'h-7 w-[101px] rounded border px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400';
+      'h-7 w-[96px] rounded border px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400';
     if (cellErr(dayKey, seg.key, field)) return `${base} bg-red-100 border-red-400 text-red-700`;
     if (isModified(seg, field)) return `${base} bg-amber-100 border-amber-400 text-slate-800`;
     return `${base} bg-slate-100 border-slate-300 text-slate-800`;
@@ -860,9 +894,7 @@ export function DailyBreakdownTable({
     `px-1.5 py-2 align-middle ${changed ? 'bg-amber-100/70' : ''}`;
 
   const dayDraftChanged = (d: DraftDay): boolean =>
-    d.segments.some(s => s.deleted || s.isNew
-      ? true
-      : (isModified(s, 'clockInManual') || isModified(s, 'lunchOutManual') || isModified(s, 'lunchInManual') || isModified(s, 'clockOutManual')));
+    d.segments.some(s => (s.deleted || s.isNew ? true : isDraftModified(s)));
 
   // --- Render ----------------------------------------------------------------
 
@@ -919,14 +951,14 @@ export function DailyBreakdownTable({
 
       <table className="table-fixed w-full text-xs text-left text-slate-600">
         <colgroup>
-          {/* Time columns are 115px each (+15px) so AM/PM timestamps render
-              untruncated; the widthless Flags/Actions column absorbs the
-              60px (4×15px) so the overall table width is unchanged. */}
+          {/* Time columns are 110px each (AM/PM timestamps still render
+              untruncated); the widthless Flags/Actions column absorbs the
+              freed space so the overall table width is unchanged. */}
           <col className="w-[164px]" />
-          <col className="w-[115px]" />
-          <col className="w-[115px]" />
-          <col className="w-[115px]" />
-          <col className="w-[115px]" />
+          <col className="w-[110px]" />
+          <col className="w-[110px]" />
+          <col className="w-[110px]" />
+          <col className="w-[110px]" />
           <col />
           <col className="w-[100px]" />
           <col className="w-[100px]" />
@@ -1091,7 +1123,7 @@ export function DailyBreakdownTable({
                             onCheckedChange={c => toggleSkipLunch(rowKey, visibleSegs[0].key, c === true)}
                             disabled={visibleSegs[0].deleted}
                           />
-                          skip
+                          skip lunch
                         </label>
                         <button
                           type="button"
@@ -1159,7 +1191,7 @@ export function DailyBreakdownTable({
                             onCheckedChange={c => toggleSkipLunch(rowKey, seg.key, c === true)}
                             disabled={segDeleted}
                           />
-                          skip
+                          skip lunch
                         </label>
                         <button
                           type="button"
