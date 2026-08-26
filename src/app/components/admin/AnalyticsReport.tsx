@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
 import type { DocumentData } from 'firebase/firestore';
@@ -296,7 +296,11 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
         });
       }
 
+      // Primary: alphabetical. Secondary (stable group pass): on-site above
+      // remote. Array.prototype.sort is stable (ES2019+), so a group-only
+      // comparator preserves the alphabetical order within each group.
       summaries.sort((a, b) => a.userName.localeCompare(b.userName));
+      summaries.sort((a, b) => (a.workModel === 'On-site' ? 0 : 1) - (b.workModel === 'On-site' ? 0 : 1));
       setWorkModelByUser(wmByUser);
       setReport(summaries);
       toast.success('Report generated');
@@ -761,7 +765,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
 
           {/* Employee Cards - Mobile Friendly */}
           <div className="space-y-2">
-            {report.map(summary => {
+            {report.map((summary, idx) => {
               // Employee's local timezone for the Req-4 'local' view mode.
               const empTz = allUsers.find(u => u.uid === summary.userId)?.timezone;
               // The +Nd day-offset badges must be computed in the same zone the
@@ -769,8 +773,14 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
               // the PT midnight get a false-positive +1d badge.
               const viewZone = zoneForMode(timeViewMode, empTz);
               const hasOpenShift = (summary.dailyEntries ?? []).some(d => d.projectedOpen);
+              // Divider between the on-site and remote groups: rendered once,
+              // directly before the first remote employee (only when both
+              // groups are present — i.e. the first remote is not at index 0).
+              const showDivider = idx > 0 && summary.workModel !== 'On-site' && report[idx - 1].workModel === 'On-site';
               return (
-              <Card key={summary.userId} className="border-2 border-slate-200">
+              <Fragment key={summary.userId}>
+              {showDivider && <hr className="my-4 border-t border-gray-200" />}
+              <Card className="border-2 border-slate-200">
                 <CardContent className="py-1 px-2 [&:last-child]:pb-1">
                   <div className="flex flex-row items-center justify-between gap-4 py-1 px-2">
                     {/* Left — employee info. Fixed width (w-[150px], not
@@ -917,6 +927,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                   )}
                 </CardContent>
               </Card>
+              </Fragment>
               );
             })}
           </div>
