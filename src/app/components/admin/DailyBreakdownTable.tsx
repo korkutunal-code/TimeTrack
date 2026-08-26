@@ -34,14 +34,18 @@ import { toast } from 'sonner';
 import { ChevronDown, ChevronRight, Loader2, Plus, Trash2 } from 'lucide-react';
 
 import { db } from '../../lib/firebase';
-import type { TimeSegment } from '../../lib/database';
+import { dbService, type TimeSegment } from '../../lib/database';
 import {
   recomputeSegmentSystemTimestamps,
   recalculateEntryTotals,
   stripUndefined,
   computeSegmentWorkMinutes,
 } from '../../lib/database';
-import { validateSegmentChronology } from '../../../utils/timeValidation';
+import {
+  validateSegmentChronology,
+  getFuturePunchError,
+  getSegmentOverlapError,
+} from '../../../utils/timeValidation';
 import { calculateLunchMinutes } from '../../../utils/timeCalculations';
 import {
   calculateDailyOvertimeBreakdown,
@@ -51,6 +55,7 @@ import {
   DEFAULT_WORKWEEK_START_DAY,
   type OvertimeEntry,
 } from '../../../utils/overtimeCalculations';
+import type { WorkModelOverride } from '../../lib/auth';
 import { auditLogService } from '../../../services/auditLogService';
 import { writeDocId } from '../../../utils/timeView';
 import { Button } from '../ui/button';
@@ -112,6 +117,9 @@ export interface DailyBreakdownTableProps {
   employeeTimezone?: string;
   /** Resolved work-model definition (drives per-user OT thresholds). */
   workModelDef?: WorkModelDef | null;
+  /** Per-user work-model override (wins over workModelDef; mirrors the
+      Analytics/Payroll pipeline's `userObj.workModelOverride`). */
+  workModelOverride?: WorkModelOverride | null;
   /** Called after a successful batch save so the parent can regenerate. */
   onSaved: () => void;
   /**
@@ -283,6 +291,7 @@ export function DailyBreakdownTable({
   currentUser,
   employeeTimezone,
   workModelDef,
+  workModelOverride,
   onSaved,
   onLiveTotals,
   renderParentBoundary,
@@ -302,6 +311,10 @@ export function DailyBreakdownTable({
   const [drafts, setDrafts] = useState<Map<string, DraftDay>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+  // Captured when Bulk Edit is entered (an event) — used as the "now" anchor
+  // for the live future-punch check. Not refreshed during render (Date.now()
+  // is impure inside useMemo); the save path re-checks with a fresh Date.now().
+  const [editNowMs, setEditNowMs] = useState<number>(0);
 
   // Build the editable working copy from the pipeline entries. Called by
   // enterBulkEdit (an event handler) — NOT a memo gated on `bulkEdit`, which
@@ -340,16 +353,76 @@ export function DailyBreakdownTable({
 
   const errors = useMemo(() => {
     const m = new Map<string, string>();
+    const nowMs = editNowMs;
     for (const d of drafts.values()) {
-      for (const s of d.segments) {
-        if (s.deleted) continue;
+      const live = d.segments.filter(s => !s.deleted);
+      // Resolve each draft's manual HH:MM to epochs (pure helper) so the
+      // future + overlap guards — which operate on instants — can run live.
+      const epochSegs = new Map<string, TimeSegment>();
+      for (const s of live) {
+        if (!HHMM_RE.test(s.clockInManual)) continue; // format errors already flagged
+        const seg = recomputeSegmentSystemTimestamps(
+          {
+            id: s.key,
+            clockInManual: s.clockInManual,
+            lunchOutManual: s.skipLunch ? '' : s.lunchOutManual,
+            lunchInManual: s.skipLunch ? '' : s.lunchInManual,
+            clockOutManual: s.clockOutManual,
+            skipLunch: s.skipLunch,
+            complete: !!s.clockOutManual,
+          },
+          d.anchorDate,
+          employeeTimezone,
+        );
+        epochSegs.set(s.key, seg);
+      }
+
+      for (const s of live) {
+        // 1) Per-cell format + chronology (existing).
         for (const [field, msg] of validateDraftSegment(s)) {
           m.set(`${d.rowKey}|${s.key}|${field}`, msg);
+        }
+        // 2) Future-punch guard — flag the specific cell(s) whose epoch is
+        //    ahead of now (mirrors getFuturePunchError's field scan).
+        const es = epochSegs.get(s.key);
+        if (es) {
+          const futureFields: [EditField, number | undefined][] = [
+            ['clockInManual', es.clockInSystem],
+            ['lunchOutManual', es.lunchOutSystem],
+            ['lunchInManual', es.lunchInSystem],
+            ['clockOutManual', es.clockOutSystem],
+          ];
+          for (const [field, v] of futureFields) {
+            const k = `${d.rowKey}|${s.key}|${field}`;
+            if (!m.has(k) && typeof v === 'number' && v > nowMs) {
+              m.set(k, 'Time cannot be in the future');
+            }
+          }
+        }
+      }
+
+      // 3) Same-day overlap guard — double-counted payroll. Mark the Clock In
+      //    cell of every segment in the overlapping set (the precise pair is
+      //    not identifiable from the string message, so flag all participants
+      //    on that day when more than one complete interval exists).
+      const completeSegs = live.filter(s => {
+        const es = epochSegs.get(s.key);
+        return es && typeof es.clockInSystem === 'number' && typeof es.clockOutSystem === 'number';
+      });
+      if (completeSegs.length > 1) {
+        const overlapMsg = getSegmentOverlapError(
+          completeSegs.map(s => epochSegs.get(s.key)!),
+        );
+        if (overlapMsg) {
+          for (const s of completeSegs) {
+            const k = `${d.rowKey}|${s.key}|clockInManual`;
+            if (!m.has(k)) m.set(k, 'Shifts on this day overlap');
+          }
         }
       }
     }
     return m;
-  }, [drafts]);
+  }, [drafts, employeeTimezone, editNowMs]);
 
   const hasErrors = errors.size > 0;
 
@@ -417,6 +490,7 @@ export function DailyBreakdownTable({
 
   const enterBulkEdit = () => {
     setDrafts(buildDrafts());
+    setEditNowMs(Date.now()); // anchor for the live future-punch check
     // Auto-expand every multi-shift day so child shifts are editable.
     const auto = new Set<string>();
     for (const day of dailyEntries) {
@@ -515,6 +589,26 @@ export function DailyBreakdownTable({
         const snap = await getDoc(doc(db, 'timeEntries', sourceId));
         if (!snap.exists()) throw new Error(`Entry ${sourceId} no longer exists.`);
         const persisted = snap.data() as DocumentData;
+
+        // GUARD — never mutate voided/archived records. The report pipeline
+        // can surface them, and writing status:'corrected' below would
+        // silently resurrect a voided entry (soft-delete invariant).
+        if (persisted.status === 'voided' || persisted.status === 'archived') {
+          throw new Error(
+            `Entry ${persisted.workDate ?? persisted.date ?? sourceId} is ${persisted.status} and cannot be edited here. Restore it first.`,
+          );
+        }
+
+        // GUARD — payroll lock (PT). Check every calendar date the edit
+        // touches: the owning doc's date plus each edited day's attributed
+        // local date (they differ across a local-midnight split). Same guard
+        // as every other correction path (dbService.assertPayrollDatesNotLocked).
+        await dbService.assertPayrollDatesNotLocked(
+          persisted.date ?? persisted.workDate,
+          persisted.workDate,
+          ...dayDrafts.map(d => d.anchorDate),
+        );
+
         const beforeSegs: TimeSegment[] = Array.isArray(persisted.segments)
           ? persisted.segments.map((s: DocumentData) => ({ ...s }) as TimeSegment)
           : [];
@@ -602,6 +696,35 @@ export function DailyBreakdownTable({
         // Recalculate canonical totals from the rebuilt segments (SSOT).
         const recalc = recalculateEntryTotals(rebuilt);
         const finalSegs = recalc.segments;
+
+        // GUARD (defense-in-depth; the live validation memo already blocks the
+        // Save button, but the persisted write re-verifies with fresh epochs):
+        // 1) no future timestamps, 2) no same-day overlapping shifts.
+        const nowMs = Date.now();
+        for (const s of finalSegs) {
+          const futureErr = getFuturePunchError(s, nowMs);
+          if (futureErr) {
+            throw new Error(
+              `${persisted.workDate ?? persisted.date ?? sourceId}: ${futureErr}`,
+            );
+          }
+        }
+        const overlapErr = getSegmentOverlapError(finalSegs);
+        if (overlapErr) {
+          throw new Error(
+            `${persisted.workDate ?? persisted.date ?? sourceId}: ${overlapErr}`,
+          );
+        }
+
+        // Daily OT buckets (work-model + override aware) — persisted so
+        // single-segment docs' stored buckets stay in sync (the payroll
+        // pipeline trusts stored buckets for single-segment docs).
+        const dailyOT = calculateDailyOvertimeBreakdown(
+          recalc.totalWorkMinutes,
+          workModelDef ?? null,
+          workModelOverride ?? null,
+        );
+
         const lastClosed = [...finalSegs].reverse().find(s => s.clockOutManual) ?? finalSegs[finalSegs.length - 1];
         const allComplete = finalSegs.length > 0 && finalSegs.every(s => s.complete === true);
 
@@ -649,6 +772,9 @@ export function DailyBreakdownTable({
           segments: finalSegs.map(s => stripUndefined(s)),
           totalWorkMinutes: recalc.totalWorkMinutes,
           totalHours: recalc.totalHours,
+          regularMinutes: dailyOT.regularMinutes,
+          otMinutes: dailyOT.otMinutes,
+          doubleTimeMinutes: dailyOT.doubleTimeMinutes,
           ...(mirror ?? {}),
           dayComplete: allComplete,
           complete: allComplete,
