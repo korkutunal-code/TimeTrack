@@ -85,6 +85,14 @@ interface DraftSegment {
   deleted: boolean;
   /** Original manual values, for modified-cell highlighting. */
   orig: { clockInManual: string; lunchOutManual: string; lunchInManual: string; clockOutManual: string };
+  /**
+   * The persisted pipeline segment this draft came from (undefined for
+   * added/legacy-synthesized rows). Carries the epoch-derived `workMinutes`
+   * so the live preview matches the read-only report exactly for UNEDITED
+   * segments (the HH:MM strings are minute-truncated and would drift the
+   * recomputed day total by up to ±1 min per shift).
+   */
+  source?: TimeSegment;
 }
 
 /** Editable draft of one breakdown row (a day, possibly a synthetic part). */
@@ -179,6 +187,11 @@ function segToDraft(s: DocumentData): DraftSegment {
       lunchInManual: s.lunchInManual ?? '',
       clockOutManual: s.clockOutManual ?? '',
     },
+    // Full persisted segment (epoch systems + stored workMinutes) so the live
+    // preview can reuse the canonical epoch-precision minutes for UNEDITED
+    // segments instead of recomputing from the minute-truncated HH:MM strings
+    // (which loses the punch seconds and drifts the day total by ±1 min).
+    source: s as TimeSegment,
   };
 }
 
@@ -262,6 +275,24 @@ function draftDayTotals(
   const live = day.segments.filter(s => !s.deleted);
   let total = 0;
   for (const s of live) {
+    // UNEDITED persisted segment: reuse the canonical read-side calculator,
+    // which keeps the stored/epoch-derived workMinutes (punch-second
+    // precision) — the exact value the read-only report displays. The manual
+    // HH:MM strings are minute-truncated and would drift the day total by up
+    // to ±1 min per shift (the 8:56-vs-8:55 discrepancy).
+    const edited =
+      !s.source ||
+      s.isNew ||
+      s.clockInManual !== s.orig.clockInManual ||
+      s.lunchOutManual !== s.orig.lunchOutManual ||
+      s.lunchInManual !== s.orig.lunchInManual ||
+      s.clockOutManual !== s.orig.clockOutManual;
+    if (!edited && s.source) {
+      total += computeSegmentWorkMinutes(s.source);
+      continue;
+    }
+    // Edited / added / legacy-synthesized segment: recompute from the manual
+    // strings (matches the write path's post-edit recalculation).
     if (!s.clockInManual || !s.clockOutManual) continue;
     const inM = mins(s.clockInManual);
     let outM = mins(s.clockOutManual);
