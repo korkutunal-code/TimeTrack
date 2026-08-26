@@ -257,6 +257,7 @@ function validateDraftSegment(seg: DraftSegment): Map<EditField, string> {
 function draftDayTotals(
   day: DraftDay,
   workModelDef?: WorkModelDef | null,
+  workModelOverride?: WorkModelOverride | null,
 ): { totalWorkMinutes: number; regularMinutes: number; otMinutes: number; doubleTimeMinutes: number } {
   const live = day.segments.filter(s => !s.deleted);
   let total = 0;
@@ -278,7 +279,7 @@ function draftDayTotals(
     }
     total += work;
   }
-  const daily = calculateDailyOvertimeBreakdown(total, workModelDef ?? null, null);
+  const daily = calculateDailyOvertimeBreakdown(total, workModelDef ?? null, workModelOverride ?? null);
   return { totalWorkMinutes: total, ...daily };
 }
 
@@ -429,9 +430,9 @@ export function DailyBreakdownTable({
   // Live recalculated per-day metrics, keyed by rowKey.
   const liveTotals = useMemo(() => {
     const m = new Map<string, ReturnType<typeof draftDayTotals>>();
-    for (const d of drafts.values()) m.set(d.rowKey, draftDayTotals(d, workModelDef));
+    for (const d of drafts.values()) m.set(d.rowKey, draftDayTotals(d, workModelDef, workModelOverride));
     return m;
-  }, [drafts, workModelDef]);
+  }, [drafts, workModelDef, workModelOverride]);
 
   // Live summary-card totals: recompute the WHOLE employee range through the
   // canonical weekly-OT pipeline with edited days swapped in, so the summary
@@ -459,7 +460,7 @@ export function DailyBreakdownTable({
     }
     let reg = 0, ot = 0, dt = 0, tot = 0;
     for (const weekEntries of byWeek.values()) {
-      const adj = calculateWeeklyOvertimeAdjustments(weekEntries, workModelDef ?? null, null);
+      const adj = calculateWeeklyOvertimeAdjustments(weekEntries, workModelDef ?? null, workModelOverride ?? null);
       for (const e of adj) {
         reg += e.regularMinutes || 0;
         ot += e.otMinutes || 0;
@@ -474,7 +475,7 @@ export function DailyBreakdownTable({
       doubleTimeHours: formatMinutesToHHMM(dt),
       totalHours: formatMinutesToHHMM(tot),
     };
-  }, [bulkEdit, drafts, dailyEntries, liveTotals, workModelDef]);
+  }, [bulkEdit, drafts, dailyEntries, liveTotals, workModelDef, workModelOverride]);
 
   // Report the live preview totals up to the parent summary card while
   // editing; clear them when bulk edit exits so the card reverts to the
@@ -508,7 +509,14 @@ export function DailyBreakdownTable({
 
   // --- Cell mutation ---------------------------------------------------------
 
+  // Refresh the "now" anchor used by the live future-punch check. Called from
+  // every draft-mutation EVENT (never during render). The lazy-updater form
+  // keeps the impure Date.now() inside the state update, which React's
+  // compiler recognizes as event-time (not render-time).
+  const touchNow = () => setEditNowMs(() => Date.now());
+
   const updateCell = (dayKey: string, segKey: string, field: EditField, value: string) => {
+    touchNow();
     setDrafts(prev => {
       const next = new Map(prev);
       const day = next.get(dayKey);
@@ -522,6 +530,7 @@ export function DailyBreakdownTable({
   };
 
   const toggleSkipLunch = (dayKey: string, segKey: string, checked: boolean) => {
+    touchNow();
     setDrafts(prev => {
       const next = new Map(prev);
       const day = next.get(dayKey);
@@ -539,6 +548,7 @@ export function DailyBreakdownTable({
   };
 
   const deleteShift = (dayKey: string, segKey: string) => {
+    touchNow();
     setDrafts(prev => {
       const next = new Map(prev);
       const day = next.get(dayKey);
@@ -554,6 +564,7 @@ export function DailyBreakdownTable({
   };
 
   const addShift = (dayKey: string) => {
+    touchNow();
     setDrafts(prev => {
       const next = new Map(prev);
       const day = next.get(dayKey);
