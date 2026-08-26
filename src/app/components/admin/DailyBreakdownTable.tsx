@@ -675,11 +675,15 @@ export function DailyBreakdownTable({
     errors.get(`${dayKey}|${segKey}|${field}`);
 
   const inputCls = (dayKey: string, seg: DraftSegment, field: EditField): string => {
+    // 101px pill so locale time strings with AM/PM render untruncated inside
+    // the 115px column. Each variant sets exactly ONE bg class (Tailwind
+    // conflicts resolve by stylesheet order, not attribute order, so a base
+    // bg-slate-100 + appended bg-amber-100 would be unreliable).
     const base =
-      'h-7 w-[86px] rounded border px-1.5 text-xs bg-slate-100 text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-400';
+      'h-7 w-[101px] rounded border px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400';
     if (cellErr(dayKey, seg.key, field)) return `${base} bg-red-100 border-red-400 text-red-700`;
-    if (isModified(seg, field)) return `${base} bg-amber-100 border-amber-300`;
-    return `${base} border-slate-300`;
+    if (isModified(seg, field)) return `${base} bg-amber-100 border-amber-400 text-slate-800`;
+    return `${base} bg-slate-100 border-slate-300 text-slate-800`;
   };
 
   const metricCls = (changed: boolean): string =>
@@ -745,11 +749,14 @@ export function DailyBreakdownTable({
 
       <table className="table-fixed w-full text-xs text-left text-slate-600">
         <colgroup>
+          {/* Time columns are 115px each (+15px) so AM/PM timestamps render
+              untruncated; the widthless Flags/Actions column absorbs the
+              60px (4×15px) so the overall table width is unchanged. */}
           <col className="w-[164px]" />
-          <col className="w-[100px]" />
-          <col className="w-[100px]" />
-          <col className="w-[100px]" />
-          <col className="w-[100px]" />
+          <col className="w-[115px]" />
+          <col className="w-[115px]" />
+          <col className="w-[115px]" />
+          <col className="w-[115px]" />
           <col />
           <col className="w-[100px]" />
           <col className="w-[100px]" />
@@ -1021,17 +1028,8 @@ export function DailyBreakdownTable({
         </tbody>
       </table>
 
-      {/* Live-updating summary strip while editing (mirrors the employee card
-          totals so the admin sees the impact before saving). */}
-      {bulkEdit && liveSummary && (
-        <div className="mt-2 flex items-center gap-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-          <span className="font-semibold text-slate-600">Preview totals:</span>
-          <span>Regular <strong>{liveSummary.regularHours}</strong></span>
-          <span>OT <strong className="text-orange-700">{liveSummary.overtimeHours}</strong></span>
-          <span>DT <strong className="text-red-700">{liveSummary.doubleTimeHours}</strong></span>
-          <span>Total <strong>{liveSummary.totalHours}</strong></span>
-        </div>
-      )}
+      {/* No bottom preview strip: live totals surface directly on the
+          employee summary card above (via onLiveTotals) instead. */}
     </div>
   );
 }

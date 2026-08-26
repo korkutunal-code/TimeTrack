@@ -796,22 +796,29 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                     </div>
 
                     {/* Center — metric boxes. During Bulk Edit these swap to
-                        the live preview totals (amber tint) so the admin sees
-                        the impact of pending edits before saving. */}
+                        the live preview totals so the admin sees the impact of
+                        pending edits before saving. Only the box whose value
+                        actually CHANGED gets the amber warning fill; unchanged
+                        boxes keep their default background. */}
                     {(() => {
                       const live = liveTotalsByUser.get(summary.userId) ?? null;
-                      const boxLive = 'ring-1 ring-amber-300 bg-amber-50/60';
+                      // HH:MM string comparison — both sides come from the same
+                      // pipeline formatter, so !== is an exact change check.
+                      const regChanged = !!live && live.regularHours !== summary.regularHours;
+                      const otChanged = !!live && live.overtimeHours !== summary.overtimeHours;
+                      const dtChanged = !!live && live.doubleTimeHours !== summary.doubleTimeHours;
+                      const amberBox = 'bg-amber-100 border-amber-400 ring-1 ring-amber-300';
                       return (
                         <div className="flex-1 grid grid-cols-3 gap-3 items-center">
-                          <div className={`py-1.5 px-3 rounded-lg border ${live ? boxLive : 'bg-slate-50 border-slate-200'}`}>
+                          <div className={`py-1.5 px-3 rounded-lg border ${regChanged ? amberBox : 'bg-slate-50 border-slate-200'}`}>
                             <p className="text-xs text-slate-600 mb-0.5">Regular</p>
                             <p className="text-lg font-bold text-slate-900">{live?.regularHours ?? summary.regularHours}</p>
                           </div>
-                          <div className={`py-1.5 px-3 rounded-lg border ${live ? boxLive : 'bg-orange-50 border-orange-200'}`}>
+                          <div className={`py-1.5 px-3 rounded-lg border ${otChanged ? amberBox : 'bg-orange-50 border-orange-200'}`}>
                             <p className="text-xs text-orange-700 mb-0.5">OT 1.5x</p>
                             <p className="text-lg font-bold text-orange-700">{live?.overtimeHours ?? summary.overtimeHours}</p>
                           </div>
-                          <div className={`py-1.5 px-3 rounded-lg border ${live ? boxLive : 'bg-red-50 border-red-200'}`}>
+                          <div className={`py-1.5 px-3 rounded-lg border ${dtChanged ? amberBox : 'bg-red-50 border-red-200'}`}>
                             <p className="text-xs text-red-700 mb-0.5">DT 2x</p>
                             <p className="text-lg font-bold text-red-700">{live?.doubleTimeHours ?? summary.doubleTimeHours}</p>
                           </div>
