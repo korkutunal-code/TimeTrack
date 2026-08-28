@@ -48,6 +48,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
   const [isPayrollSettingsOpen, setIsPayrollSettingsOpen] = useState(false);
   const [isLockPeriodOpen, setIsLockPeriodOpen] = useState(false);
   const [isExcludeRecordsOpen, setIsExcludeRecordsOpen] = useState(false);
+  const [isDeprecatedTabsOpen, setIsDeprecatedTabsOpen] = useState(false);
   const [showHighlight, setShowHighlight] = useState(false);
 
   const isDirty = !settingsEqual(systemSettings, initialSettings);
@@ -578,6 +579,31 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
       </Card>
 
       <WorkModelsCard />
+
+      {/* Deprecated tabs — retired features kept visible for reference.
+          Same collapsible card pattern as the other settings sections. */}
+      <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
+        <CardHeader className="bg-white/40 pb-2">
+          <button
+            type="button"
+            onClick={() => setIsDeprecatedTabsOpen((open) => !open)}
+            aria-expanded={isDeprecatedTabsOpen}
+            className="w-full flex items-center justify-between text-left"
+          >
+            <CardTitle className="text-slate-800 font-bold">Deprecated tabs</CardTitle>
+            <ChevronDown
+              className={`size-5 text-slate-500 transition-transform duration-200 ${isDeprecatedTabsOpen ? 'rotate-180' : 'rotate-0'}`}
+            />
+          </button>
+        </CardHeader>
+        {isDeprecatedTabsOpen && (
+          <CardContent className="pt-2">
+            <p className="text-xs text-slate-400">
+              Tabs that have been retired from the main navigation will be listed here for reference.
+            </p>
+          </CardContent>
+        )}
+      </Card>
 
       <div className="flex justify-end gap-2">
         <Button
