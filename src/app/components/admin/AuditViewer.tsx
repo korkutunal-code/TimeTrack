@@ -100,17 +100,13 @@ export function AuditViewer({ allUsers, timeViewMode = 'local' }: AuditViewerPro
         gaps.lunchIn = calculateGap(entry.lunchInManual, entry.lunchInSystem);
         gaps.clockOut = calculateGap(entry.clockOutManual, entry.clockOutSystem);
 
-        // Flag 1: Late submission (>30 minutes) on clock-in/out
-        if (gaps.clockIn !== undefined && Math.abs(gaps.clockIn) > 30) flags.push('late_submission');
-        if (gaps.clockOut !== undefined && Math.abs(gaps.clockOut) > 30) flags.push('late_submission');
-
-        // Flag 2: Batch submission (all steps within 5 minutes)
+        // Flag 1: Batch submission (all steps within 5 minutes)
         if (entry.clockInSystem && entry.clockOutSystem) {
           const mins = Math.abs(entry.clockOutSystem - entry.clockInSystem) / (1000 * 60);
           if (mins < 5) flags.push('batch_submission');
         }
 
-        // Flag 3: After-hours completion (>=6pm or <6am), in canonical PT
+        // Flag 2: After-hours completion (>=6pm or <6am), in canonical PT
         if (entry.completedAt) {
           const { h } = ptHourAndMinutes(entry.completedAt);
           if (h >= 18 || h < 6) flags.push('after_hours_submission');
@@ -167,7 +163,6 @@ export function AuditViewer({ allUsers, timeViewMode = 'local' }: AuditViewerPro
 
   const getFlagLabel = (flag: string): string => {
     const labels: Record<string, string> = {
-      late_submission: 'Late',
       batch_submission: 'Batch',
       after_hours_submission: 'After Hours',
     };
@@ -288,7 +283,7 @@ export function AuditViewer({ allUsers, timeViewMode = 'local' }: AuditViewerPro
                           <Info className="size-3 text-slate-400 cursor-help" />
                         </TooltipTrigger>
                         <TooltipContent className="max-w-xs bg-slate-900 text-slate-50 border-slate-800">
-                          <p>Suspicious entries include: Edited entries (batch submit), Missing clock-out/late submission, Shifts exceeding long-shift threshold.</p>
+                          <p>Suspicious entries include: Edited entries (batch submit), Missing clock-out, Shifts exceeding long-shift threshold.</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>

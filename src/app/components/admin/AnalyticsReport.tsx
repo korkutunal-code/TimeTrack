@@ -905,7 +905,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                             docAutoEndedLunch: day.autoEndedLunch === true,
                             docAnomaly: day.anomaly_flag === true,
                             completedAt: day.completedAt,
-                            timezone: empTz,
+                            isOnSite: isOnsite,
                           }),
                         );
                         return renderFlagChips(getParentRowFlags(day, childFlags, lunchMissing ? ['missing_lunch'] : []));
@@ -919,7 +919,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                           docAutoEndedLunch: day.autoEndedLunch === true,
                           docAnomaly: day.anomaly_flag === true,
                           completedAt: day.completedAt,
-                          timezone: empTz,
+                          isOnSite: summary.workModel === 'On-site',
                         });
                         return renderFlagChips(flags);
                       }}

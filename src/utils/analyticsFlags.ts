@@ -8,15 +8,15 @@
  *
  * Two scopes:
  *  - Shift-level flags (per segment): auto_closed_shift, auto_ended_lunch,
- *    short_lunch, long_lunch, anomaly_detected + audit gap flags
- *    (late_submission, batch_submission, after_hours_submission). Rendered on
+ *    short_lunch, long_lunch, anomaly_detected + audit flags
+ *    (batch_submission, after_hours_submission). Rendered on
  *    child shift rows AND aggregated into the parent day row.
  *  - Day-level flags (per day row ONLY): very_long_day, very_short_day,
  *    missing_lunch. Never rendered on child shift rows.
  *
- * Thresholds mirror the canonical calculateFlags (app/lib/database.ts) and the
- * Audit tab's gap math (PT wall clock); Timestamp-like raw fields are
- * normalized via the shared toMillis (openShiftProjection.ts).
+ * Thresholds mirror the canonical calculateFlags (app/lib/database.ts);
+ * Timestamp-like raw fields are normalized via the shared toMillis
+ * (openShiftProjection.ts).
  */
 
 import type { DocumentData } from 'firebase/firestore';
@@ -28,7 +28,6 @@ const SHORT_LUNCH_MIN = 20;
 const LONG_LUNCH_MIN = 90;
 const VERY_LONG_DAY_H = 11;
 const VERY_SHORT_DAY_H = 4;
-const LATE_SUBMISSION_GAP_MIN = 30;
 const BATCH_SUBMISSION_SPAN_MIN = 5;
 
 /** Human-readable chip labels for every flag id. */
@@ -40,7 +39,6 @@ export const FLAG_LABELS: Record<string, string> = {
   very_long_day: 'Very Long Day',
   very_short_day: 'Very Short Day',
   anomaly_detected: 'Anomaly Detected',
-  late_submission: 'Late Submission',
   batch_submission: 'Batch Submission',
   after_hours_submission: 'After Hours',
   missing_lunch: 'Missing Lunch',
@@ -52,7 +50,6 @@ export const FLAG_SEVERITY: Record<string, 'red' | 'amber' | 'purple'> = {
   auto_ended_lunch: 'red',
   anomaly_detected: 'red',
   missing_lunch: 'red',
-  late_submission: 'purple',
   batch_submission: 'purple',
   after_hours_submission: 'purple',
   short_lunch: 'amber',
@@ -68,7 +65,6 @@ const SHIFT_LEVEL_FLAGS = new Set([
   'short_lunch',
   'long_lunch',
   'anomaly_detected',
-  'late_submission',
   'batch_submission',
   'after_hours_submission',
 ]);
@@ -93,14 +89,13 @@ export interface SegmentFlagContext {
   /** Doc-level completedAt (epoch ms | Timestamp) — for after-hours audit. */
   completedAt?: unknown;
   /**
-   * Employee's IANA timezone — REQUIRED for the late-submission gap math:
-   * manual HH:MM strings are stored in the employee's local wall clock
-   * (AGENTS.md dual-zone rule), so the system instant must be converted to
-   * THIS zone before comparing. Falls back to PT (legacy behavior) when
-   * absent. Omitting it for a non-PT employee turns their UTC offset into a
-   * spurious multi-hour "gap".
+   * Whether the employee works under the 'On-site' work model. REQUIRED for
+   * the after_hours_submission flag: that check enforces an admin-defined
+   * company-hours window (PT), which applies to on-site staff only — remote
+   * workers keep flexible schedules, so the flag must never fire for them.
+   * When omitted (undefined), the after-hours check is skipped.
    */
-  timezone?: string;
+  isOnSite?: boolean;
 }
 
 function minutesOf(time: unknown): number {
@@ -125,15 +120,10 @@ function segmentLunchMinutes(seg: DocumentData): number | null {
   return diff < 0 ? diff + 1440 : diff;
 }
 
-/* --- Audit gap math --------------------------------------------------------
- * The gap compares the employee's MANUAL claim (stored in the employee's
- * local wall clock) against the system instant converted to THE SAME zone —
- * the employee's own timezone (ctx.timezone), never unconditionally PT. (The
- * original Audit tab compared local manual strings against PT-converted
- * system minutes, which turned a non-PT employee's UTC offset into a false
- * multi-hour "late submission" gap.) The after-hours rule stays in PT — it is
- * an admin-defined company-hours threshold, and PT is the canonical admin
- * zone (AGENTS.md). */
+/* --- After-hours zone math --------------------------------------------------
+ * The after-hours rule compares the completion instant against a PT wall-clock
+ * window — it is an admin-defined company-hours threshold, and PT is the
+ * canonical admin zone (AGENTS.md). */
 
 function hourAndMinutesInZone(millis: number, zone: string): { h: number; m: number } | null {
   if (typeof millis !== 'number' || !Number.isFinite(millis)) return null;
@@ -148,17 +138,6 @@ function hourAndMinutesInZone(millis: number, zone: string): { h: number; m: num
   return { h: h === 24 ? 0 : h, m };
 }
 
-function gapMinutes(manual: unknown, systemMillis: number | undefined, zone: string): number | undefined {
-  if (typeof manual !== 'string' || !manual || systemMillis === undefined) return undefined;
-  const mM = minutesOf(manual);
-  if (Number.isNaN(mM)) return undefined;
-  const hm = hourAndMinutesInZone(systemMillis, zone);
-  if (!hm) return undefined;
-  let gap = hm.h * 60 + hm.m - mM;
-  if (gap < -720) gap += 1440; // next-day submission wrap
-  return gap;
-}
-
 /**
  * Compute the SHIFT-LEVEL flags for one segment (or a segment-less legacy doc
  * whose root fields double as the single shift).
@@ -169,7 +148,7 @@ export function getSegmentFlags(seg: DocumentData, ctx: SegmentFlagContext): str
   // clockOut = now. They are estimates, NOT real completions: lunch-pattern
   // and batch-span flags must not fire on them (an ongoing lunch clamped to
   // "now" is not a 90-minute lunch; a 3-minute-old live shift is not a batch
-  // submission). late_submission's clock-IN gap stays — that punch is real.
+  // submission).
   const isProjection = seg.projectedClosed === true;
 
   // Guardrail markers. Routine midnight-split parts stamp autoClosed without
@@ -193,17 +172,9 @@ export function getSegmentFlags(seg: DocumentData, ctx: SegmentFlagContext): str
 
   if (ctx.isLastSegment && ctx.docAnomaly === true) flags.push('anomaly_detected');
 
-  // Audit gap flags — manual claim vs system reality, compared in the
-  // EMPLOYEE's zone (ctx.timezone; PT fallback preserves legacy behavior).
-  const zone = ctx.timezone || PT_ZONE;
+  // Audit flags — system-timestamp heuristics.
   const inMs = toMillis(seg.clockInSystemTime) ?? toMillis(seg.clockInSystem);
   const outMs = toMillis(seg.clockOutSystemTime) ?? toMillis(seg.clockOutSystem);
-  const inGap = gapMinutes(seg.clockInManual, inMs, zone);
-  const outGap = gapMinutes(seg.clockOutManual, outMs, zone);
-  if ((inGap !== undefined && Math.abs(inGap) > LATE_SUBMISSION_GAP_MIN) ||
-    (outGap !== undefined && Math.abs(outGap) > LATE_SUBMISSION_GAP_MIN)) {
-    flags.push('late_submission');
-  }
   // Batch submission (whole shift punched within 5 minutes) — a span, so
   // zone-invariant; suppressed for projected live shifts.
   if (!isProjection && inMs !== undefined && outMs !== undefined) {
@@ -211,7 +182,9 @@ export function getSegmentFlags(seg: DocumentData, ctx: SegmentFlagContext): str
     if (spanMin < BATCH_SUBMISSION_SPAN_MIN) flags.push('batch_submission');
   }
   // After-hours completion — admin-defined company-hours threshold in PT.
-  if (ctx.isLastSegment && ctx.completedAt != null) {
+  // On-site workers only: remote employees keep flexible schedules, so the
+  // check is skipped entirely when the work model is not 'On-site'.
+  if (ctx.isOnSite === true && ctx.isLastSegment && ctx.completedAt != null) {
     const completedMs = toMillis(ctx.completedAt);
     if (completedMs !== undefined) {
       const hm = hourAndMinutesInZone(completedMs, PT_ZONE);

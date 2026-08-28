@@ -2,7 +2,7 @@
  * Tests for the Analytics Flags view computation (utils/analyticsFlags.ts).
  *
  * All flags are computed in-memory from pipeline entries — no Firestore.
- * Fixed epochs use PDT (UTC-7) in August 2026 for the PT gap math.
+ * Fixed epochs use PDT (UTC-7) in August 2026 for the PT wall-clock math.
  */
 import type { DocumentData } from 'firebase/firestore';
 import {
@@ -81,42 +81,34 @@ describe('getSegmentFlags — lunch pattern flags', () => {
   });
 });
 
-describe('getSegmentFlags — audit gap flags', () => {
-  it('late_submission when manual and system differ by >30 min (PT)', () => {
-    const s = seg({ clockInSystem: pt(0, 8, 45) }); // manual claims 08:00, system 08:45 PT
-    expect(getSegmentFlags(s, NOT_LAST)).toContain('late_submission');
-  });
-
-  it('no late_submission within 30 minutes', () => {
-    const s = seg({ clockInSystem: pt(0, 8, 10), clockOutSystem: pt(0, 17, 5) });
-    expect(getSegmentFlags(s, NOT_LAST)).not.toContain('late_submission');
-  });
-
+describe('getSegmentFlags — audit flags', () => {
   it('batch_submission when the system span is under 5 minutes', () => {
     const s = seg({ clockInSystem: pt(0, 8, 0), clockOutSystem: pt(0, 8, 3) });
     expect(getSegmentFlags(s, NOT_LAST)).toContain('batch_submission');
   });
 
-  it('after_hours_submission only on the last segment, only >=18:00 or <06:00 PT', () => {
+  it('after_hours_submission on-site only: last segment, >=18:00 or <06:00 PT', () => {
     const s = seg();
-    expect(getSegmentFlags(s, { ...LAST, completedAt: pt(0, 19, 0) })).toContain('after_hours_submission');
-    expect(getSegmentFlags(s, { ...NOT_LAST, completedAt: pt(0, 19, 0) })).not.toContain('after_hours_submission');
-    expect(getSegmentFlags(s, { ...LAST, completedAt: pt(0, 12, 0) })).not.toContain('after_hours_submission');
-    expect(getSegmentFlags(s, { ...LAST, completedAt: pt(1, 3, 0) })).toContain('after_hours_submission');
+    const onsiteLast = { ...LAST, isOnSite: true };
+    expect(getSegmentFlags(s, { ...onsiteLast, completedAt: pt(0, 19, 0) })).toContain('after_hours_submission');
+    expect(getSegmentFlags(s, { ...NOT_LAST, isOnSite: true, completedAt: pt(0, 19, 0) })).not.toContain('after_hours_submission');
+    expect(getSegmentFlags(s, { ...onsiteLast, completedAt: pt(0, 12, 0) })).not.toContain('after_hours_submission');
+    expect(getSegmentFlags(s, { ...onsiteLast, completedAt: pt(1, 3, 0) })).toContain('after_hours_submission');
+  });
+
+  it('after_hours_submission never fires for remote workers (identical timestamps)', () => {
+    const s = seg();
+    // Remote worker completing at 19:00 PT — would flag if on-site.
+    expect(getSegmentFlags(s, { ...LAST, isOnSite: false, completedAt: pt(0, 19, 0) })).not.toContain('after_hours_submission');
+    // Remote worker completing at 03:00 PT — same.
+    expect(getSegmentFlags(s, { ...LAST, isOnSite: false, completedAt: pt(1, 3, 0) })).not.toContain('after_hours_submission');
+    // Unknown work model (isOnSite omitted) — skipped as well.
+    expect(getSegmentFlags(s, { ...LAST, completedAt: pt(0, 19, 0) })).not.toContain('after_hours_submission');
   });
 
   it('accepts Timestamp-like completedAt values', () => {
     const fakeTs = { toMillis: () => pt(0, 20, 0), toDate: () => new Date(pt(0, 20, 0)) };
-    expect(getSegmentFlags(seg(), { ...LAST, completedAt: fakeTs })).toContain('after_hours_submission');
-  });
-
-  it('compares in the EMPLOYEE zone: a punctual non-PT clock-in is not a false gap', () => {
-    // NY employee (EDT = UTC-4) punches at 08:00 local = 12:00Z = 05:00 PT.
-    const s = seg({ clockInSystem: Date.UTC(2026, 7, 24, 12, 0, 0) }); // manual '08:00'
-    // Without a timezone the legacy PT comparison sees 05:00 vs 08:00 → -180.
-    expect(getSegmentFlags(s, NOT_LAST)).toContain('late_submission');
-    // In the employee's own zone the gap is 0 — no false flag.
-    expect(getSegmentFlags(s, { ...NOT_LAST, timezone: 'America/New_York' })).not.toContain('late_submission');
+    expect(getSegmentFlags(seg(), { ...LAST, isOnSite: true, completedAt: fakeTs })).toContain('after_hours_submission');
   });
 });
 
@@ -135,15 +127,6 @@ describe('getSegmentFlags — projected (still-open) shifts', () => {
     expect(flags).not.toContain('batch_submission');
     expect(flags).not.toContain('long_lunch');
     expect(flags).not.toContain('short_lunch');
-  });
-
-  it('still reports real clock-IN gaps on projected shifts (that punch happened)', () => {
-    const projected = seg({
-      complete: true,
-      projectedClosed: true,
-      clockInSystem: pt(0, 8, 45), // manual '08:00' vs system 08:45 PT
-    });
-    expect(getSegmentFlags(projected, NOT_LAST)).toContain('late_submission');
   });
 });
 
@@ -181,11 +164,11 @@ describe('row scoping', () => {
 
   it('getParentRowFlags unions day-level, child, and extra flags with dedupe', () => {
     const day = { dayComplete: true, totalWorkMinutes: 690 } as DocumentData;
-    const out = getParentRowFlags(day, [['short_lunch'], ['short_lunch', 'late_submission']], ['missing_lunch']);
+    const out = getParentRowFlags(day, [['short_lunch'], ['short_lunch', 'batch_submission']], ['missing_lunch']);
     expect(out).toContain('very_long_day');
     expect(out).toContain('missing_lunch');
     expect(out).toContain('short_lunch');
-    expect(out).toContain('late_submission');
+    expect(out).toContain('batch_submission');
     expect(out.filter(f => f === 'short_lunch')).toHaveLength(1);
   });
 });
