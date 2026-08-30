@@ -29,7 +29,7 @@ import { validateSegmentChronology, getFuturePunchError, getSegmentOverlapError 
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import { auditLogService } from '../../../services/auditLogService';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
-import { migrateRemotePayCalculationDay } from '../../../services/userMigrationService';
+import { migrateRemotePayCalculationDay, DEFAULT_REMOTE_PAY_CALCULATION_DAY } from '../../../services/userMigrationService';
 
 interface AdminPanelProps {
   currentUser: User;
@@ -52,6 +52,11 @@ const STATUS_OPTIONS = [
   { value: 'Active', label: 'Active' },
   { value: 'Inactive', label: 'Inactive' },
 ];
+
+// Pay Calculation Day (remotePayCalculationDay): integer day-of-month options
+// for Remote employees. 1–28 so the day exists in every month. Default 1
+// (matches the value backfilled onto every users doc by the migration).
+const PAY_CALCULATION_DAY_OPTIONS = Array.from({ length: 28 }, (_, i) => i + 1);
 
 /**
  * Resolve a user's effective work-model label from a single canonical source.
@@ -508,20 +513,34 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     if (!editingUser) return;
 
     try {
-      const updated = await dbService.updateUser(editingUser.uid, {
+      const updates: Parameters<typeof dbService.updateUser>[1] = {
         name: editingUser.name,
         work_email: editingUser.work_email,
         phone_number: editingUser.phone_number,
         sms_opt_in: editingUser.sms_opt_in,
         timezone: editingUser.timezone,
-      });
+        workModel: editingUser.workModel,
+      };
+
+      // remotePayCalculationDay is written only for Remote users, as a native
+      // Firestore number (the <select> yields a string — cast explicitly).
+      // On-site saves omit the field entirely: the stored value is preserved
+      // untouched, so toggling work model back and forth never corrupts or
+      // loses the employee's configured day.
+      if (editingUser.workModel === 'Remote') {
+        const day = Number(editingUser.remotePayCalculationDay ?? DEFAULT_REMOTE_PAY_CALCULATION_DAY);
+        updates.remotePayCalculationDay = Math.min(28, Math.max(1, Math.round(day)));
+      }
+
+      const updated = await dbService.updateUser(editingUser.uid, updates);
 
       onUsersChange(allUsers.map(u => u.uid === updated.uid ? updated : u));
       toast.success('User updated successfully');
       setEditUserOpen(false);
       setEditingUser(null);
-    } catch {
-      toast.error('Failed to update user');
+    } catch (e) {
+      console.error('Failed to update user', e);
+      toast.error(e instanceof Error ? `Failed to update user: ${e.message}` : 'Failed to update user');
     }
   };
 
@@ -1485,6 +1504,58 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
                   />
                 </div>
               </div>
+              <div>
+                <Label>Work Model</Label>
+                <Select
+                  value={editingUser.workModel}
+                  onValueChange={(value) => {
+                    const workModel = value as User['workModel'];
+                    setEditingUser({
+                      ...editingUser,
+                      workModel,
+                      // Switching On-site → Remote: show the dropdown with the
+                      // employee's stored day (or the default 1 if none).
+                      // Switching Remote → On-site: hide the dropdown and leave
+                      // the stored value untouched — never cleared or corrupted.
+                      remotePayCalculationDay:
+                        workModel === 'Remote'
+                          ? (editingUser.remotePayCalculationDay ?? DEFAULT_REMOTE_PAY_CALCULATION_DAY)
+                          : editingUser.remotePayCalculationDay,
+                    });
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {WORK_MODEL_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {editingUser.workModel === 'Remote' && (
+                <div>
+                  <Label>Pay Calculation Day</Label>
+                  <Select
+                    value={String(editingUser.remotePayCalculationDay ?? DEFAULT_REMOTE_PAY_CALCULATION_DAY)}
+                    onValueChange={(value) =>
+                      // Select values are strings — parse to an integer before
+                      // touching state so Firestore always receives a number.
+                      setEditingUser({ ...editingUser, remotePayCalculationDay: parseInt(value, 10) })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PAY_CALCULATION_DAY_OPTIONS.map((day) => (
+                        <SelectItem key={day} value={String(day)}>{day}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="flex items-center space-x-2">
                 <Checkbox
                   id="editSmsOptIn"
