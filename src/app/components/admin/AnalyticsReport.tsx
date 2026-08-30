@@ -327,6 +327,10 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
   }, [settingsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced auto-refresh: re-run the report whenever any control changes.
+  // allUsers is included so a report that ran while the user list was still
+  // loading (empty) re-syncs once profiles resolve — otherwise names, work
+  // models, and role-group membership stay stale until the next control
+  // change or a full page refresh.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isInitialMount = useRef(true);
   useEffect(() => {
@@ -343,7 +347,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [startDate, endDate, selectedUserId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [startDate, endDate, selectedUserId, allUsers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const exportCSV = () => {
     if (!report) return;
@@ -578,6 +582,17 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
     );
   };
 
+  // Live name resolution: userName is baked into the report at generation
+  // time, but allUsers may still have been empty then (async load race in
+  // App.tsx). Resolve against the live list at render so late-arriving
+  // profiles self-heal without a manual refresh; the generated value is the
+  // fallback.
+  const resolveUserName = useCallback(
+    (summary: PayrollSummary): string =>
+      allUsers.find(u => u.uid === summary.userId)?.name || summary.userName,
+    [allUsers],
+  );
+
   // The full parent-row flag set for one day — the SAME computation the
   // Daily Breakdown renders (child segment flags + day-level + missing_lunch).
   // Extracted so the Flags Statistics summary counts exactly what the table
@@ -639,7 +654,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
       const flagRate = empEntries > 0 ? (empFlagged / empEntries) * 100 : 0;
       employeeDist.push({
         userId: summary.userId,
-        userName: summary.userName,
+        userName: resolveUserName(summary),
         totalEntries: empEntries,
         flaggedEntries: empFlagged,
         totalFlags: empFlags,
@@ -664,7 +679,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
       flagFrequencies,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [report, allUsers, timeViewMode]);
+  }, [report, allUsers, timeViewMode, resolveUserName]);
 
   // Render flag chips for the Flags view. Empty flag list → null (clean cell).
   const renderFlagChips = (flags: string[]): JSX.Element | null => {
@@ -880,7 +895,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                         row's items-center keeps the whole block vertically
                         centered against the metric boxes and View Details. */}
                     <div className="flex flex-col shrink-0 w-[150px]">
-                      <h3 className="text-sm font-bold text-slate-900 truncate">{summary.userName}</h3>
+                      <h3 className="text-sm font-bold text-slate-900 truncate">{resolveUserName(summary)}</h3>
                       <p className="text-xs text-slate-400">Total: {liveTotalsByUser.get(summary.userId)?.totalHours ?? summary.totalHours} hours</p>
                       {hasOpenShift && (
                         // self-start: without it the column flexbox's default
