@@ -71,8 +71,21 @@ export function WorkModelOverrideModal({ user, open, onOpenChange, onUserUpdated
     if (!user) return;
     setSaving(true);
     try {
-      const patch: { workModelId: string; workModelOverride: WorkModelOverride | null } = {
+      // Keep the two parallel work-model fields consistent (see
+      // resolveWorkModelLabel in AdminPanel): this modal is the only write
+      // path that used to persist workModelId WITHOUT the legacy workModel
+      // string, leaving the string stale in Firestore — so the console and
+      // every legacy reader (auth.ts, database.ts mappers, repairRunawayShifts,
+      // the Remote pay-cycle trigger in Analytics/Payroll) kept treating the
+      // user as their old model. Derive the canonical string from the chosen
+      // model's name and write both together.
+      const selectedName = models.find(m => m.id === workModelId)?.name ?? '';
+      const legacyWorkModel: User['workModel'] =
+        selectedName.toLowerCase().includes('remote') ? 'Remote' : 'On-site';
+
+      const patch: { workModelId: string; workModel: User['workModel']; workModelOverride: WorkModelOverride | null } = {
         workModelId,
+        workModel: legacyWorkModel,
         workModelOverride: hasCustomRules
           ? { ...override, hasCustomRules: true }
           : { hasCustomRules: false },
