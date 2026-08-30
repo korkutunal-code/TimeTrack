@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Checkbox } from '../ui/checkbox';
 import { toast } from 'sonner';
-import { Save, Loader2, ChevronDown, RotateCcw, X as XIcon, Search } from 'lucide-react';
+import { Save, Loader2, ChevronDown, RotateCcw, X as XIcon, Search, Users } from 'lucide-react';
 import { WorkModelsCard } from './WorkModelsCard';
 
 interface SystemSettingsViewProps {
@@ -19,6 +19,8 @@ interface SystemSettingsViewProps {
    *  parent's guarded tab-switch so the unsaved-changes modal still applies
    *  when leaving a dirty Settings form. */
   onOpenAudit?: () => void;
+  /** Same as onOpenAudit, for the deprecated Team tab. */
+  onOpenTeam?: () => void;
 }
 
 type SystemSettings = GlobalSettings;
@@ -42,7 +44,7 @@ const settingsEqual = (a: SystemSettings, b: SystemSettings): boolean =>
   JSON.stringify(a) === JSON.stringify(b);
 
 export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewProps>(
-  function SystemSettingsView({ currentUser, onOpenAudit }, ref) {
+  function SystemSettingsView({ currentUser, onOpenAudit, onOpenTeam }, ref) {
   const [systemSettings, setSystemSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
   const [initialSettings, setInitialSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
   const [loadingSettings, setLoadingSettings] = useState(false);
@@ -622,6 +624,25 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                   className="h-9 shrink-0"
                 >
                   <Search className="size-4" />
+                  Open
+                </Button>
+              </div>
+              <div className="flex items-center justify-between gap-4 border-t border-slate-200 pt-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Team</p>
+                  <p className="text-xs text-slate-500">
+                    Manager view of team time entries, approvals, and corrections.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onOpenTeam}
+                  disabled={!onOpenTeam}
+                  className="h-9 shrink-0"
+                >
+                  <Users className="size-4" />
                   Open
                 </Button>
               </div>

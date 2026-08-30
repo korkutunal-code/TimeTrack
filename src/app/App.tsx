@@ -518,13 +518,12 @@ export default function App() {
             Active-tab styling is unchanged (data-state lives on the anchor
             via the slotted trigger).
           */}
-          <TabsList className="grid grid-cols-3 sm:grid-cols-7 w-full gap-1">
+          <TabsList className="grid grid-cols-3 sm:grid-cols-6 w-full gap-1">
             {([
               { id: 'panel', icon: <Settings className="size-4 mr-0 sm:mr-2" />, full: 'User Base', short: 'User Base' },
               { id: 'payroll', icon: <FileText className="size-4 mr-0 sm:mr-2" />, full: 'Payroll', short: 'Pay' },
               { id: 'analytics', icon: <BarChart className="size-4 mr-0 sm:mr-2" />, full: 'Analytics', short: 'Analyt' },
               { id: 'metrics', icon: <TrendingUp className="size-4 mr-0 sm:mr-2" />, full: 'Metrics', short: 'Stats' },
-              { id: 'team', icon: <Users className="size-4 mr-0 sm:mr-2" />, full: 'Team', short: 'Team' },
               { id: 'corrections', icon: <FileWarning className="size-4 mr-0 sm:mr-2" />, full: 'Corrections', short: 'Fix' },
               { id: 'settings', icon: <Sliders className="size-4 mr-0 sm:mr-2" />, full: 'Settings', short: 'Set' },
             ] as { id: AdminView; icon: React.ReactNode; full: string; short: string }[]).map((tab) => (
@@ -594,6 +593,7 @@ export default function App() {
             ref={settingsGuardRef}
             currentUser={currentUser}
             onOpenAudit={() => requestAdminTab('audit')}
+            onOpenTeam={() => requestAdminTab('team')}
           />
         </TabsContent>
       </Tabs>
