@@ -320,6 +320,11 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
   });
 
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  // Snapshot of the edit form exactly as initialized on open — the dirty
+  // baseline for the Save button. Set alongside setEditingUser on open and
+  // refreshed after every successful save (same lifecycle as
+  // originalCorrectionEntry for the Correct Entry modal).
+  const [initialEditingUser, setInitialEditingUser] = useState<User | null>(null);
   // Header filter selections, restored per-admin from localStorage on mount.
   const [initialFilters] = useState(() => loadActiveFilters(currentUser.uid));
   const [selectedWorkModels, setSelectedWorkModels] = useState<string[]>(initialFilters.workModels);
@@ -509,8 +514,29 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     }
   };
 
+  // Edit User dirty-state: compare each editable field against the open-time
+  // snapshot. Optional text fields compare with '' ↔ undefined normalized (the
+  // inputs render `value || ''`, so clearing a field back to empty must count
+  // as reverted). Pay Calculation Day only participates when the current form
+  // work model is Remote — for On-site the field is hidden and never written.
+  const isEditUserDirty = useMemo(() => {
+    if (!editingUser || !initialEditingUser) return false;
+    const norm = (v?: string) => v ?? '';
+    return (
+      editingUser.name !== initialEditingUser.name ||
+      norm(editingUser.work_email) !== norm(initialEditingUser.work_email) ||
+      norm(editingUser.phone_number) !== norm(initialEditingUser.phone_number) ||
+      norm(editingUser.timezone) !== norm(initialEditingUser.timezone) ||
+      !!editingUser.sms_opt_in !== !!initialEditingUser.sms_opt_in ||
+      editingUser.workModel !== initialEditingUser.workModel ||
+      (editingUser.workModel === 'Remote' &&
+        (editingUser.remotePayCalculationDay ?? DEFAULT_REMOTE_PAY_CALCULATION_DAY) !==
+          (initialEditingUser.remotePayCalculationDay ?? DEFAULT_REMOTE_PAY_CALCULATION_DAY))
+    );
+  }, [editingUser, initialEditingUser]);
+
   const handleEditUser = async () => {
-    if (!editingUser) return;
+    if (!editingUser || !isEditUserDirty) return;
 
     try {
       // Keep the two parallel work-model fields consistent on save
@@ -549,6 +575,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       toast.success('User updated successfully');
       setEditUserOpen(false);
       setEditingUser(null);
+      setInitialEditingUser(null);
     } catch (e) {
       console.error('Failed to update user', e);
       toast.error(e instanceof Error ? `Failed to update user: ${e.message}` : 'Failed to update user');
@@ -713,10 +740,12 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         // select shows the same value as the table pill and an unchanged save
         // heals any drift instead of re-persisting the stale legacy string.
         const resolved = resolveWorkModelLabel(user, workModels);
-        setEditingUser({
+        const initial = {
           ...user,
-          workModel: resolved === 'Remote' ? 'Remote' : 'On-site',
-        });
+          workModel: (resolved === 'Remote' ? 'Remote' : 'On-site') as User['workModel'],
+        };
+        setEditingUser(initial);
+        setInitialEditingUser(initial);
         setEditUserOpen(true);
       }}
       className="inline-flex items-center justify-center p-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-600 cursor-pointer transition-all duration-150 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-600 hover:shadow-xs active:scale-95"
@@ -1596,7 +1625,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
             <Button variant="outline" onClick={() => setEditUserOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleEditUser}>Save Changes</Button>
+            <Button onClick={handleEditUser} disabled={!isEditUserDirty}>Save Changes</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

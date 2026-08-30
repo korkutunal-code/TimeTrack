@@ -36,6 +36,14 @@ export function WorkModelOverrideModal({ user, open, onOpenChange, onUserUpdated
   const [hasCustomRules, setHasCustomRules] = useState(false);
   const [override, setOverride] = useState<WorkModelOverride>(EMPTY_OVERRIDE);
   const [saving, setSaving] = useState(false);
+  // Snapshot of the form exactly as initialized on open — the dirty baseline
+  // for the Save button (disabled until something differs, re-disabled when
+  // every field is reverted to its initial value).
+  const [initialForm, setInitialForm] = useState<{
+    workModelId: string;
+    hasCustomRules: boolean;
+    override: WorkModelOverride;
+  } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -45,15 +53,20 @@ export function WorkModelOverrideModal({ user, open, onOpenChange, onUserUpdated
       .then(list => {
         setModels(list);
         if (user) {
-          setWorkModelId(user.workModelId || '');
+          const initialWorkModelId = user.workModelId || '';
           const existing = user.workModelOverride;
-          if (existing && existing.hasCustomRules) {
-            setHasCustomRules(true);
-            setOverride({ ...EMPTY_OVERRIDE, ...existing });
-          } else {
-            setHasCustomRules(false);
-            setOverride(EMPTY_OVERRIDE);
-          }
+          const initialHasCustom = !!(existing && existing.hasCustomRules);
+          const initialOverride = initialHasCustom
+            ? { ...EMPTY_OVERRIDE, ...existing }
+            : EMPTY_OVERRIDE;
+          setWorkModelId(initialWorkModelId);
+          setHasCustomRules(initialHasCustom);
+          setOverride(initialOverride);
+          setInitialForm({
+            workModelId: initialWorkModelId,
+            hasCustomRules: initialHasCustom,
+            override: initialOverride,
+          });
         }
       })
       .catch(e => {
@@ -67,8 +80,22 @@ export function WorkModelOverrideModal({ user, open, onOpenChange, onUserUpdated
     setOverride(prev => ({ ...prev, ...patch }));
   };
 
+  // Dirty when the base model, the custom-rules toggle, or any override value
+  // differs from the open-time snapshot. Override numeric/boolean fields are
+  // compared key-by-key (the editable set under EMPTY_OVERRIDE).
+  const isDirty = (() => {
+    if (!initialForm) return false;
+    if (workModelId !== initialForm.workModelId) return true;
+    if (hasCustomRules !== initialForm.hasCustomRules) return true;
+    const keys: (keyof WorkModelOverride)[] = [
+      'noOvertime', 'overtimeLimit', 'overtimeMultiplier',
+      'doubleTimeLimit', 'doubleTimeMultiplier', 'weeklyOvertimeLimit',
+    ];
+    return keys.some(k => (override[k] ?? undefined) !== (initialForm.override[k] ?? undefined));
+  })();
+
   const handleSave = async () => {
-    if (!user) return;
+    if (!user || !isDirty) return;
     setSaving(true);
     try {
       // Keep the two parallel work-model fields consistent (see
@@ -245,7 +272,7 @@ export function WorkModelOverrideModal({ user, open, onOpenChange, onUserUpdated
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={saving || loadingModels}>
+          <Button onClick={handleSave} disabled={saving || loadingModels || !isDirty}>
             {saving ? <Loader2 className="size-4 mr-2 animate-spin" /> : null}
             Save
           </Button>
