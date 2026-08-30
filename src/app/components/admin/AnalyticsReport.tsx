@@ -675,40 +675,42 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
   const flagStats = useMemo(() => {
     if (!report) return null;
     const recordedEmployees = report.length;
-    let totalEntries = 0;
-    let flaggedEntries = 0;
+    // "Days" terminology: each dailyEntries row is one employee-day record, so
+    // the cards count days, not raw punch entries.
+    let recordedDays = 0;
+    let flaggedDays = 0;
     let totalFlags = 0;
     const flagTypeCounts = new Map<string, number>();
     const employeeDist: {
       userId: string;
       userName: string;
-      totalEntries: number;
-      flaggedEntries: number;
+      recordedDays: number;
+      flaggedDays: number;
       totalFlags: number;
       flagRate: number;
       riskLevel: 'high' | 'medium' | 'low';
     }[] = [];
 
     for (const summary of report) {
-      let empEntries = 0;
-      let empFlagged = 0;
+      let empDays = 0;
+      let empFlaggedDays = 0;
       let empFlags = 0;
       for (const day of summary.dailyEntries ?? []) {
-        empEntries += 1;
+        empDays += 1;
         const flags = computeDayFlags(summary, day);
-        if (flags.length > 0) empFlagged += 1;
+        if (flags.length > 0) empFlaggedDays += 1;
         empFlags += flags.length;
         for (const f of flags) flagTypeCounts.set(f, (flagTypeCounts.get(f) ?? 0) + 1);
       }
-      totalEntries += empEntries;
-      flaggedEntries += empFlagged;
+      recordedDays += empDays;
+      flaggedDays += empFlaggedDays;
       totalFlags += empFlags;
-      const flagRate = empEntries > 0 ? (empFlagged / empEntries) * 100 : 0;
+      const flagRate = empDays > 0 ? (empFlaggedDays / empDays) * 100 : 0;
       employeeDist.push({
         userId: summary.userId,
         userName: resolveUserName(summary),
-        totalEntries: empEntries,
-        flaggedEntries: empFlagged,
+        recordedDays: empDays,
+        flaggedDays: empFlaggedDays,
         totalFlags: empFlags,
         flagRate,
         riskLevel: flagRate > 30 ? 'high' : flagRate > 15 ? 'medium' : 'low',
@@ -722,11 +724,11 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
 
     return {
       recordedEmployees,
-      totalEntries,
-      flaggedEntries,
+      recordedDays,
+      flaggedDays,
       totalFlags,
-      flaggedRate: totalEntries > 0 ? (flaggedEntries / totalEntries) * 100 : 0,
-      flagsPerFlaggedEntry: flaggedEntries > 0 ? totalFlags / flaggedEntries : 0,
+      flaggedDayRate: recordedDays > 0 ? (flaggedDays / recordedDays) * 100 : 0,
+      flagsPerFlaggedDay: flaggedDays > 0 ? totalFlags / flaggedDays : 0,
       employeeDist,
       flagFrequencies,
     };
@@ -1107,23 +1109,23 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                   <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
                     <div className="flex items-center gap-1.5 mb-1">
                       <FileText className="size-3.5 text-slate-500" />
-                      <p className="text-xs text-slate-600">Total Entries</p>
+                      <p className="text-xs text-slate-600">Recorded Days</p>
                     </div>
-                    <p className="text-2xl font-bold text-slate-900">{flagStats.totalEntries}</p>
+                    <p className="text-2xl font-bold text-slate-900">{flagStats.recordedDays}</p>
                   </div>
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                     <div className="flex items-center gap-1.5 mb-1">
                       <Flag className="size-3.5 text-red-600" />
-                      <p className="text-xs text-red-700">Flagged Entries</p>
+                      <p className="text-xs text-red-700">Flagged Days</p>
                     </div>
-                    <p className="text-2xl font-bold text-red-700">{flagStats.flaggedEntries}</p>
+                    <p className="text-2xl font-bold text-red-700">{flagStats.flaggedDays}</p>
                   </div>
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                     <div className="flex items-center gap-1.5 mb-1">
                       <Percent className="size-3.5 text-amber-600" />
-                      <p className="text-xs text-amber-700">Flagged Rate</p>
+                      <p className="text-xs text-amber-700">Flagged Day Rate</p>
                     </div>
-                    <p className="text-2xl font-bold text-amber-700">{flagStats.flaggedRate.toFixed(1)}%</p>
+                    <p className="text-2xl font-bold text-amber-700">{flagStats.flaggedDayRate.toFixed(1)}%</p>
                   </div>
                   <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
                     <div className="flex items-center gap-1.5 mb-1">
@@ -1135,9 +1137,9 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                     <div className="flex items-center gap-1.5 mb-1">
                       <Activity className="size-3.5 text-blue-600" />
-                      <p className="text-xs text-blue-700">Flags per Flagged Entry</p>
+                      <p className="text-xs text-blue-700">Flags per Flagged Day</p>
                     </div>
-                    <p className="text-2xl font-bold text-blue-700">{flagStats.flagsPerFlaggedEntry.toFixed(1)}</p>
+                    <p className="text-2xl font-bold text-blue-700">{flagStats.flagsPerFlaggedDay.toFixed(1)}</p>
                   </div>
                 </div>
               </CardContent>
@@ -1147,7 +1149,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
           {/* Employee Flag Distribution + Flag Frequencies — same SSOT data as
               the stat cards above (computeDayFlags), rendered in the Metrics
               tab's card idiom but computed entirely from the Analytics pipeline. */}
-          {flagStats && flagStats.totalEntries > 0 && (
+          {flagStats && flagStats.recordedDays > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Employee Flag Distribution */}
               <Card className="border-2 border-slate-200 gap-2">
@@ -1164,7 +1166,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                         <div className="flex-1">
                           <p className="font-semibold text-sm text-slate-900">{emp.userName}</p>
                           <p className="text-xs text-slate-500">
-                            {emp.flaggedEntries} / {emp.totalEntries} flagged, {emp.totalFlags} total flags
+                            {emp.flaggedDays} / {emp.recordedDays} flagged, {emp.totalFlags} total flags
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1206,7 +1208,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                           <div className="w-24 h-2 bg-slate-200 rounded-full overflow-hidden">
                             <div
                               className="h-full bg-amber-500"
-                              style={{ width: `${flagStats.totalEntries > 0 ? (item.count / flagStats.totalEntries) * 100 : 0}%` }}
+                              style={{ width: `${flagStats.recordedDays > 0 ? (item.count / flagStats.recordedDays) * 100 : 0}%` }}
                             />
                           </div>
                           <span className="text-sm font-bold text-amber-600 min-w-[3rem] text-right">{item.count}</span>
