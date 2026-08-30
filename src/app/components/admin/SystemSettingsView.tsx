@@ -10,11 +10,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Checkbox } from '../ui/checkbox';
 import { toast } from 'sonner';
-import { Save, Loader2, ChevronDown, RotateCcw, X as XIcon } from 'lucide-react';
+import { Save, Loader2, ChevronDown, RotateCcw, X as XIcon, Search } from 'lucide-react';
 import { WorkModelsCard } from './WorkModelsCard';
 
 interface SystemSettingsViewProps {
   currentUser: User;
+  /** Navigate to a deprecated main-nav tab (e.g. Audit). Routed through the
+   *  parent's guarded tab-switch so the unsaved-changes modal still applies
+   *  when leaving a dirty Settings form. */
+  onOpenAudit?: () => void;
 }
 
 type SystemSettings = GlobalSettings;
@@ -38,7 +42,7 @@ const settingsEqual = (a: SystemSettings, b: SystemSettings): boolean =>
   JSON.stringify(a) === JSON.stringify(b);
 
 export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewProps>(
-  function SystemSettingsView({ currentUser }, ref) {
+  function SystemSettingsView({ currentUser, onOpenAudit }, ref) {
   const [systemSettings, setSystemSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
   const [initialSettings, setInitialSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
   const [loadingSettings, setLoadingSettings] = useState(false);
@@ -598,9 +602,30 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
         </CardHeader>
         {isDeprecatedTabsOpen && (
           <CardContent className="pt-2">
-            <p className="text-xs text-slate-400">
-              Tabs that have been retired from the main navigation will be listed here for reference.
+            <p className="text-xs text-slate-400 mb-4">
+              Tabs retired from the main navigation. They remain fully functional and are kept here for reference.
             </p>
+            <div className="space-y-3 bg-white p-4 border border-slate-200 rounded-lg">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Audit</p>
+                  <p className="text-xs text-slate-500">
+                    Identify inconsistencies, suspicious flags, and manual timestamp gaps.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onOpenAudit}
+                  disabled={!onOpenAudit}
+                  className="h-9 shrink-0"
+                >
+                  <Search className="size-4" />
+                  Open
+                </Button>
+              </div>
+            </div>
           </CardContent>
         )}
       </Card>

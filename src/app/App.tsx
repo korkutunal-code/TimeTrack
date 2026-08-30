@@ -44,7 +44,7 @@ import {
 } from './components/ui/dropdown-menu';
 import { Toaster } from './components/ui/sonner';
 import { toast } from 'sonner';
-import { LogOut, Clock, Users, Settings, FileText, Search, TrendingUp, FileWarning, Sliders, Shield, BarChart } from 'lucide-react';
+import { LogOut, Clock, Users, Settings, FileText, TrendingUp, FileWarning, Sliders, Shield, BarChart } from 'lucide-react';
 import { QABar } from './components/QABar';
 import { ReportProblemButton } from './components/ReportProblemButton';
 
@@ -198,6 +198,20 @@ export default function App() {
       // history API unavailable — in-memory state still switches.
     }
   }, []);
+
+  /**
+   * Guarded tab switch — the single navigation path for every in-app admin
+   * tab change (nav bar AND the Settings → Deprecated tabs shortcut).
+   * Intercepts switches away from a dirty Settings form so the Unsaved
+   * Changes modal can offer save/discard before navigating.
+   */
+  const requestAdminTab = useCallback((next: AdminView) => {
+    if (adminView === 'settings' && next !== 'settings' && settingsGuardRef.current?.isDirty()) {
+      setPendingTab(next);
+      return;
+    }
+    navigateToAdminTab(next);
+  }, [adminView, navigateToAdminTab]);
 
   // Back/forward buttons: re-read ?tab= and follow it.
   useEffect(() => {
@@ -491,16 +505,7 @@ export default function App() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       <Tabs
         value={adminView}
-        onValueChange={(v) => {
-          const next = v as AdminView;
-          // Intercept tab switches away from Settings when there are unsaved
-          // edits: show the Unsaved Changes modal instead of navigating.
-          if (adminView === 'settings' && next !== 'settings' && settingsGuardRef.current?.isDirty()) {
-            setPendingTab(next);
-            return;
-          }
-          navigateToAdminTab(next);
-        }}
+        onValueChange={(v) => requestAdminTab(v as AdminView)}
         className="space-y-4"
       >
         <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
@@ -513,12 +518,11 @@ export default function App() {
             Active-tab styling is unchanged (data-state lives on the anchor
             via the slotted trigger).
           */}
-          <TabsList className="grid grid-cols-3 sm:grid-cols-8 w-full gap-1">
+          <TabsList className="grid grid-cols-3 sm:grid-cols-7 w-full gap-1">
             {([
               { id: 'panel', icon: <Settings className="size-4 mr-0 sm:mr-2" />, full: 'User Base', short: 'User Base' },
               { id: 'payroll', icon: <FileText className="size-4 mr-0 sm:mr-2" />, full: 'Payroll', short: 'Pay' },
               { id: 'analytics', icon: <BarChart className="size-4 mr-0 sm:mr-2" />, full: 'Analytics', short: 'Analyt' },
-              { id: 'audit', icon: <Search className="size-4 mr-0 sm:mr-2" />, full: 'Audit', short: 'Audit' },
               { id: 'metrics', icon: <TrendingUp className="size-4 mr-0 sm:mr-2" />, full: 'Metrics', short: 'Stats' },
               { id: 'team', icon: <Users className="size-4 mr-0 sm:mr-2" />, full: 'Team', short: 'Team' },
               { id: 'corrections', icon: <FileWarning className="size-4 mr-0 sm:mr-2" />, full: 'Corrections', short: 'Fix' },
@@ -586,7 +590,11 @@ export default function App() {
         </TabsContent>
 
         <TabsContent value="settings">
-          <SystemSettingsView ref={settingsGuardRef} currentUser={currentUser} />
+          <SystemSettingsView
+            ref={settingsGuardRef}
+            currentUser={currentUser}
+            onOpenAudit={() => requestAdminTab('audit')}
+          />
         </TabsContent>
       </Tabs>
 
