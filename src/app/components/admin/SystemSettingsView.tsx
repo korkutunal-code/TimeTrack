@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Checkbox } from '../ui/checkbox';
 import { toast } from 'sonner';
-import { Save, Loader2, ChevronDown, RotateCcw, X as XIcon, Search, Users } from 'lucide-react';
+import { Save, Loader2, ChevronDown, RotateCcw, X as XIcon, Search, Users, TrendingUp } from 'lucide-react';
 import { WorkModelsCard } from './WorkModelsCard';
 
 interface SystemSettingsViewProps {
@@ -21,6 +21,8 @@ interface SystemSettingsViewProps {
   onOpenAudit?: () => void;
   /** Same as onOpenAudit, for the deprecated Team tab. */
   onOpenTeam?: () => void;
+  /** Same as onOpenAudit, for the deprecated Metrics tab. */
+  onOpenMetrics?: () => void;
 }
 
 type SystemSettings = GlobalSettings;
@@ -44,7 +46,7 @@ const settingsEqual = (a: SystemSettings, b: SystemSettings): boolean =>
   JSON.stringify(a) === JSON.stringify(b);
 
 export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewProps>(
-  function SystemSettingsView({ currentUser, onOpenAudit, onOpenTeam }, ref) {
+  function SystemSettingsView({ currentUser, onOpenAudit, onOpenTeam, onOpenMetrics }, ref) {
   const [systemSettings, setSystemSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
   const [initialSettings, setInitialSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
   const [loadingSettings, setLoadingSettings] = useState(false);
@@ -643,6 +645,25 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
                   className="h-9 shrink-0"
                 >
                   <Users className="size-4" />
+                  Open
+                </Button>
+              </div>
+              <div className="flex items-center justify-between gap-4 border-t border-slate-200 pt-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Metrics</p>
+                  <p className="text-xs text-slate-500">
+                    Pattern analysis: flag rates, insights, and employee risk ranking.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onOpenMetrics}
+                  disabled={!onOpenMetrics}
+                  className="h-9 shrink-0"
+                >
+                  <TrendingUp className="size-4" />
                   Open
                 </Button>
               </div>
