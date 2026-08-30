@@ -29,7 +29,7 @@ import { validateSegmentChronology, getFuturePunchError, getSegmentOverlapError 
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import { auditLogService } from '../../../services/auditLogService';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
-import { isRemoteWorkModel } from '../../../utils/workModelUtils';
+import { isRemoteWorkModel, resolveWorkModelName } from '../../../utils/workModelUtils';
 import { migrateRemotePayCalculationDay, DEFAULT_REMOTE_PAY_CALCULATION_DAY } from '../../../services/userMigrationService';
 
 interface AdminPanelProps {
@@ -76,11 +76,12 @@ const PAY_CALCULATION_DAY_OPTIONS = Array.from({ length: 28 }, (_, i) => i + 1);
  * falls back to the legacy `workModel` string; then '' (so the filter's
  * default-of-'On-site' / the pill's 'Select Model' each apply their own
  * fallback downstream).
+ *
+ * The implementation lives in utils/workModelUtils (resolveWorkModelName) and
+ * is shared with the Analytics/Payroll Remote-cycle trigger and the edit-open
+ * path — a single resolver so the precedence can't drift between copies.
  */
-function resolveWorkModelLabel(user: User, workModels: WorkModelDef[]): string {
-  const byId = user.workModelId ? workModels.find(m => m.id === user.workModelId) : undefined;
-  return byId?.name || user.workModel || '';
-}
+const resolveWorkModelLabel = resolveWorkModelName;
 
 // Customizable columns in the Manage Users table. "User" is intentionally
 // excluded — it is always visible and has no explicit width so it auto-fills
