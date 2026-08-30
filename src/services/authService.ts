@@ -78,6 +78,7 @@ export async function provisionUser({ email, name, role, createdByUid, sendInvit
             timezone: timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
             workModel: 'On-site',
             workModelOverride: null,
+            remotePayCalculationDay: 1,
             ...(sendInvite ? { invitedAt: new Date(), status: 'invited' } : { status: 'active' })
         });
 
@@ -166,6 +167,7 @@ export async function inviteUser(email: string, name: string, role: string, crea
             status: 'invited',
             workModel: 'On-site',
             workModelOverride: null,
+            remotePayCalculationDay: 1,
         });
 
         // Send Password Reset Email from TEMP auth since we are logged in as them there

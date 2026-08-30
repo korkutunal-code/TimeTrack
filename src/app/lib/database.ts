@@ -636,15 +636,20 @@ class DatabaseService {
         workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
         workModelId: data.workModelId as string | undefined,
         workModelOverride: (data.workModelOverride as User['workModelOverride']) ?? null,
+        remotePayCalculationDay: typeof data.remotePayCalculationDay === 'number' ? data.remotePayCalculationDay : undefined,
       };
     });
   }
 
   async updateUser(uid: string, updates: Partial<User>): Promise<User> {
-    await updateDoc(doc(db, 'users', uid), {
+    // stripUndefined is mandatory here: callers pass through profile fields
+    // like work_email / phone_number that are frequently undefined, and
+    // Firestore updateDoc throws "Unsupported field value: undefined" on any
+    // undefined value — silently killing the entire save.
+    await updateDoc(doc(db, 'users', uid), stripUndefined({
       ...updates,
       updatedAt: new Date(),
-    });
+    }));
     const snap = await getDoc(doc(db, 'users', uid));
     if (!snap.exists()) throw new Error('User not found');
     const data = snap.data() as DocumentData;
@@ -661,6 +666,7 @@ class DatabaseService {
       workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
       workModelId: data.workModelId as string | undefined,
       workModelOverride: (data.workModelOverride as User['workModelOverride']) ?? null,
+      remotePayCalculationDay: typeof data.remotePayCalculationDay === 'number' ? data.remotePayCalculationDay : undefined,
     };
   }
 
@@ -689,6 +695,7 @@ class DatabaseService {
       workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
       workModelId: data.workModelId as string | undefined,
       workModelOverride: (data.workModelOverride as User['workModelOverride']) ?? null,
+      remotePayCalculationDay: typeof data.remotePayCalculationDay === 'number' ? data.remotePayCalculationDay : undefined,
     };
   }
 

@@ -29,6 +29,7 @@ import { validateSegmentChronology, getFuturePunchError, getSegmentOverlapError 
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import { auditLogService } from '../../../services/auditLogService';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
+import { migrateRemotePayCalculationDay } from '../../../services/userMigrationService';
 
 interface AdminPanelProps {
   currentUser: User;
@@ -283,6 +284,21 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
 
   useEffect(() => {
     listWorkModels().then(setWorkModels).catch(e => console.error('Failed to load work models', e));
+
+    // One-time backfill: physically write remotePayCalculationDay: 1 into
+    // every users doc missing it. Idempotent (docs already holding a number
+    // are skipped), so running on every admin init is a read-only no-op once
+    // all docs are migrated. Admin-only context — firestore.rules requires
+    // hasRole('admin') to update other users' docs.
+    migrateRemotePayCalculationDay()
+      .then(async ({ updated }) => {
+        if (updated > 0) {
+          onUsersChange(await dbService.getAllUsers());
+          toast.success(`Backfilled remotePayCalculationDay for ${updated} user${updated === 1 ? '' : 's'}`);
+        }
+      })
+      .catch(e => console.error('remotePayCalculationDay migration failed', e));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const [newUser, setNewUser] = useState({

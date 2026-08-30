@@ -28,6 +28,12 @@ export interface User {
   workModel: WorkModel;
   workModelId?: string;
   workModelOverride?: WorkModelOverride | null;
+  /**
+   * Pay-calculation anchor day for Remote employees, stored as a native
+   * Firestore number. Written as 1 on user creation and backfilled to 1 on
+   * every existing users doc by migrateRemotePayCalculationDay() (admin init).
+   */
+  remotePayCalculationDay?: number;
 }
 
 async function loadUserProfile(uid: string): Promise<User> {
@@ -49,6 +55,7 @@ async function loadUserProfile(uid: string): Promise<User> {
     workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
     workModelId: data.workModelId as string | undefined,
     workModelOverride: (data.workModelOverride as WorkModelOverride | null | undefined) ?? null,
+    remotePayCalculationDay: typeof data.remotePayCalculationDay === 'number' ? data.remotePayCalculationDay : undefined,
   };
 }
 
@@ -78,6 +85,7 @@ class AuthService {
       sms_opt_in: false,
       workModel: 'On-site' as WorkModel,
       workModelOverride: null,
+      remotePayCalculationDay: 1,
     };
 
     // Create the profile document in Firestore
@@ -114,6 +122,7 @@ class AuthService {
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           sms_opt_in: false,
           workModel: 'On-site' as WorkModel,
+          remotePayCalculationDay: 1,
         };
 
         // Create the profile document in Firestore
