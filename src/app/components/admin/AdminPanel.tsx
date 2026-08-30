@@ -513,6 +513,16 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     if (!editingUser) return;
 
     try {
+      // Keep the two parallel work-model fields consistent on save
+      // (resolveWorkModelLabel documents how they drift: the override modal
+      // writes workModelId only, the quick toggle writes workModel only). The
+      // modal select was initialized from the authoritative resolved label,
+      // so persisting it back — plus the matching workModels doc id when one
+      // exists — leaves both fields describing the same model. workModelId is
+      // only touched when the chosen label resolves to a real workModels doc;
+      // otherwise the existing FK is preserved rather than nulled.
+      const chosenWorkModelDef = workModels.find(m => m.name === editingUser.workModel);
+
       const updates: Parameters<typeof dbService.updateUser>[1] = {
         name: editingUser.name,
         work_email: editingUser.work_email,
@@ -520,6 +530,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         sms_opt_in: editingUser.sms_opt_in,
         timezone: editingUser.timezone,
         workModel: editingUser.workModel,
+        ...(chosenWorkModelDef ? { workModelId: chosenWorkModelDef.id } : {}),
       };
 
       // remotePayCalculationDay is written only for Remote users, as a native
@@ -590,7 +601,14 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     setWorkModelError(null);
     try {
       const { user, targetWorkModel } = userToToggleWorkModel;
-      const updated = await dbService.updateUser(user.uid, { workModel: targetWorkModel });
+      // Keep both fields consistent (see resolveWorkModelLabel): write the
+      // matching workModels doc id alongside the legacy string when one
+      // exists, so the pill, filter, and Edit modal never disagree.
+      const targetDef = workModels.find(m => m.name === targetWorkModel);
+      const updated = await dbService.updateUser(user.uid, {
+        workModel: targetWorkModel,
+        ...(targetDef ? { workModelId: targetDef.id } : {}),
+      });
       onUsersChange(allUsers.map(u => u.uid === updated.uid ? updated : u));
       toast.success(`Work model updated to ${targetWorkModel}`);
       setUserToToggleWorkModel(null);
@@ -690,7 +708,15 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       type="button"
       aria-label={`Edit ${user.name}`}
       onClick={() => {
-        setEditingUser(user);
+        // Initialize the modal's workModel from the AUTHORITATIVE resolved
+        // label (workModelId lookup wins over the legacy string), so the
+        // select shows the same value as the table pill and an unchanged save
+        // heals any drift instead of re-persisting the stale legacy string.
+        const resolved = resolveWorkModelLabel(user, workModels);
+        setEditingUser({
+          ...user,
+          workModel: resolved === 'Remote' ? 'Remote' : 'On-site',
+        });
         setEditUserOpen(true);
       }}
       className="inline-flex items-center justify-center p-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-600 cursor-pointer transition-all duration-150 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-600 hover:shadow-xs active:scale-95"
