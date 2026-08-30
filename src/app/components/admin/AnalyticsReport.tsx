@@ -25,6 +25,7 @@ import type { OvertimeEntry } from '../../../utils/overtimeCalculations';
 import { formatDateShortWithWeekday } from '../../../utils/dateHelpers.js';
 import { epochFromLocalWallTime, getCurrentPTDate, getEmployeeTimezone } from '../../../utils/timeCalculations';
 import { computeRemotePayCycle } from '../../../utils/payCycle';
+import { isRemoteWorkModel } from '../../../utils/workModelUtils';
 import { getSegmentFlags, getParentRowFlags, FLAG_LABELS, FLAG_SEVERITY } from '../../../utils/analyticsFlags';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 import { type TimeViewMode, displayTimeForView, zoneForMode, calendarDayOffsetInZone } from '../../../utils/timeView';
@@ -91,6 +92,17 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
     onsiteLunchRecordedMinutes: 60,
   });
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  // Work-model definitions loaded at mount so the Remote pay-cycle trigger can
+  // resolve Remote-ness via the authoritative workModelId → name lookup (the
+  // same precedence as the OT math and the User Base pill) instead of the
+  // drift-prone legacy workModel string.
+  const [workModels, setWorkModels] = useState<WorkModelDef[]>([]);
+
+  useEffect(() => {
+    listWorkModels()
+      .then(setWorkModels)
+      .catch(e => console.error('Failed to load work models for cycle resolution', e));
+  }, []);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -127,8 +139,8 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
   const remoteCycleUser = useMemo(() => {
     if (isGroupSelection(selectedUserId)) return null;
     const u = allUsers.find(x => x.uid === selectedUserId);
-    return u && u.workModel === 'Remote' ? u : null;
-  }, [selectedUserId, allUsers]);
+    return u && isRemoteWorkModel(u, workModels) ? u : null;
+  }, [selectedUserId, allUsers, workModels]);
 
   /**
    * Pure helper: compute the start/end YMD strings for a given preset

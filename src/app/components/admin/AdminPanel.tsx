@@ -29,6 +29,7 @@ import { validateSegmentChronology, getFuturePunchError, getSegmentOverlapError 
 import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK_START_DAY } from '../../../utils/overtimeCalculations';
 import { auditLogService } from '../../../services/auditLogService';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
+import { isRemoteWorkModel } from '../../../utils/workModelUtils';
 import { migrateRemotePayCalculationDay, DEFAULT_REMOTE_PAY_CALCULATION_DAY } from '../../../services/userMigrationService';
 
 interface AdminPanelProps {
@@ -539,15 +540,18 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
     if (!editingUser || !isEditUserDirty) return;
 
     try {
-      // Keep the two parallel work-model fields consistent on save
-      // (resolveWorkModelLabel documents how they drift: the override modal
-      // writes workModelId only, the quick toggle writes workModel only). The
-      // modal select was initialized from the authoritative resolved label,
-      // so persisting it back — plus the matching workModels doc id when one
-      // exists — leaves both fields describing the same model. workModelId is
-      // only touched when the chosen label resolves to a real workModels doc;
-      // otherwise the existing FK is preserved rather than nulled.
-      const chosenWorkModelDef = workModels.find(m => m.name === editingUser.workModel);
+      // Keep the two parallel work-model fields consistent on save. workModelId
+      // is only rewritten when the admin actually CHANGED the work-model select
+      // (editingUser.workModel differs from the open-time snapshot). If the
+      // select is untouched, the original workModelId is preserved verbatim —
+      // critical for users assigned a CUSTOM-named model (e.g. "Remote East"):
+      // the select only offers the two standard labels, so re-deriving the FK
+      // from the normalized label would silently clobber the custom FK (and
+      // with it the OT/pay-cycle semantics that key off workModelId).
+      const workModelChanged = editingUser.workModel !== initialEditingUser?.workModel;
+      const chosenWorkModelDef = workModelChanged
+        ? workModels.find(m => m.name === editingUser.workModel)
+        : undefined;
 
       const updates: Parameters<typeof dbService.updateUser>[1] = {
         name: editingUser.name,
@@ -556,7 +560,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         sms_opt_in: editingUser.sms_opt_in,
         timezone: editingUser.timezone,
         workModel: editingUser.workModel,
-        ...(chosenWorkModelDef ? { workModelId: chosenWorkModelDef.id } : {}),
+        ...(workModelChanged && chosenWorkModelDef ? { workModelId: chosenWorkModelDef.id } : {}),
       };
 
       // remotePayCalculationDay is written only for Remote users, as a native
@@ -736,13 +740,15 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       aria-label={`Edit ${user.name}`}
       onClick={() => {
         // Initialize the modal's workModel from the AUTHORITATIVE resolved
-        // label (workModelId lookup wins over the legacy string), so the
-        // select shows the same value as the table pill and an unchanged save
-        // heals any drift instead of re-persisting the stale legacy string.
-        const resolved = resolveWorkModelLabel(user, workModels);
+        // Remote-ness (workModelId → name wins over the legacy string, via the
+        // shared resolver), so the select shows the same value as the table
+        // pill and a custom Remote-flavored model (e.g. "Remote East") still
+        // reveals the Pay Calculation Day dropdown. The original workModelId is
+        // kept on the snapshot so an unchanged save can preserve a custom FK
+        // instead of overwriting it with a default model's id.
         const initial = {
           ...user,
-          workModel: (resolved === 'Remote' ? 'Remote' : 'On-site') as User['workModel'],
+          workModel: (isRemoteWorkModel(user, workModels) ? 'Remote' : 'On-site') as User['workModel'],
         };
         setEditingUser(initial);
         setInitialEditingUser(initial);

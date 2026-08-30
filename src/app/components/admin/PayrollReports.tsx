@@ -24,6 +24,7 @@ import type { OvertimeEntry } from '../../../utils/overtimeCalculations';
 import { formatDateShortWithWeekday } from '../../../utils/dateHelpers.js';
 import { epochFromLocalWallTime, getCurrentPTDate } from '../../../utils/timeCalculations';
 import { computeRemotePayCycle } from '../../../utils/payCycle';
+import { isRemoteWorkModel } from '../../../utils/workModelUtils';
 import { computeSegmentWorkMinutes } from '../../lib/segmentOps';
 import type { TimeSegment } from '../../lib/database';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
@@ -68,6 +69,17 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
     exclude_records_before_date: '',
   });
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  // Work-model definitions loaded at mount so the Remote pay-cycle trigger can
+  // resolve Remote-ness via the authoritative workModelId → name lookup (the
+  // same precedence as the OT math and the User Base pill) instead of the
+  // drift-prone legacy workModel string.
+  const [workModels, setWorkModels] = useState<WorkModelDef[]>([]);
+
+  useEffect(() => {
+    listWorkModels()
+      .then(setWorkModels)
+      .catch(e => console.error('Failed to load work models for cycle resolution', e));
+  }, []);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -102,8 +114,8 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
   const remoteCycleUser = useMemo(() => {
     if (isGroupSelection(selectedUserId)) return null;
     const u = allUsers.find(x => x.uid === selectedUserId);
-    return u && u.workModel === 'Remote' ? u : null;
-  }, [selectedUserId, allUsers]);
+    return u && isRemoteWorkModel(u, workModels) ? u : null;
+  }, [selectedUserId, allUsers, workModels]);
 
   /**
    * Pure helper: compute the start/end YMD strings for a given preset
