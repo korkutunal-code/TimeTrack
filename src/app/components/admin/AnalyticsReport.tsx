@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
 import type { DocumentData } from 'firebase/firestore';
@@ -10,7 +10,7 @@ import { Label } from '../ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
-import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, Radio } from 'lucide-react';
+import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, Radio, Users, Flag, Percent, Activity } from 'lucide-react';
 import { generateCSV, downloadCSV } from '../../../services/exportService';
 import { ALL_USERS, USER_GROUP_OPTIONS } from '../../../utils/userSelection';
 import { DailyBreakdownTable } from './DailyBreakdownTable';
@@ -22,7 +22,7 @@ import type { OvertimeEntry } from '../../../utils/overtimeCalculations';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - JS module
 import { formatDateShortWithWeekday } from '../../../utils/dateHelpers.js';
-import { epochFromLocalWallTime, getCurrentPTDate } from '../../../utils/timeCalculations';
+import { epochFromLocalWallTime, getCurrentPTDate, getEmployeeTimezone } from '../../../utils/timeCalculations';
 import { getSegmentFlags, getParentRowFlags, FLAG_LABELS, FLAG_SEVERITY } from '../../../utils/analyticsFlags';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 import { type TimeViewMode, displayTimeForView, zoneForMode, calendarDayOffsetInZone } from '../../../utils/timeView';
@@ -577,6 +577,56 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
     );
   };
 
+  // The full parent-row flag set for one day — the SAME computation the
+  // Daily Breakdown renders (child segment flags + day-level + missing_lunch).
+  // Extracted so the Flags Statistics summary counts exactly what the table
+  // shows (SSOT: utils/analyticsFlags.ts, no separate Metrics-tab mechanics).
+  const computeDayFlags = (summary: PayrollSummary, day: DocumentData): string[] => {
+    const viewZone = zoneForMode(timeViewMode, getEmployeeTimezone(allUsers.find(u => u.uid === summary.userId)?.timezone));
+    const lunch = getDayLunch(day, viewZone);
+    const isOnsite = summary.workModel === 'On-site';
+    const lunchMissing = isOnsite && !lunch.isMultiple && !lunch.lunchOut && !lunch.lunchIn;
+    const segs = Array.isArray(day.segments) ? day.segments : [];
+    const flagSegs: DocumentData[] = segs.length > 0 ? segs : [day];
+    const childFlags: string[][] = flagSegs.map((s, i) =>
+      getSegmentFlags(s, {
+        isLastSegment: i === flagSegs.length - 1,
+        docAutoClosed: day.autoClosed === true,
+        docAutoEndedLunch: day.autoEndedLunch === true,
+        docAnomaly: day.anomaly_flag === true,
+        completedAt: day.completedAt,
+        isOnSite: isOnsite,
+      }),
+    );
+    return getParentRowFlags(day, childFlags, lunchMissing ? ['missing_lunch'] : []);
+  };
+
+  // Flags Statistics — computed from the generated report's pipeline entries.
+  const flagStats = useMemo(() => {
+    if (!report) return null;
+    const recordedEmployees = report.length;
+    let totalEntries = 0;
+    let flaggedEntries = 0;
+    let totalFlags = 0;
+    for (const summary of report) {
+      for (const day of summary.dailyEntries ?? []) {
+        totalEntries += 1;
+        const flags = computeDayFlags(summary, day);
+        if (flags.length > 0) flaggedEntries += 1;
+        totalFlags += flags.length;
+      }
+    }
+    return {
+      recordedEmployees,
+      totalEntries,
+      flaggedEntries,
+      totalFlags,
+      flaggedRate: totalEntries > 0 ? (flaggedEntries / totalEntries) * 100 : 0,
+      flagsPerFlaggedEntry: flaggedEntries > 0 ? totalFlags / flaggedEntries : 0,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report, allUsers, timeViewMode]);
+
   // Render flag chips for the Flags view. Empty flag list → null (clean cell).
   const renderFlagChips = (flags: string[]): JSX.Element | null => {
     if (flags.length === 0) return null;
@@ -892,24 +942,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                         const sysField = field === 'lunchOutManual' ? 'lunchOutSystem' : 'lunchInSystem';
                         return fmtBoundary({ time: seg[field], ms: seg[sysField], dayOffset: segFieldDayOffset(seg, field, viewZone) }, empTz);
                       }}
-                      renderParentFlags={(day: DocumentData) => {
-                        const lunch = getDayLunch(day, viewZone);
-                        const isOnsite = summary.workModel === 'On-site';
-                        const lunchMissing = isOnsite && !lunch.isMultiple && !lunch.lunchOut && !lunch.lunchIn;
-                        const segs = Array.isArray(day.segments) ? day.segments : [];
-                        const flagSegs: DocumentData[] = segs.length > 0 ? segs : [day];
-                        const childFlags: string[][] = flagSegs.map((s, i) =>
-                          getSegmentFlags(s, {
-                            isLastSegment: i === flagSegs.length - 1,
-                            docAutoClosed: day.autoClosed === true,
-                            docAutoEndedLunch: day.autoEndedLunch === true,
-                            docAnomaly: day.anomaly_flag === true,
-                            completedAt: day.completedAt,
-                            isOnSite: isOnsite,
-                          }),
-                        );
-                        return renderFlagChips(getParentRowFlags(day, childFlags, lunchMissing ? ['missing_lunch'] : []));
-                      }}
+                      renderParentFlags={(day: DocumentData) => renderFlagChips(computeDayFlags(summary, day))}
                       renderSegFlags={(day: DocumentData, index: number) => {
                         const segs = Array.isArray(day.segments) ? day.segments : [];
                         const flagSegs: DocumentData[] = segs.length > 0 ? segs : [day];
@@ -944,6 +977,66 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
               </div>
             </CardContent>
           </Card>
+
+          {/* Flags Statistics — counts the SAME flags the Daily Breakdown
+              renders (utils/analyticsFlags.ts pipeline), never the separate
+              Metrics-tab mechanics. Zero states render cleanly (0 / 0% / 0.0). */}
+          {flagStats && (
+            <Card className="border-2 border-slate-200">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Flag className="size-4" />
+                  Flags Statistics
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Users className="size-3.5 text-slate-500" />
+                      <p className="text-xs text-slate-600">Recorded Employees</p>
+                    </div>
+                    <p className="text-2xl font-bold text-slate-900">{flagStats.recordedEmployees}</p>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <FileText className="size-3.5 text-slate-500" />
+                      <p className="text-xs text-slate-600">Total Entries</p>
+                    </div>
+                    <p className="text-2xl font-bold text-slate-900">{flagStats.totalEntries}</p>
+                  </div>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Flag className="size-3.5 text-red-600" />
+                      <p className="text-xs text-red-700">Flagged Entries</p>
+                    </div>
+                    <p className="text-2xl font-bold text-red-700">{flagStats.flaggedEntries}</p>
+                  </div>
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Percent className="size-3.5 text-amber-600" />
+                      <p className="text-xs text-amber-700">Flagged Rate</p>
+                    </div>
+                    <p className="text-2xl font-bold text-amber-700">{flagStats.flaggedRate.toFixed(1)}%</p>
+                  </div>
+                  <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Flag className="size-3.5 text-purple-600" />
+                      <p className="text-xs text-purple-700">Total Flags</p>
+                    </div>
+                    <p className="text-2xl font-bold text-purple-700">{flagStats.totalFlags}</p>
+                  </div>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Activity className="size-3.5 text-blue-600" />
+                      <p className="text-xs text-blue-700">Flags per Flagged Entry</p>
+                    </div>
+                    <p className="text-2xl font-bold text-blue-700">{flagStats.flagsPerFlaggedEntry.toFixed(1)}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
     </div>
