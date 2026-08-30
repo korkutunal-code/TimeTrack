@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
 import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
@@ -23,6 +23,7 @@ import type { OvertimeEntry } from '../../../utils/overtimeCalculations';
 // @ts-ignore - JS module
 import { formatDateShortWithWeekday } from '../../../utils/dateHelpers.js';
 import { epochFromLocalWallTime, getCurrentPTDate } from '../../../utils/timeCalculations';
+import { computeRemotePayCycle } from '../../../utils/payCycle';
 import { computeSegmentWorkMinutes } from '../../lib/segmentOps';
 import type { TimeSegment } from '../../lib/database';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
@@ -94,6 +95,16 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
 
   const cycleType = payrollSettings.payroll_cycle_type;
 
+  // Stage 2 trigger: a single Remote employee is selected. Only then do the
+  // cycle presets switch to that employee's remotePayCalculationDay cycle and
+  // the buttons relabel to "Employee's …". Group selections (All / role
+  // groups) and On-site employees keep the standard On-Site cycles.
+  const remoteCycleUser = useMemo(() => {
+    if (isGroupSelection(selectedUserId)) return null;
+    const u = allUsers.find(x => x.uid === selectedUserId);
+    return u && u.workModel === 'Remote' ? u : null;
+  }, [selectedUserId, allUsers]);
+
   /**
    * Pure helper: compute the start/end YMD strings for a given preset
    * ('current' | 'last') based on the loaded payroll settings.
@@ -103,9 +114,17 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
    * anchored to the browser-local UTC day, which can be one calendar day
    * ahead of PT between ~16:00 PST / 17:00 PDT and UTC midnight — landing
    * the Current/Last Cycle presets on the wrong block.
+   *
+   * Remote trigger: when a single Remote employee is selected, bypass the
+   * global cycle settings entirely and compute the custom monthly cycle from
+   * that employee's remotePayCalculationDay (src/utils/payCycle.ts).
    */
   const computeCycleDates = useCallback((preset: 'current' | 'last'): { start: string; end: string } => {
     const todayYmd = getCurrentPTDate();
+
+    if (remoteCycleUser) {
+      return computeRemotePayCycle(preset, todayYmd, remoteCycleUser.remotePayCalculationDay ?? 1);
+    }
 
     if (cycleType === 'weekly') {
       // Bug fix: was `today.getDay()` (local TZ) — inconsistent for non-UTC users.
@@ -198,7 +217,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
     }
     // Fallback: return today's date for both
     return { start: todayYmd, end: todayYmd };
-  }, [cycleType, payrollSettings.weekly_start_day, payrollSettings.biweekly_start_date, payrollSettings.monthly_start_day]);
+  }, [cycleType, payrollSettings.weekly_start_day, payrollSettings.biweekly_start_date, payrollSettings.monthly_start_day, remoteCycleUser]);
 
   const setQuickPeriod = (preset: 'current' | 'last') => {
     const { start, end } = computeCycleDates(preset);
@@ -344,6 +363,27 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
       setEndDate(end);
     }, 0);
   }, [settingsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Stage 2: when the employee filter crosses into/out of the Remote trigger
+  // (single Remote employee selected vs. anything else), snap the date range
+  // to the newly-active cycle semantics immediately — the employee's custom
+  // remotePayCalculationDay cycle entering, the standard On-Site cycle
+  // leaving. The debounced effect below then re-runs the report once.
+  const prevRemoteUid = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const uid = remoteCycleUser?.uid ?? null;
+    if (prevRemoteUid.current === undefined) {
+      // First run after mount — the mount effect above already initialized
+      // dates; don't double-set.
+      prevRemoteUid.current = uid;
+      return;
+    }
+    if (prevRemoteUid.current === uid) return;
+    prevRemoteUid.current = uid;
+    const { start, end } = computeCycleDates('current');
+    setStartDate(start);
+    setEndDate(end);
+  }, [remoteCycleUser, computeCycleDates]);
 
   // Debounced auto-refresh: re-run the report whenever any control changes.
   // allUsers is included so a report that ran while the user list was still
@@ -666,13 +706,13 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
             <div className="space-y-1">
               <Label className="text-xs invisible">Cycle</Label>
               <Button variant="outline" onClick={() => setQuickPeriod('current')} className="w-full h-10 text-xs">
-                Current On-Site Cycle
+                {remoteCycleUser ? "Employee's Current Cycle" : 'Current On-Site Cycle'}
               </Button>
             </div>
             <div className="space-y-1">
               <Label className="text-xs invisible">Cycle</Label>
               <Button variant="outline" onClick={() => setQuickPeriod('last')} className="w-full h-10 text-xs">
-                Last On-Site Cycle
+                {remoteCycleUser ? "Employee's Last Cycle" : 'Last On-Site Cycle'}
               </Button>
             </div>
           </div>
