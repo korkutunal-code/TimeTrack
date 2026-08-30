@@ -8,6 +8,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
+import { Badge } from '../ui/badge';
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
 import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, Radio, Users, Flag, Percent, Activity } from 'lucide-react';
@@ -602,20 +603,56 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
   };
 
   // Flags Statistics — computed from the generated report's pipeline entries.
+  // Also produces the per-employee distribution + per-flag-type frequencies
+  // for the two tables below; all from the SAME computeDayFlags SSOT.
   const flagStats = useMemo(() => {
     if (!report) return null;
     const recordedEmployees = report.length;
     let totalEntries = 0;
     let flaggedEntries = 0;
     let totalFlags = 0;
+    const flagTypeCounts = new Map<string, number>();
+    const employeeDist: {
+      userId: string;
+      userName: string;
+      totalEntries: number;
+      flaggedEntries: number;
+      totalFlags: number;
+      flagRate: number;
+      riskLevel: 'high' | 'medium' | 'low';
+    }[] = [];
+
     for (const summary of report) {
+      let empEntries = 0;
+      let empFlagged = 0;
+      let empFlags = 0;
       for (const day of summary.dailyEntries ?? []) {
-        totalEntries += 1;
+        empEntries += 1;
         const flags = computeDayFlags(summary, day);
-        if (flags.length > 0) flaggedEntries += 1;
-        totalFlags += flags.length;
+        if (flags.length > 0) empFlagged += 1;
+        empFlags += flags.length;
+        for (const f of flags) flagTypeCounts.set(f, (flagTypeCounts.get(f) ?? 0) + 1);
       }
+      totalEntries += empEntries;
+      flaggedEntries += empFlagged;
+      totalFlags += empFlags;
+      const flagRate = empEntries > 0 ? (empFlagged / empEntries) * 100 : 0;
+      employeeDist.push({
+        userId: summary.userId,
+        userName: summary.userName,
+        totalEntries: empEntries,
+        flaggedEntries: empFlagged,
+        totalFlags: empFlags,
+        flagRate,
+        riskLevel: flagRate > 30 ? 'high' : flagRate > 15 ? 'medium' : 'low',
+      });
     }
+
+    employeeDist.sort((a, b) => b.flagRate - a.flagRate);
+    const flagFrequencies = [...flagTypeCounts.entries()]
+      .map(([flag, count]) => ({ flag, count }))
+      .sort((a, b) => b.count - a.count);
+
     return {
       recordedEmployees,
       totalEntries,
@@ -623,6 +660,8 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
       totalFlags,
       flaggedRate: totalEntries > 0 ? (flaggedEntries / totalEntries) * 100 : 0,
       flagsPerFlaggedEntry: flaggedEntries > 0 ? totalFlags / flaggedEntries : 0,
+      employeeDist,
+      flagFrequencies,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report, allUsers, timeViewMode]);
@@ -1036,6 +1075,86 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                 </div>
               </CardContent>
             </Card>
+          )}
+
+          {/* Employee Flag Distribution + Flag Frequencies — same SSOT data as
+              the stat cards above (computeDayFlags), rendered in the Metrics
+              tab's card idiom but computed entirely from the Analytics pipeline. */}
+          {flagStats && flagStats.totalEntries > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Employee Flag Distribution */}
+              <Card className="border-2 border-slate-200">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Users className="size-4" />
+                    Employee Flag Distribution
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {flagStats.employeeDist.map((emp) => (
+                      <div key={emp.userId} className="flex items-center justify-between p-3 bg-slate-50 rounded border border-slate-200">
+                        <div className="flex-1">
+                          <p className="font-semibold text-sm text-slate-900">{emp.userName}</p>
+                          <p className="text-xs text-slate-500">
+                            {emp.flaggedEntries} / {emp.totalEntries} flagged, {emp.totalFlags} total flags
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg font-bold text-slate-900">{emp.flagRate.toFixed(1)}%</span>
+                          <Badge
+                            variant={emp.riskLevel === 'high' ? 'destructive' : emp.riskLevel === 'medium' ? 'default' : 'secondary'}
+                            className={`
+                              ${emp.riskLevel === 'high' ? 'bg-red-500' : ''}
+                              ${emp.riskLevel === 'medium' ? 'bg-amber-500' : ''}
+                              ${emp.riskLevel === 'low' ? 'bg-green-500' : ''}
+                            `}
+                          >
+                            {emp.riskLevel}
+                          </Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Flag Frequencies */}
+              <Card className="border-2 border-slate-200">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Flag className="size-4" />
+                    Flag Frequencies
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {flagStats.flagFrequencies.length === 0 && (
+                      <p className="text-sm text-slate-500">No flags in this period.</p>
+                    )}
+                    {flagStats.flagFrequencies.map((item) => (
+                      <div key={item.flag} className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
+                        <span className="text-sm font-medium text-slate-700">{FLAG_LABELS[item.flag] ?? item.flag.replace(/_/g, ' ')}</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-24 h-2 bg-slate-200 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-amber-500"
+                              style={{ width: `${flagStats.totalEntries > 0 ? (item.count / flagStats.totalEntries) * 100 : 0}%` }}
+                            />
+                          </div>
+                          <span className="text-sm font-bold text-amber-600 min-w-[3rem] text-right">{item.count}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {/* Grand total row */}
+                    <div className="flex items-center justify-between p-2 rounded border border-slate-300 bg-slate-100">
+                      <span className="text-sm font-semibold text-slate-900">Total</span>
+                      <span className="text-sm font-bold text-slate-900 min-w-[3rem] text-right">{flagStats.totalFlags}</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           )}
         </>
       )}
