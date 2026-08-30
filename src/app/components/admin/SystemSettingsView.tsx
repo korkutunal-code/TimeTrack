@@ -214,13 +214,13 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {/* Automated Actions — configurable runaway guardrails enforced by the
           runAutoGuardrails cron, the Repair Runaway Shifts tool, and the
           employee warning banner. Same collapsible pattern as the other
           settings sections. */}
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
-        <CardHeader className="bg-white/40 pb-2">
+        <CardHeader className="bg-white/40 pt-3.5 pb-[15px] gap-0">
           <button
             type="button"
             onClick={() => setIsAutomatedActionsOpen((open) => !open)}
@@ -305,7 +305,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
       </Card>
 
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
-        <CardHeader className="bg-white/40 pb-2">
+        <CardHeader className="bg-white/40 pt-3.5 pb-[15px] gap-0">
           <button
             type="button"
             onClick={() => setIsReminderSettingsOpen((open) => !open)}
@@ -398,7 +398,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
       </Card>
 
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
-        <CardHeader className="bg-white/40 pb-2">
+        <CardHeader className="bg-white/40 pt-3.5 pb-[15px] gap-0">
           <button
             type="button"
             onClick={() => setIsPayrollSettingsOpen((open) => !open)}
@@ -485,7 +485,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
 
       {/* Lock Payroll Period — destyled to match the other cards (no red). */}
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
-        <CardHeader className="bg-white/40 pb-2">
+        <CardHeader className="bg-white/40 pt-3.5 pb-[15px] gap-0">
           <button
             type="button"
             onClick={() => setIsLockPeriodOpen((open) => !open)}
@@ -536,7 +536,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
           before this date are filtered out of every analysis/metrics/payroll/
           audit/corrections view. Raw data stays intact in Firestore. */}
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
-        <CardHeader className="bg-white/40 pb-2">
+        <CardHeader className="bg-white/40 pt-3.5 pb-[15px] gap-0">
           <button
             type="button"
             onClick={() => setIsExcludeRecordsOpen((open) => !open)}
@@ -591,7 +591,7 @@ export const SystemSettingsView = forwardRef<SettingsGuard, SystemSettingsViewPr
       {/* Deprecated tabs — retired features kept visible for reference.
           Same collapsible card pattern as the other settings sections. */}
       <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
-        <CardHeader className="bg-white/40 pb-2">
+        <CardHeader className="bg-white/40 pt-3.5 pb-[15px] gap-0">
           <button
             type="button"
             onClick={() => setIsDeprecatedTabsOpen((open) => !open)}

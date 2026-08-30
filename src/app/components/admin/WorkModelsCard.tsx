@@ -103,7 +103,7 @@ export function WorkModelsCard() {
 
   return (
     <Card className="border border-white/60 shadow-xl bg-white/70 backdrop-blur-xl rounded-2xl gap-0">
-      <CardHeader className="bg-white/40 pb-2">
+      <CardHeader className="bg-white/40 pt-3.5 pb-[15px] gap-0">
         <button
           type="button"
           onClick={() => setIsWorkModelSettingsOpen((open) => !open)}
