@@ -1021,8 +1021,8 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
               renders (utils/analyticsFlags.ts pipeline), never the separate
               Metrics-tab mechanics. Zero states render cleanly (0 / 0% / 0.0). */}
           {flagStats && (
-            <Card className="border-2 border-slate-200">
-              <CardHeader className="pb-3">
+            <Card className="border-2 border-slate-200 gap-2">
+              <CardHeader className="pt-4 pb-0">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Flag className="size-4" />
                   Flags Statistics
@@ -1083,8 +1083,8 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
           {flagStats && flagStats.totalEntries > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Employee Flag Distribution */}
-              <Card className="border-2 border-slate-200">
-                <CardHeader className="pb-3">
+              <Card className="border-2 border-slate-200 gap-2">
+                <CardHeader className="pt-4 pb-0">
                   <CardTitle className="text-base flex items-center gap-2">
                     <Users className="size-4" />
                     Employee Flag Distribution
@@ -1120,8 +1120,8 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
               </Card>
 
               {/* Flag Frequencies */}
-              <Card className="border-2 border-slate-200">
-                <CardHeader className="pb-3">
+              <Card className="border-2 border-slate-200 gap-2">
+                <CardHeader className="pt-4 pb-0">
                   <CardTitle className="text-base flex items-center gap-2">
                     <Flag className="size-4" />
                     Flag Frequencies
