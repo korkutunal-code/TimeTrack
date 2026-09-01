@@ -72,6 +72,9 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
   // Accordion state for the Employee Flag Distribution per-day breakdown —
   // independent of expandedUserId (which drives the Daily Breakdown table).
   const [expandedFlagUserId, setExpandedFlagUserId] = useState<string | null>(null);
+  // Accordion state for the Flag Frequencies occurrence breakdown — the
+  // expanded flag type id, or null when all rows are collapsed.
+  const [expandedFlagType, setExpandedFlagType] = useState<string | null>(null);
   // Per-user resolved work-model definition (drives the Bulk Edit live OT
   // preview in DailyBreakdownTable). Captured during generateReport.
   const [workModelByUser, setWorkModelByUser] = useState<Map<string, WorkModelDef | null>>(new Map());
@@ -704,6 +707,10 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
     let flaggedDays = 0;
     let totalFlags = 0;
     const flagTypeCounts = new Map<string, number>();
+    // Per-occurrence detail for the Flag Frequencies accordion: every day a
+    // flag fired, with the employee + date. Same computeDayFlags SSOT, so
+    // ongoing (projectedOpen) days/segments are already excluded.
+    const flagOccurrences = new Map<string, { userName: string; date: string; shifts: number }[]>();
     const employeeDist: {
       userId: string;
       userName: string;
@@ -723,7 +730,16 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
         const flags = computeDayFlags(summary, day);
         if (flags.length > 0) empFlaggedDays += 1;
         empFlags += flags.length;
-        for (const f of flags) flagTypeCounts.set(f, (flagTypeCounts.get(f) ?? 0) + 1);
+        if (flags.length > 0) {
+          const shifts = Array.isArray(day.segments) && day.segments.length > 0 ? day.segments.length : 1;
+          const occurrence = { userName: resolveUserName(summary), date: String(day.workDate ?? ''), shifts };
+          for (const f of flags) {
+            flagTypeCounts.set(f, (flagTypeCounts.get(f) ?? 0) + 1);
+            const list = flagOccurrences.get(f) ?? [];
+            list.push(occurrence);
+            flagOccurrences.set(f, list);
+          }
+        }
       }
       recordedDays += empDays;
       flaggedDays += empFlaggedDays;
@@ -744,6 +760,11 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
     const flagFrequencies = [...flagTypeCounts.entries()]
       .map(([flag, count]) => ({ flag, count }))
       .sort((a, b) => b.count - a.count);
+    // Accordion ordering: primary alphabetical by user name, secondary
+    // chronological by date (YYYY-MM-DD sorts lexicographically).
+    for (const list of flagOccurrences.values()) {
+      list.sort((a, b) => a.userName.localeCompare(b.userName) || a.date.localeCompare(b.date));
+    }
 
     return {
       recordedEmployees,
@@ -754,6 +775,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
       flagsPerFlaggedDay: flaggedDays > 0 ? totalFlags / flaggedDays : 0,
       employeeDist,
       flagFrequencies,
+      flagOccurrences,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report, allUsers, timeViewMode, resolveUserName]);
@@ -1303,20 +1325,71 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                     {flagStats.flagFrequencies.length === 0 && (
                       <p className="text-sm text-slate-500">No flags in this period.</p>
                     )}
-                    {flagStats.flagFrequencies.map((item) => (
-                      <div key={item.flag} className="flex items-center justify-between p-2 bg-slate-50 rounded border border-slate-200">
-                        <span className="text-sm font-medium text-slate-700">{FLAG_LABELS[item.flag] ?? item.flag.replace(/_/g, ' ')}</span>
-                        <div className="flex items-center gap-2">
-                          <div className="w-24 h-2 bg-slate-200 rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-amber-500"
-                              style={{ width: `${flagStats.recordedDays > 0 ? (item.count / flagStats.recordedDays) * 100 : 0}%` }}
-                            />
+                    {flagStats.flagFrequencies.map((item) => {
+                      const isFreqOpen = expandedFlagType === item.flag;
+                      const occurrences = flagStats.flagOccurrences.get(item.flag) ?? [];
+                      const toggleFreq = () =>
+                        setExpandedFlagType(prev => (prev === item.flag ? null : item.flag));
+                      return (
+                        <div key={item.flag} className="bg-slate-50 rounded-lg border border-slate-200 overflow-hidden">
+                          {/* Static row — only the chevron button toggles the
+                              accordion (no nested/column-wide interactives). */}
+                          <div className="flex items-center justify-between p-2">
+                            <span className="text-sm font-medium text-slate-700">{FLAG_LABELS[item.flag] ?? item.flag.replace(/_/g, ' ')}</span>
+                            <div className="flex items-center gap-2">
+                              <div className="w-24 h-2 bg-slate-200 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-amber-500"
+                                  style={{ width: `${flagStats.recordedDays > 0 ? (item.count / flagStats.recordedDays) * 100 : 0}%` }}
+                                />
+                              </div>
+                              <span className="text-sm font-bold text-amber-600 min-w-[3rem] text-right">{item.count}</span>
+                              <button
+                                type="button"
+                                aria-label={isFreqOpen ? `Collapse occurrences of ${FLAG_LABELS[item.flag] ?? item.flag}` : `Expand occurrences of ${FLAG_LABELS[item.flag] ?? item.flag}`}
+                                aria-expanded={isFreqOpen}
+                                onClick={toggleFreq}
+                                className="inline-flex items-center justify-center size-7 rounded-md border border-slate-300 bg-white text-slate-500 cursor-pointer transition-colors hover:bg-slate-100 hover:text-slate-700"
+                              >
+                                <ChevronDown
+                                  className={`size-4 transition-transform duration-200 ${isFreqOpen ? 'rotate-180' : 'rotate-0'}`}
+                                />
+                              </button>
+                            </div>
                           </div>
-                          <span className="text-sm font-bold text-amber-600 min-w-[3rem] text-right">{item.count}</span>
+
+                          {/* Occurrence breakdown — same sub-table idiom as the
+                              Employee Flag Distribution accordion. Occurrences
+                              come from computeDayFlags, so ongoing
+                              (projectedOpen) shifts are already excluded;
+                              pre-sorted by user name, then date. */}
+                          {isFreqOpen && (
+                            <div className="mx-2 mb-2 rounded-lg border border-slate-200 bg-white overflow-hidden">
+                              <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-100/60">
+                                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">User</span>
+                                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 text-right">Date</span>
+                              </div>
+                              <div className="divide-y divide-slate-100">
+                                {occurrences.map((occ, i) => (
+                                  <div key={`${occ.userName}-${occ.date}-${i}`} className="flex items-center justify-between gap-3 px-3 py-1.5">
+                                    <span className="text-xs font-medium text-slate-700">{occ.userName}</span>
+                                    <span className="text-xs text-slate-600 whitespace-nowrap text-right">
+                                      {formatDateShortWithWeekday(occ.date)}
+                                      {occ.shifts > 1 && (
+                                        <span className="ml-1 text-slate-400">({occ.shifts} shifts)</span>
+                                      )}
+                                    </span>
+                                  </div>
+                                ))}
+                                {occurrences.length === 0 && (
+                                  <p className="px-3 py-2 text-xs text-slate-400">No recorded occurrences in this period.</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                     {/* Grand total row */}
                     <div className="flex items-center justify-between p-2 rounded border border-slate-300 bg-slate-100">
                       <span className="text-sm font-semibold text-slate-900">Total</span>
