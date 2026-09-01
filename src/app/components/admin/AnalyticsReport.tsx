@@ -650,31 +650,42 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
   // Extracted so the Flags Statistics summary counts exactly what the table
   // shows (SSOT: utils/analyticsFlags.ts, no separate Metrics-tab mechanics).
   //
-  // Ongoing shifts are excluded entirely: a projectedOpen day is still live
-  // (totals are now-projections, lunch may simply not have happened yet), so
-  // every flag on it would be a false positive — missing_lunch for a lunch
-  // the employee hasn't taken yet, very_short_day for a shift that started
-  // five minutes ago, after_hours against a virtual clockOut of "now". The
-  // "In Progress"/"now" badges are unaffected (they render in the Clock Out
-  // column via renderParentBoundary/renderSegBoundary, not the Flags column).
+  // Live-day handling (projectedOpen): suppress the flags that would be false
+  // positives on a still-running day — day-level flags (very_long/short_day
+  // are computed from now-projected totals), missing_lunch (the employee may
+  // simply not have taken lunch yet), and every flag on the still-open
+  // segment (virtually closed at "now", so after_hours/batch/lunch-pattern
+  // would evaluate against a synthetic clockOut). Flags from EARLIER
+  // completed segments in the same day are genuine and are kept — matching
+  // renderSegFlags, which hides flags only on the projectedClosed child row.
+  // The "In Progress"/"now" badges are unaffected (they render in the Clock
+  // Out column via renderParentBoundary/renderSegBoundary, not Flags).
   const computeDayFlags = (summary: PayrollSummary, day: DocumentData): string[] => {
-    if (day.projectedOpen === true) return [];
+    const isLiveDay = day.projectedOpen === true;
     const viewZone = zoneForMode(timeViewMode, getEmployeeTimezone(allUsers.find(u => u.uid === summary.userId)?.timezone));
     const lunch = getDayLunch(day, viewZone);
     const isOnsite = summary.workModel === 'On-site';
-    const lunchMissing = isOnsite && !lunch.isMultiple && !lunch.lunchOut && !lunch.lunchIn;
+    // missing_lunch is meaningless while the day is still running.
+    const lunchMissing = !isLiveDay && isOnsite && !lunch.isMultiple && !lunch.lunchOut && !lunch.lunchIn;
     const segs = Array.isArray(day.segments) ? day.segments : [];
     const flagSegs: DocumentData[] = segs.length > 0 ? segs : [day];
-    const childFlags: string[][] = flagSegs.map((s, i) =>
-      getSegmentFlags(s, {
+    const childFlags: string[][] = flagSegs.map((s, i) => {
+      // The still-open segment gets no flags. The segment-less fallback
+      // (flagSegs === [day]) inherits the day's live marker.
+      if (s.projectedClosed === true || (s === day && isLiveDay)) return [];
+      return getSegmentFlags(s, {
         isLastSegment: i === flagSegs.length - 1,
         docAutoClosed: day.autoClosed === true,
         docAutoEndedLunch: day.autoEndedLunch === true,
         docAnomaly: day.anomaly_flag === true,
         completedAt: day.completedAt,
         isOnSite: isOnsite,
-      }),
-    );
+      });
+    });
+    if (isLiveDay) {
+      // Union of completed segments' flags only — day-level flags skipped.
+      return [...new Set(childFlags.flat())];
+    }
     return getParentRowFlags(day, childFlags, lunchMissing ? ['missing_lunch'] : []);
   };
 
