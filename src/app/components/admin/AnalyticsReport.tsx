@@ -1248,7 +1248,8 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                           {/* Per-day flag breakdown — flag sets come from the
                               same computeDayFlags SSOT as the Daily Breakdown
                               table, so ongoing (projectedOpen) days and the
-                              still-open segment are already excluded. */}
+                              still-open segment are already excluded. Only
+                              days WITH flags are listed. */}
                           {isFlagDistOpen && (
                             <div className="mx-3 mb-3 rounded-lg border border-slate-200 bg-white overflow-hidden">
                               <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-100/60">
@@ -1256,30 +1257,34 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                                 <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 text-right">Flags</span>
                               </div>
                               <div className="divide-y divide-slate-100">
-                                {days.map((day: DocumentData) => {
-                                  const segs = Array.isArray(day.segments) ? day.segments : [];
-                                  const dayFlags = summary ? computeDayFlags(summary, day) : [];
-                                  return (
-                                    <div key={String(day.id ?? day.workDate)} className="flex items-center justify-between gap-3 px-3 py-1.5">
-                                      <span className="text-xs text-slate-600 whitespace-nowrap">
-                                        {formatDateShortWithWeekday(String(day.workDate ?? ''))}
-                                        {segs.length > 1 && (
-                                          <span className="ml-1 text-slate-400">({segs.length} shifts)</span>
-                                        )}
-                                      </span>
-                                      <span className="flex flex-wrap justify-end gap-1">
-                                        {dayFlags.map((f) => (
-                                          <span
-                                            key={f}
-                                            className="inline-flex items-center h-4 whitespace-nowrap rounded border px-1.5 leading-none bg-amber-50 text-amber-800 border-amber-200 text-[10px] font-medium"
-                                          >
-                                            {FLAG_LABELS[f] ?? f.replace(/_/g, ' ')}
-                                          </span>
-                                        ))}
-                                      </span>
-                                    </div>
-                                  );
-                                })}
+                                {days.map((day: DocumentData) => ({ day, dayFlags: summary ? computeDayFlags(summary, day) : [] }))
+                                  .filter(({ dayFlags }) => dayFlags.length > 0)
+                                  .map(({ day, dayFlags }) => {
+                                    const segs = Array.isArray(day.segments) ? day.segments : [];
+                                    return (
+                                      <div key={String(day.id ?? day.workDate)} className="flex items-center justify-between gap-3 px-3 py-1.5">
+                                        <span className="text-xs text-slate-600 whitespace-nowrap">
+                                          {formatDateShortWithWeekday(String(day.workDate ?? ''))}
+                                          {segs.length > 1 && (
+                                            <span className="ml-1 text-slate-400">({segs.length} shifts)</span>
+                                          )}
+                                        </span>
+                                        <span className="flex flex-wrap justify-end gap-1">
+                                          {dayFlags.map((f) => (
+                                            <span
+                                              key={f}
+                                              className="inline-flex items-center h-4 whitespace-nowrap rounded border px-1.5 leading-none bg-amber-50 text-amber-800 border-amber-200 text-[10px] font-medium"
+                                            >
+                                              {FLAG_LABELS[f] ?? f.replace(/_/g, ' ')}
+                                            </span>
+                                          ))}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                {emp.flaggedDays === 0 && (
+                                  <p className="px-3 py-2 text-xs text-slate-400">No flagged days in this period.</p>
+                                )}
                               </div>
                             </div>
                           )}
