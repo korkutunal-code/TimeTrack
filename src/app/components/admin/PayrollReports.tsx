@@ -825,34 +825,43 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
               <Card className="border-2 border-slate-200">
                 <CardContent className="py-1 px-2 [&:last-child]:pb-1">
                   <div className="flex flex-row items-center justify-between gap-4 py-1 px-2">
-                    {/* Left — employee info */}
-                    <div className="flex flex-col shrink-0 min-w-[150px]">
-                      <h3 className="text-sm font-bold text-slate-900">{resolveUserName(summary)}</h3>
+                    {/* Left — employee info. Fixed width (w-[150px], not
+                        min-w) so the block can never widen and shift the
+                        Regular/OT/DT boxes to the right. */}
+                    <div className="flex flex-col shrink-0 w-[150px]">
+                      <h3 className="text-sm font-bold text-slate-900 truncate">{resolveUserName(summary)}</h3>
                       <p className="text-xs text-slate-400">Total: {summary.totalHours} hours</p>
                     </div>
 
                     {/* Center — metric boxes */}
                     <div className="flex-1 grid grid-cols-3 gap-3 items-center">
-                      <div className="bg-slate-50 py-1.5 px-3 rounded-lg border border-slate-200">
+                      {/* min-w-0 on every cell: grid `1fr` tracks are
+                          minmax(auto, 1fr) by default, so overflowing content
+                          could otherwise widen a column and shift the other
+                          boxes. */}
+                      <div className="min-w-0 bg-slate-50 py-1.5 px-3 rounded-lg border border-slate-200">
                         <p className="text-xs text-slate-600 mb-0.5">Regular</p>
                         <p className="text-lg font-bold text-slate-900">{summary.regularHours}</p>
                       </div>
-                      <div className="bg-orange-50 py-1.5 px-3 rounded-lg border border-orange-200">
+                      <div className="min-w-0 bg-orange-50 py-1.5 px-3 rounded-lg border border-orange-200">
                         <p className="text-xs text-orange-700 mb-0.5">OT 1.5x</p>
                         <p className="text-lg font-bold text-orange-700">{summary.overtimeHours}</p>
                       </div>
-                      <div className="bg-red-50 py-1.5 px-3 rounded-lg border border-red-200">
+                      <div className="min-w-0 bg-red-50 py-1.5 px-3 rounded-lg border border-red-200">
                         <p className="text-xs text-red-700 mb-0.5">DT 2x</p>
                         <p className="text-lg font-bold text-red-700">{summary.doubleTimeHours}</p>
                       </div>
                     </div>
 
-                    {/* Right — view details */}
+                    {/* Right — view details. Fixed width (w-[76px]) so the
+                        "View Details" ↔ "Hide Details" label swap can never
+                        change the button's rendered width and re-lay-out the
+                        flex row — the metric grid stays pixel-stationary. */}
                     <Button
                       variant="link"
                       size="sm"
                       onClick={() => setExpandedUserId(expandedUserId === summary.userId ? null : summary.userId)}
-                      className="shrink-0 self-center text-xs font-semibold text-indigo-600 hover:underline p-0 h-auto"
+                      className="shrink-0 self-center w-[76px] text-center text-xs font-semibold text-indigo-600 hover:underline p-0 h-auto"
                     >
                       {expandedUserId === summary.userId ? 'Hide Details' : 'View Details'}
                     </Button>

@@ -987,15 +987,19 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                       const amberBox = 'bg-amber-100 border-amber-400 ring-1 ring-amber-300';
                       return (
                         <div className="flex-1 grid grid-cols-3 gap-3 items-center">
-                          <div className={`py-1.5 px-3 rounded-lg border ${regChanged ? amberBox : 'bg-slate-50 border-slate-200'}`}>
+                          {/* min-w-0 on every cell: grid `1fr` tracks are
+                              minmax(auto, 1fr) by default, so overflowing
+                              content could otherwise widen a column and shift
+                              the other boxes. */}
+                          <div className={`min-w-0 py-1.5 px-3 rounded-lg border ${regChanged ? amberBox : 'bg-slate-50 border-slate-200'}`}>
                             <p className="text-xs text-slate-600 mb-0.5">Regular</p>
                             <p className="text-lg font-bold text-slate-900">{live?.regularHours ?? summary.regularHours}</p>
                           </div>
-                          <div className={`py-1.5 px-3 rounded-lg border ${otChanged ? amberBox : 'bg-orange-50 border-orange-200'}`}>
+                          <div className={`min-w-0 py-1.5 px-3 rounded-lg border ${otChanged ? amberBox : 'bg-orange-50 border-orange-200'}`}>
                             <p className="text-xs text-orange-700 mb-0.5">OT 1.5x</p>
                             <p className="text-lg font-bold text-orange-700">{live?.overtimeHours ?? summary.overtimeHours}</p>
                           </div>
-                          <div className={`py-1.5 px-3 rounded-lg border ${dtChanged ? amberBox : 'bg-red-50 border-red-200'}`}>
+                          <div className={`min-w-0 py-1.5 px-3 rounded-lg border ${dtChanged ? amberBox : 'bg-red-50 border-red-200'}`}>
                             <p className="text-xs text-red-700 mb-0.5">DT 2x</p>
                             <p className="text-lg font-bold text-red-700">{live?.doubleTimeHours ?? summary.doubleTimeHours}</p>
                           </div>
@@ -1003,12 +1007,15 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                       );
                     })()}
 
-                    {/* Right — view details */}
+                    {/* Right — view details. Fixed width (w-[76px]) so the
+                        "View Details" ↔ "Hide Details" label swap can never
+                        change the button's rendered width and re-lay-out the
+                        flex row — the metric grid stays pixel-stationary. */}
                     <Button
                       variant="link"
                       size="sm"
                       onClick={() => setExpandedUserId(expandedUserId === summary.userId ? null : summary.userId)}
-                      className="shrink-0 self-center text-xs font-semibold text-indigo-600 hover:underline p-0 h-auto"
+                      className="shrink-0 self-center w-[76px] text-center text-xs font-semibold text-indigo-600 hover:underline p-0 h-auto"
                     >
                       {expandedUserId === summary.userId ? 'Hide Details' : 'View Details'}
                     </Button>
