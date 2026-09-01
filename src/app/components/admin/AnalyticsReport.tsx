@@ -1205,15 +1205,9 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                         setExpandedFlagUserId(prev => (prev === emp.userId ? null : emp.userId));
                       return (
                         <div key={emp.userId} className="bg-slate-50 rounded-lg border border-slate-200 overflow-hidden">
-                          {/* Summary header — the whole row toggles the accordion. */}
-                          <div
-                            role="button"
-                            tabIndex={0}
-                            aria-expanded={isFlagDistOpen}
-                            onClick={toggleFlagDist}
-                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFlagDist(); } }}
-                            className="flex items-center justify-between p-3 cursor-pointer select-none"
-                          >
+                          {/* Summary header — static; only the chevron button
+                              toggles the accordion (no nested interactives). */}
+                          <div className="flex items-center justify-between p-3">
                             <div className="flex-1">
                               <p className="font-semibold text-sm text-slate-900">{emp.userName}</p>
                               <p className="text-xs text-slate-500">
@@ -1235,7 +1229,8 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                               <button
                                 type="button"
                                 aria-label={isFlagDistOpen ? `Collapse daily flags for ${emp.userName}` : `Expand daily flags for ${emp.userName}`}
-                                onClick={(e) => { e.stopPropagation(); toggleFlagDist(); }}
+                                aria-expanded={isFlagDistOpen}
+                                onClick={toggleFlagDist}
                                 className="inline-flex items-center justify-center size-7 rounded-md border border-slate-300 bg-white text-slate-500 cursor-pointer transition-colors hover:bg-slate-100 hover:text-slate-700"
                               >
                                 <ChevronDown
