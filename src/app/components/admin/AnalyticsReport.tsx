@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
-import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, Radio, Users, Flag, Percent, Activity } from 'lucide-react';
+import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, Radio, Users, Flag, Percent, Activity, ChevronDown } from 'lucide-react';
 import { generateCSV, downloadCSV } from '../../../services/exportService';
 import { ALL_USERS, USER_GROUP_OPTIONS, isGroupSelection } from '../../../utils/userSelection';
 import { DailyBreakdownTable } from './DailyBreakdownTable';
@@ -69,6 +69,9 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
   const [report, setReport] = useState<PayrollSummary[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
+  // Accordion state for the Employee Flag Distribution per-day breakdown —
+  // independent of expandedUserId (which drives the Daily Breakdown table).
+  const [expandedFlagUserId, setExpandedFlagUserId] = useState<string | null>(null);
   // Per-user resolved work-model definition (drives the Bulk Edit live OT
   // preview in DailyBreakdownTable). Captured during generateReport.
   const [workModelByUser, setWorkModelByUser] = useState<Map<string, WorkModelDef | null>>(new Map());
@@ -1194,29 +1197,95 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2">
-                    {flagStats.employeeDist.map((emp) => (
-                      <div key={emp.userId} className="flex items-center justify-between p-3 bg-slate-50 rounded border border-slate-200">
-                        <div className="flex-1">
-                          <p className="font-semibold text-sm text-slate-900">{emp.userName}</p>
-                          <p className="text-xs text-slate-500">
-                            {emp.flaggedDays} / {emp.recordedDays} flagged, {emp.totalFlags} total flags
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg font-bold text-slate-900">{emp.flagRate.toFixed(1)}%</span>
-                          <Badge
-                            variant={emp.riskLevel === 'high' ? 'destructive' : emp.riskLevel === 'medium' ? 'default' : 'secondary'}
-                            className={`
-                              ${emp.riskLevel === 'high' ? 'bg-red-500' : ''}
-                              ${emp.riskLevel === 'medium' ? 'bg-amber-500' : ''}
-                              ${emp.riskLevel === 'low' ? 'bg-green-500' : ''}
-                            `}
+                    {flagStats.employeeDist.map((emp) => {
+                      const isFlagDistOpen = expandedFlagUserId === emp.userId;
+                      const summary = report?.find(s => s.userId === emp.userId);
+                      const days = summary?.dailyEntries ?? [];
+                      const toggleFlagDist = () =>
+                        setExpandedFlagUserId(prev => (prev === emp.userId ? null : emp.userId));
+                      return (
+                        <div key={emp.userId} className="bg-slate-50 rounded-lg border border-slate-200 overflow-hidden">
+                          {/* Summary header — the whole row toggles the accordion. */}
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            aria-expanded={isFlagDistOpen}
+                            onClick={toggleFlagDist}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFlagDist(); } }}
+                            className="flex items-center justify-between p-3 cursor-pointer select-none"
                           >
-                            {emp.riskLevel}
-                          </Badge>
+                            <div className="flex-1">
+                              <p className="font-semibold text-sm text-slate-900">{emp.userName}</p>
+                              <p className="text-xs text-slate-500">
+                                {emp.flaggedDays} / {emp.recordedDays} flagged, {emp.totalFlags} total flags
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg font-bold text-slate-900">{emp.flagRate.toFixed(1)}%</span>
+                              <Badge
+                                variant={emp.riskLevel === 'high' ? 'destructive' : emp.riskLevel === 'medium' ? 'default' : 'secondary'}
+                                className={`
+                                  ${emp.riskLevel === 'high' ? 'bg-red-500' : ''}
+                                  ${emp.riskLevel === 'medium' ? 'bg-amber-500' : ''}
+                                  ${emp.riskLevel === 'low' ? 'bg-green-500' : ''}
+                                `}
+                              >
+                                {emp.riskLevel}
+                              </Badge>
+                              <button
+                                type="button"
+                                aria-label={isFlagDistOpen ? `Collapse daily flags for ${emp.userName}` : `Expand daily flags for ${emp.userName}`}
+                                onClick={(e) => { e.stopPropagation(); toggleFlagDist(); }}
+                                className="inline-flex items-center justify-center size-7 rounded-md border border-slate-300 bg-white text-slate-500 cursor-pointer transition-colors hover:bg-slate-100 hover:text-slate-700"
+                              >
+                                <ChevronDown
+                                  className={`size-4 transition-transform duration-200 ${isFlagDistOpen ? 'rotate-180' : 'rotate-0'}`}
+                                />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Per-day flag breakdown — flag sets come from the
+                              same computeDayFlags SSOT as the Daily Breakdown
+                              table, so ongoing (projectedOpen) days and the
+                              still-open segment are already excluded. */}
+                          {isFlagDistOpen && (
+                            <div className="mx-3 mb-3 rounded-lg border border-slate-200 bg-white overflow-hidden">
+                              <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-100/60">
+                                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Date</span>
+                                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 text-right">Flags</span>
+                              </div>
+                              <div className="divide-y divide-slate-100">
+                                {days.map((day: DocumentData) => {
+                                  const segs = Array.isArray(day.segments) ? day.segments : [];
+                                  const dayFlags = summary ? computeDayFlags(summary, day) : [];
+                                  return (
+                                    <div key={String(day.id ?? day.workDate)} className="flex items-center justify-between gap-3 px-3 py-1.5">
+                                      <span className="text-xs text-slate-600 whitespace-nowrap">
+                                        {formatDateShortWithWeekday(String(day.workDate ?? ''))}
+                                        {segs.length > 1 && (
+                                          <span className="ml-1 text-slate-400">({segs.length} shifts)</span>
+                                        )}
+                                      </span>
+                                      <span className="flex flex-wrap justify-end gap-1">
+                                        {dayFlags.map((f) => (
+                                          <span
+                                            key={f}
+                                            className="inline-flex items-center h-4 whitespace-nowrap rounded border px-1.5 leading-none bg-amber-50 text-amber-800 border-amber-200 text-[10px] font-medium"
+                                          >
+                                            {FLAG_LABELS[f] ?? f.replace(/_/g, ' ')}
+                                          </span>
+                                        ))}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </CardContent>
               </Card>
