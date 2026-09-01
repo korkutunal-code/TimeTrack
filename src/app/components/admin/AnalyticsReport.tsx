@@ -649,7 +649,16 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
   // Daily Breakdown renders (child segment flags + day-level + missing_lunch).
   // Extracted so the Flags Statistics summary counts exactly what the table
   // shows (SSOT: utils/analyticsFlags.ts, no separate Metrics-tab mechanics).
+  //
+  // Ongoing shifts are excluded entirely: a projectedOpen day is still live
+  // (totals are now-projections, lunch may simply not have happened yet), so
+  // every flag on it would be a false positive — missing_lunch for a lunch
+  // the employee hasn't taken yet, very_short_day for a shift that started
+  // five minutes ago, after_hours against a virtual clockOut of "now". The
+  // "In Progress"/"now" badges are unaffected (they render in the Clock Out
+  // column via renderParentBoundary/renderSegBoundary, not the Flags column).
   const computeDayFlags = (summary: PayrollSummary, day: DocumentData): string[] => {
+    if (day.projectedOpen === true) return [];
     const viewZone = zoneForMode(timeViewMode, getEmployeeTimezone(allUsers.find(u => u.uid === summary.userId)?.timezone));
     const lunch = getDayLunch(day, viewZone);
     const isOnsite = summary.workModel === 'On-site';
@@ -1054,6 +1063,12 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
                       renderSegFlags={(day: DocumentData, index: number) => {
                         const segs = Array.isArray(day.segments) ? day.segments : [];
                         const flagSegs: DocumentData[] = segs.length > 0 ? segs : [day];
+                        // Ongoing shift rows get an empty Flags cell — the
+                        // segment is only virtually closed at "now"
+                        // (projectedClosed), so any flag on it would be a
+                        // false positive. Completed segments in the same day
+                        // keep their flags.
+                        if (flagSegs[index]?.projectedClosed === true) return null;
                         const flags = getSegmentFlags(flagSegs[index] ?? day, {
                           isLastSegment: index === flagSegs.length - 1,
                           docAutoClosed: day.autoClosed === true,
