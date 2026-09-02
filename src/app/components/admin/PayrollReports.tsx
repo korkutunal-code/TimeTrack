@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from 'react';
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
+import { OvertimeRulesInfo } from '../ui/overtime-rules-info';
 import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import type { DocumentData } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
@@ -668,15 +669,18 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
             Payroll Report Setup
             {loading && <span className="text-xs font-normal text-blue-600 animate-pulse ml-2">Refreshing…</span>}
           </CardTitle>
-          <SectionHelp
-            title="Payroll Reports"
-            description="Generates summary reports regarding accumulated aggregates across cycle nodes."
-            sections={[
-              { title: "Setup View", content: "Filter by User and Period thresholds to accumulate total intervals." },
-              { title: "Details Breakdowns", content: "Click 'View Details' on card objects to expand precise timestamp rows grids." },
-              { title: "Cycle Configuration", content: "Admin adjusts defaults cycle types in global System Settings." }
-            ]}
-          />
+          <div className="flex items-center gap-1">
+            <OvertimeRulesInfo />
+            <SectionHelp
+              title="Payroll Reports"
+              description="Generates summary reports regarding accumulated aggregates across cycle nodes."
+              sections={[
+                { title: "Setup View", content: "Filter by User and Period thresholds to accumulate total intervals." },
+                { title: "Details Breakdowns", content: "Click 'View Details' on card objects to expand precise timestamp rows grids." },
+                { title: "Cycle Configuration", content: "Admin adjusts defaults cycle types in global System Settings." }
+              ]}
+            />
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
@@ -1023,17 +1027,6 @@ export function PayrollReports({ allUsers, timeViewMode = 'local' }: PayrollRepo
             })}
           </div>
 
-          {/* Info Card */}
-          <Card className="border-2 border-blue-200 bg-blue-50">
-            <CardContent className="p-4">
-              <p className="text-sm font-semibold text-blue-900 mb-2">California Overtime Rules Applied for On-site Employees</p>
-              <div className="text-sm text-blue-800 space-y-1">
-                <p>• <strong>Regular:</strong> First 8 hours per day, up to 40 per week</p>
-                <p>• <strong>Overtime (1.5x):</strong> Hours 8-12 per day, or over 40 per week</p>
-                <p>• <strong>Double Time (2x):</strong> Over 12 hours per day</p>
-              </div>
-            </CardContent>
-          </Card>
         </>
       )}
     </div>
