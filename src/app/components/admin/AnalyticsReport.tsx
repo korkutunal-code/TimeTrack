@@ -1135,6 +1135,9 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
             })}
           </div>
 
+          {/* Section break — identical to the On-site/Remote divider above */}
+          {flagStats && <hr className="my-4 border-t border-gray-200" />}
+
           {/* Flags Statistics — counts the SAME flags the Daily Breakdown
               renders (utils/analyticsFlags.ts pipeline), never the separate
               Metrics-tab mechanics. Zero states render cleanly (0 / 0% / 0.0). */}
