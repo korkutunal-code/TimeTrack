@@ -819,7 +819,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
             {loading && <span className="text-xs font-normal text-blue-600 animate-pulse ml-2">Refreshing…</span>}
           </CardTitle>
           <div className="flex items-center gap-1">
-            <OvertimeRulesInfo />
+            <OvertimeRulesInfo includeOpenShiftsNote />
             <SectionHelp
               title="Analytics"
               description="Generates summary reports regarding accumulated aggregates across cycle nodes."
