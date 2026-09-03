@@ -762,9 +762,10 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
       .map(([flag, count]) => ({ flag, count }))
       .sort((a, b) => b.count - a.count);
     // Accordion ordering: primary alphabetical by user name, secondary
-    // chronological by date (YYYY-MM-DD sorts lexicographically).
+    // chronological DESCENDING by date (newest first; YYYY-MM-DD sorts
+    // lexicographically, so reversing the comparator flips the order).
     for (const list of flagOccurrences.values()) {
-      list.sort((a, b) => a.userName.localeCompare(b.userName) || a.date.localeCompare(b.date));
+      list.sort((a, b) => a.userName.localeCompare(b.userName) || b.date.localeCompare(a.date));
     }
 
     return {
