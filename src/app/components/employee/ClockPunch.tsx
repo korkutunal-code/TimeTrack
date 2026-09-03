@@ -101,10 +101,27 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
       .then(setWorkModels)
       .catch(e => console.error('Failed to load work models for daily-report trigger', e));
   }, []);
-  const isRemote = useMemo(
-    () => isRemoteWorkModel(user, workModels),
-    [user, workModels],
-  );
+
+  // Decision-time resolution. The mount-time fetch above is best-effort and
+  // single-shot: if it failed (e.g. a transient network drop — the same
+  // scenario the punch retry layer guards against), workModels stays empty
+  // and the resolver would fall back to the legacy workModel string, which
+  // can be stale on profiles with pre-existing workModel/workModelId drift.
+  // To never silently deny a genuinely-Remote employee the Daily Report, a
+  // negative result with an empty list triggers one fresh fetch at click time
+  // before the classification is trusted. A positive result from the loaded
+  // list is authoritative and needs no refresh.
+  const resolveIsRemote = async (): Promise<boolean> => {
+    if (isRemoteWorkModel(user, workModels)) return true;
+    if (workModels.length > 0) return false; // fresh list, authoritative negative
+    try {
+      const fresh = await listWorkModels();
+      if (fresh.length > 0) setWorkModels(fresh);
+      return isRemoteWorkModel(user, fresh);
+    } catch {
+      return false; // fetch failed again — fall back to the legacy-string negative
+    }
+  };
 
   // Daily Report modal (Remote clock-out). When open, clock-out is paused
   // until the employee Saves (writes the text) or Cancels (writes "").
@@ -254,8 +271,10 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     setConfirmAction(null); // close first — toasts/banners behave as before
     if (action === 'out') {
       // Remote employees pause for the Daily Report modal before clock-out
-      // completes; On-site employees clock out immediately as before.
-      if (isRemote) {
+      // completes; On-site employees clock out immediately as before. The
+      // resolver re-fetches workModels at decision time if the mount fetch
+      // failed, so a dropped fetch can't silently skip the modal.
+      if (await resolveIsRemote()) {
         setDailyReportText('');
         setDailyReportOpen(true);
         return;

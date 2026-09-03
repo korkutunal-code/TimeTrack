@@ -112,12 +112,13 @@ service cloud.firestore {
     }
 
     // workModels collection — per-work-model overtime configuration
-    // (On-site, Remote, custom). Read by any authenticated user: the contents
-    // are policy parameters (model names + CA overtime thresholds) already
-    // surfaced to employees via the overtime-rules popover, and employee-side
+    // (On-site, Remote, custom). Read by any authenticated user: employee-side
     // components (e.g. the ClockPunch Daily Report trigger) need the
-    // authoritative workModelId → name lookup. Write stays admin-only since
-    // it affects pay math.
+    // authoritative workModelId → name lookup. This grants employees net-new
+    // read access to policy-level configuration (model names, OT/DT thresholds
+    // and multipliers, noOvertime) — accepted because the collection holds no
+    // per-employee data, no pay rates, and no PII. Write stays admin-only
+    // since it affects pay math.
     match /workModels/{modelId} {
       allow read: if isAuthenticated();
       allow write: if hasRole('admin');
