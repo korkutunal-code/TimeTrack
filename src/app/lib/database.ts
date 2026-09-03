@@ -83,6 +83,11 @@ export interface TimeEntry {
   adminNotes?: string;
   currentStep: number;      // 0-4 (UI convenience)
 
+  /** Optional employee-written shift note (<=250 chars) captured at clock-out
+   * for Remote employees via the Daily Report modal. Empty string when the
+   * employee dismisses the modal without entering text. */
+  dailyReport?: string;
+
   correctionRequested?: boolean;
   anomalyFlag?: boolean;
 

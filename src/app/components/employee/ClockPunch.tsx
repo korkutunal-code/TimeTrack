@@ -7,6 +7,7 @@ import { dbService } from '../../lib/database';
 import { Button } from '../ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
+import { Textarea } from '../ui/textarea';
 import { ClockStatus } from './ClockStatus';
 import {
   getPunchStatus,
@@ -87,6 +88,23 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   // even when clicks arrive faster than the event loop.
   const punchInFlight = useRef(false);
 
+  // Daily Report trigger: Remote employees only. Uses the employee's own
+  // profile `workModel` legacy string ('Remote' / 'On-site') — always present
+  // on the loaded profile and kept in sync by the admin write paths. (The
+  // authoritative workModelId → name lookup requires the workModels collection,
+  // which Firestore rules restrict to manager/admin reads, so it is not
+  // available to an employee-side component.)
+  const isRemote = useMemo(
+    () => String(user.workModel).toLowerCase().includes('remote'),
+    [user.workModel],
+  );
+
+  // Daily Report modal (Remote clock-out). When open, clock-out is paused
+  // until the employee Saves (writes the text) or Cancels (writes "").
+  const [dailyReportOpen, setDailyReportOpen] = useState(false);
+  const [dailyReportText, setDailyReportText] = useState('');
+  const DAILY_REPORT_MAX = 250;
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -162,13 +180,13 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     }
   };
 
-  const doPunchOut = async () => {
+  const doPunchOut = async (dailyReport?: string) => {
     if (!requireOnline()) return;
     if (punchInFlight.current) return;
     punchInFlight.current = true;
     setActionLoading('out');
     try {
-      await punchOut(user.uid, employeeTz);
+      await punchOut(user.uid, employeeTz, dailyReport);
       setWriteFailure(null);
       toast.success('Clocked out — shift complete');
       await load();
@@ -227,8 +245,29 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   const handleConfirmPunch = async () => {
     const action = confirmAction;
     setConfirmAction(null); // close first — toasts/banners behave as before
-    if (action === 'out') await doPunchOut();
-    else if (action) await doToggleLunch(); // toggles out or in per current state
+    if (action === 'out') {
+      // Remote employees pause for the Daily Report modal before clock-out
+      // completes; On-site employees clock out immediately as before.
+      if (isRemote) {
+        setDailyReportText('');
+        setDailyReportOpen(true);
+        return;
+      }
+      await doPunchOut();
+    } else if (action) {
+      await doToggleLunch(); // toggles out or in per current state
+    }
+  };
+
+  // Daily Report modal handlers. Both complete the paused clock-out; Save
+  // persists the entered note, Cancel persists an empty string.
+  const handleDailyReportSave = async () => {
+    setDailyReportOpen(false);
+    await doPunchOut(dailyReportText);
+  };
+  const handleDailyReportCancel = async () => {
+    setDailyReportOpen(false);
+    await doPunchOut('');
   };
 
   if (loading && !status) {
@@ -498,6 +537,62 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Daily Report modal (Remote employees only). Shown after the Clock Out
+          confirmation; pauses clock-out until Save (persist note) or Cancel
+          (persist ""). Character-capped at DAILY_REPORT_MAX with a live count. */}
+      <Dialog
+        open={dailyReportOpen}
+        onOpenChange={(open) => {
+          // Block dismissal via backdrop/Escape while the clock-out write is in
+          // flight; otherwise closing without an action completes with "".
+          if (!open && !actionLoading) {
+            setDailyReportOpen(false);
+            void doPunchOut('');
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Daily Report</DialogTitle>
+            <DialogDescription>
+              Optionally summarize your work before clocking out.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Textarea
+              value={dailyReportText}
+              onChange={(e) => setDailyReportText(e.target.value.slice(0, DAILY_REPORT_MAX))}
+              placeholder="Please describe what you worked on during this shift."
+              maxLength={DAILY_REPORT_MAX}
+              rows={4}
+              disabled={!!actionLoading}
+              autoFocus
+            />
+            <div className="text-right text-xs text-muted-foreground tabular-nums">
+              {dailyReportText.length} / {DAILY_REPORT_MAX}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={handleDailyReportCancel}
+              disabled={!!actionLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleDailyReportSave}
+              disabled={!!actionLoading}
+            >
+              {actionLoading ? (
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+              ) : null}
+              Save
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

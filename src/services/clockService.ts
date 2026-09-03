@@ -267,7 +267,7 @@ export async function punchIn(userId: string, taskId?: string, timezone?: string
 }
 
 /** Clock out the open segment. */
-export async function punchOut(userId: string, timezone?: string): Promise<TimeEntry> {
+export async function punchOut(userId: string, timezone?: string, dailyReport?: string): Promise<TimeEntry> {
   const { time: ptTime } = workDateTime(timezone);
   const now = Timestamp.now();
 
@@ -356,6 +356,10 @@ export async function punchOut(userId: string, timezone?: string): Promise<TimeE
         totalWorkMinutes: newTotal,
         updatedAt: now,
         updatedBy: userId,
+        // Daily Report modal (Remote employees): explicit write; empty string
+        // when the modal was dismissed without text. Only set when supplied so
+        // legacy callers (no dailyReport arg) leave any existing value intact.
+        ...(dailyReport !== undefined ? { dailyReport } : {}),
       });
 
       return { entryId, closedSeg, finalSegments, newTotal };
@@ -401,6 +405,9 @@ export async function punchOut(userId: string, timezone?: string): Promise<TimeE
       totalWorkMinutes: docATotal,
       updatedAt: now,
       updatedBy: userId,
+      // Daily Report modal (Remote employees): written to the punch-in day's
+      // doc (the canonical shift doc). Empty string when dismissed blank.
+      ...(dailyReport !== undefined ? { dailyReport } : {}),
     });
 
     // Day-2+ docs: one per local date, each closed with its own portion.
