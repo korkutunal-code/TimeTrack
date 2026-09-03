@@ -641,7 +641,6 @@ class DatabaseService {
         workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
         workModelId: data.workModelId as string | undefined,
         workModelOverride: (data.workModelOverride as User['workModelOverride']) ?? null,
-        isRemote: typeof data.isRemote === 'boolean' ? data.isRemote : undefined,
         remotePayCalculationDay: typeof data.remotePayCalculationDay === 'number' ? data.remotePayCalculationDay : undefined,
       };
     });
@@ -672,7 +671,6 @@ class DatabaseService {
       workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
       workModelId: data.workModelId as string | undefined,
       workModelOverride: (data.workModelOverride as User['workModelOverride']) ?? null,
-      isRemote: typeof data.isRemote === 'boolean' ? data.isRemote : undefined,
       remotePayCalculationDay: typeof data.remotePayCalculationDay === 'number' ? data.remotePayCalculationDay : undefined,
     };
   }
@@ -702,7 +700,6 @@ class DatabaseService {
       workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
       workModelId: data.workModelId as string | undefined,
       workModelOverride: (data.workModelOverride as User['workModelOverride']) ?? null,
-      isRemote: typeof data.isRemote === 'boolean' ? data.isRemote : undefined,
       remotePayCalculationDay: typeof data.remotePayCalculationDay === 'number' ? data.remotePayCalculationDay : undefined,
     };
   }

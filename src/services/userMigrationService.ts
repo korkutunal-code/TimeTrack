@@ -13,8 +13,6 @@
  */
 import { collection, doc, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from '../app/lib/firebase';
-import { listWorkModels } from './workModelsService';
-import { isRemoteWorkModel } from '../utils/workModelUtils';
 
 export const DEFAULT_REMOTE_PAY_CALCULATION_DAY = 1;
 
@@ -41,65 +39,5 @@ export async function migrateRemotePayCalculationDay(): Promise<RemotePayCalcula
     scanned: snap.size,
     updated: missing.length,
     updatedUids: missing.map(d => d.id),
-  };
-}
-
-/**
- * One-time backfill: persist the denormalized `isRemote` boolean on every
- * users/{uid} doc so employee-side components (e.g. the ClockPunch Daily
- * Report trigger) can resolve Remote-ness authoritatively without reading the
- * manager/admin-only `workModels` collection.
- *
- * Remote-ness is derived via the shared `isRemoteWorkModel` SSOT (workModelId
- * → model name first, legacy workModel string fallback), so a user whose
- * legacy `workModel` string drifted from their `workModelId` FK is corrected
- * here. Triggered once on admin init alongside migrateRemotePayCalculationDay
- * (admin-only context — firestore.rules requires hasRole('admin') to update
- * other users' docs).
- *
- * Idempotent: docs whose stored `isRemote` already matches the resolved value
- * are skipped, so repeat runs are read-only no-ops once all docs are migrated.
- */
-export interface IsRemoteBackfillResult {
-  scanned: number;
-  updated: number;
-  updatedUids: string[];
-}
-
-export async function backfillIsRemoteFlag(): Promise<IsRemoteBackfillResult> {
-  const workModels = await listWorkModels();
-  const snap = await getDocs(collection(db, 'users'));
-
-  const stale = snap.docs.filter(d => {
-    const data = d.data();
-    const resolved = isRemoteWorkModel(
-      {
-        workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
-        workModelId: data.workModelId as string | undefined,
-      },
-      workModels,
-    );
-    // Update when the flag is missing or disagrees with the resolved value.
-    return typeof data.isRemote !== 'boolean' || data.isRemote !== resolved;
-  });
-
-  await Promise.all(
-    stale.map(d => {
-      const data = d.data();
-      const resolved = isRemoteWorkModel(
-        {
-          workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
-          workModelId: data.workModelId as string | undefined,
-        },
-        workModels,
-      );
-      return updateDoc(doc(db, 'users', d.id), { isRemote: resolved });
-    }),
-  );
-
-  return {
-    scanned: snap.size,
-    updated: stale.length,
-    updatedUids: stale.map(d => d.id),
   };
 }

@@ -21,6 +21,8 @@ import {
 import { formatHoursHMM, getEmployeeTimezone, getTimezoneAbbreviation, getLocalDate, subtractLocalDays } from '../../../utils/timeCalculations';
 import { detectGuardrailWarning } from '../../../utils/shiftGuardrails';
 import { fetchGlobalSettings, resolveGuardrailLimits } from '../../../services/systemSettingsService';
+import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
+import { isRemoteWorkModel } from '../../../utils/workModelUtils';
 
 interface ClockPunchProps {
   user: User;
@@ -88,19 +90,20 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   // even when clicks arrive faster than the event loop.
   const punchInFlight = useRef(false);
 
-  // Daily Report trigger: Remote employees only. Prefers the denormalized
-  // `user.isRemote` flag persisted by the admin write paths (authoritative,
-  // derived from the workModelId → name resolution at write time, so it cannot
-  // drift from the FK). Falls back to the legacy `workModel` string for
-  // profiles not re-saved since the flag was introduced. (The authoritative
-  // live workModelId lookup requires the workModels collection, which Firestore
-  // rules restrict to manager/admin reads — unavailable to an employee-side
-  // component — hence the persisted flag.)
+  // Daily Report trigger: Remote employees only. Resolved via the shared
+  // isRemoteWorkModel SSOT (authoritative workModelId → model name lookup,
+  // legacy workModel string fallback) — the same precedence every other
+  // component uses. workModels is readable by any authenticated user per
+  // firestore.rules.
+  const [workModels, setWorkModels] = useState<WorkModelDef[]>([]);
+  useEffect(() => {
+    listWorkModels()
+      .then(setWorkModels)
+      .catch(e => console.error('Failed to load work models for daily-report trigger', e));
+  }, []);
   const isRemote = useMemo(
-    () => (typeof user.isRemote === 'boolean'
-      ? user.isRemote
-      : String(user.workModel).toLowerCase().includes('remote')),
-    [user.isRemote, user.workModel],
+    () => isRemoteWorkModel(user, workModels),
+    [user, workModels],
   );
 
   // Daily Report modal (Remote clock-out). When open, clock-out is paused
