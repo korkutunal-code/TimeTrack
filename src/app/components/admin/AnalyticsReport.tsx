@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from 'rea
 import { User } from '../../lib/auth';
 import { SectionHelp } from '../ui/section-help';
 import { OvertimeRulesInfo } from '../ui/overtime-rules-info';
+import { TimezoneViewToggle } from '../ui/timezone-view-toggle';
 import type { DocumentData } from 'firebase/firestore';
 import { fetchGlobalSettings } from '../../../services/systemSettingsService';
 import { fetchAttributedTimeEntries, projectOpenShiftsAt } from '../../../services/attributedEntries';
@@ -49,6 +50,8 @@ interface AnalyticsReportProps {
    * epoch system timestamps so stored data is never mutated.
    */
   timeViewMode?: TimeViewMode;
+  /** Called when the admin switches the timezone view toggle in the header. */
+  onTimeViewChange?: (mode: TimeViewMode) => void;
 }
 
 interface PayrollSummary {
@@ -63,7 +66,7 @@ interface PayrollSummary {
   dailyEntries?: DocumentData[];
 }
 
-export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' }: AnalyticsReportProps) {
+export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local', onTimeViewChange }: AnalyticsReportProps) {
   const [selectedUserId, setSelectedUserId] = useState<string>(ALL_USERS);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -819,17 +822,20 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local' 
             Analytics Report Setup
             {loading && <span className="text-xs font-normal text-blue-600 animate-pulse ml-2">Refreshing…</span>}
           </CardTitle>
-          <div className="flex items-center gap-1">
-            <OvertimeRulesInfo includeOpenShiftsNote />
-            <SectionHelp
-              title="Analytics"
-              description="Generates summary reports regarding accumulated aggregates across cycle nodes."
-              sections={[
-                { title: "Setup View", content: "Filter by User and Period thresholds to accumulate total intervals." },
-                { title: "Details Breakdowns", content: "Click 'View Details' on card objects to expand precise timestamp rows grids." },
-                { title: "Cycle Configuration", content: "Admin adjusts defaults cycle types in global System Settings." }
-              ]}
-            />
+          <div className="flex items-center gap-3">
+            {onTimeViewChange && <TimezoneViewToggle mode={timeViewMode} onChange={onTimeViewChange} />}
+            <div className="flex items-center gap-1">
+              <OvertimeRulesInfo includeOpenShiftsNote />
+              <SectionHelp
+                title="Analytics"
+                description="Generates summary reports regarding accumulated aggregates across cycle nodes."
+                sections={[
+                  { title: "Setup View", content: "Filter by User and Period thresholds to accumulate total intervals." },
+                  { title: "Details Breakdowns", content: "Click 'View Details' on card objects to expand precise timestamp rows grids." },
+                  { title: "Cycle Configuration", content: "Admin adjusts defaults cycle types in global System Settings." }
+                ]}
+              />
+            </div>
           </div>
         </CardHeader>
         <CardContent>

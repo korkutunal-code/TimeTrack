@@ -549,17 +549,11 @@ export default function App() {
         </TabsContent>
 
         <TabsContent value="payroll">
-          <div className="mb-3">
-            <TimezoneViewToggle mode={timeViewMode} onChange={setTimeViewMode} />
-          </div>
-          <PayrollReports allUsers={allUsers} timeViewMode={timeViewMode} />
+          <PayrollReports allUsers={allUsers} timeViewMode={timeViewMode} onTimeViewChange={setTimeViewMode} />
         </TabsContent>
 
         <TabsContent value="analytics">
-          <div className="mb-3">
-            <TimezoneViewToggle mode={timeViewMode} onChange={setTimeViewMode} />
-          </div>
-          <AnalyticsReport allUsers={allUsers} currentUser={currentUser} timeViewMode={timeViewMode} />
+          <AnalyticsReport allUsers={allUsers} currentUser={currentUser} timeViewMode={timeViewMode} onTimeViewChange={setTimeViewMode} />
         </TabsContent>
 
         <TabsContent value="audit">
