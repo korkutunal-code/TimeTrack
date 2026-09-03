@@ -110,9 +110,13 @@ export function WorkModelOverrideModal({ user, open, onOpenChange, onUserUpdated
       const legacyWorkModel: User['workModel'] =
         selectedName.toLowerCase().includes('remote') ? 'Remote' : 'On-site';
 
-      const patch: { workModelId: string; workModel: User['workModel']; workModelOverride: WorkModelOverride | null } = {
+      const patch: { workModelId: string; workModel: User['workModel']; isRemote: boolean; workModelOverride: WorkModelOverride | null } = {
         workModelId,
         workModel: legacyWorkModel,
+        // Denormalized Remote-type flag for employee-side reads (e.g. the
+        // ClockPunch Daily Report trigger) that can't read the manager-only
+        // workModels collection.
+        isRemote: legacyWorkModel === 'Remote',
         workModelOverride: hasCustomRules
           ? { ...override, hasCustomRules: true }
           : { hasCustomRules: false },

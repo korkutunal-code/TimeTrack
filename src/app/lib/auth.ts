@@ -29,6 +29,16 @@ export interface User {
   workModelId?: string;
   workModelOverride?: WorkModelOverride | null;
   /**
+   * Denormalized Remote-type flag, persisted by the admin write paths
+   * (AdminPanel edit / quick-toggle, WorkModelOverrideModal) alongside
+   * workModel/workModelId. Lets employee-side components (e.g. the ClockPunch
+   * Daily Report trigger) resolve Remote-ness authoritatively without reading
+   * the manager/admin-only workModels collection. May be absent on profiles
+   * not re-saved since the flag was introduced — readers fall back to the
+   * legacy workModel string.
+   */
+  isRemote?: boolean;
+  /**
    * Pay-calculation anchor day for Remote employees, stored as a native
    * Firestore number. Written as 1 on user creation and backfilled to 1 on
    * every existing users doc by migrateRemotePayCalculationDay() (admin init).
@@ -55,6 +65,7 @@ async function loadUserProfile(uid: string): Promise<User> {
     workModel: data.workModel === 'Remote' ? 'Remote' : 'On-site',
     workModelId: data.workModelId as string | undefined,
     workModelOverride: (data.workModelOverride as WorkModelOverride | null | undefined) ?? null,
+    isRemote: typeof data.isRemote === 'boolean' ? data.isRemote : undefined,
     remotePayCalculationDay: typeof data.remotePayCalculationDay === 'number' ? data.remotePayCalculationDay : undefined,
   };
 }

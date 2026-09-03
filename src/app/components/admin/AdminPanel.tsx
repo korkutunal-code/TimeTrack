@@ -30,7 +30,7 @@ import { calculateDailyOvertimeBreakdown, getWorkWeekStartDate, DEFAULT_WORKWEEK
 import { auditLogService } from '../../../services/auditLogService';
 import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 import { isRemoteWorkModel, resolveWorkModelName } from '../../../utils/workModelUtils';
-import { migrateRemotePayCalculationDay, DEFAULT_REMOTE_PAY_CALCULATION_DAY } from '../../../services/userMigrationService';
+import { migrateRemotePayCalculationDay, backfillIsRemoteFlag, DEFAULT_REMOTE_PAY_CALCULATION_DAY } from '../../../services/userMigrationService';
 
 interface AdminPanelProps {
   currentUser: User;
@@ -305,6 +305,20 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         }
       })
       .catch(e => console.error('remotePayCalculationDay migration failed', e));
+
+    // One-time backfill: persist the denormalized isRemote flag on every users
+    // doc (derived via the workModelId → name SSOT) so employee-side Remote
+    // detection (ClockPunch Daily Report) reads an authoritative value. Runs
+    // after listWorkModels so the resolver sees the freshest model list.
+    // Idempotent — docs already holding the correct flag are skipped.
+    backfillIsRemoteFlag()
+      .then(async ({ updated }) => {
+        if (updated > 0) {
+          onUsersChange(await dbService.getAllUsers());
+          toast.success(`Backfilled isRemote for ${updated} user${updated === 1 ? '' : 's'}`);
+        }
+      })
+      .catch(e => console.error('isRemote backfill failed', e));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -561,6 +575,10 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
         sms_opt_in: editingUser.sms_opt_in,
         timezone: editingUser.timezone,
         workModel: editingUser.workModel,
+        // Denormalized Remote-type flag for employee-side reads (e.g. the
+        // ClockPunch Daily Report trigger) that can't read the manager-only
+        // workModels collection.
+        isRemote: editingUser.workModel === 'Remote',
         ...(workModelChanged && chosenWorkModelDef ? { workModelId: chosenWorkModelDef.id } : {}),
       };
 
@@ -639,6 +657,7 @@ export function AdminPanel({ currentUser, allUsers, onUsersChange }: AdminPanelP
       const targetDef = workModels.find(m => m.name === targetWorkModel);
       const updated = await dbService.updateUser(user.uid, {
         workModel: targetWorkModel,
+        isRemote: targetWorkModel === 'Remote',
         ...(targetDef ? { workModelId: targetDef.id } : {}),
       });
       onUsersChange(allUsers.map(u => u.uid === updated.uid ? updated : u));

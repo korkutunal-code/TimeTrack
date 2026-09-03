@@ -88,15 +88,19 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   // even when clicks arrive faster than the event loop.
   const punchInFlight = useRef(false);
 
-  // Daily Report trigger: Remote employees only. Uses the employee's own
-  // profile `workModel` legacy string ('Remote' / 'On-site') — always present
-  // on the loaded profile and kept in sync by the admin write paths. (The
-  // authoritative workModelId → name lookup requires the workModels collection,
-  // which Firestore rules restrict to manager/admin reads, so it is not
-  // available to an employee-side component.)
+  // Daily Report trigger: Remote employees only. Prefers the denormalized
+  // `user.isRemote` flag persisted by the admin write paths (authoritative,
+  // derived from the workModelId → name resolution at write time, so it cannot
+  // drift from the FK). Falls back to the legacy `workModel` string for
+  // profiles not re-saved since the flag was introduced. (The authoritative
+  // live workModelId lookup requires the workModels collection, which Firestore
+  // rules restrict to manager/admin reads — unavailable to an employee-side
+  // component — hence the persisted flag.)
   const isRemote = useMemo(
-    () => String(user.workModel).toLowerCase().includes('remote'),
-    [user.workModel],
+    () => (typeof user.isRemote === 'boolean'
+      ? user.isRemote
+      : String(user.workModel).toLowerCase().includes('remote')),
+    [user.isRemote, user.workModel],
   );
 
   // Daily Report modal (Remote clock-out). When open, clock-out is paused
@@ -259,15 +263,25 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     }
   };
 
-  // Daily Report modal handlers. Both complete the paused clock-out; Save
-  // persists the entered note, Cancel persists an empty string.
+  // Daily Report modal handlers. Save persists the entered note; the explicit
+  // "Skip" button completes clock-out with an empty report. Backdrop / Escape /
+  // X ABORT the clock-out entirely (returning to the Confirm Clock Out dialog)
+  // so an accidental dismissal never silently clocks the employee out — the
+  // modal is their only chance to attach a report.
   const handleDailyReportSave = async () => {
     setDailyReportOpen(false);
     await doPunchOut(dailyReportText);
   };
-  const handleDailyReportCancel = async () => {
+  const handleDailyReportSkip = async () => {
     setDailyReportOpen(false);
     await doPunchOut('');
+  };
+  // Abort: close the report modal and re-open the Clock Out confirmation so
+  // the employee can confirm again or back out with no state mutation.
+  const handleDailyReportAbort = () => {
+    if (actionLoading) return; // never interrupt an in-flight write
+    setDailyReportOpen(false);
+    setConfirmAction('out');
   };
 
   if (loading && !status) {
@@ -546,12 +560,12 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
       <Dialog
         open={dailyReportOpen}
         onOpenChange={(open) => {
-          // Block dismissal via backdrop/Escape while the clock-out write is in
-          // flight; otherwise closing without an action completes with "".
-          if (!open && !actionLoading) {
-            setDailyReportOpen(false);
-            void doPunchOut('');
-          }
+          // Backdrop / Escape / X closes without an explicit action: ABORT the
+          // clock-out entirely (back to the Confirm Clock Out dialog) rather
+          // than silently completing it — the modal is the employee's only
+          // chance to attach a report, so an accidental dismissal must not
+          // discard it. handleDailyReportAbort guards against an in-flight write.
+          if (!open) handleDailyReportAbort();
         }}
       >
         <DialogContent className="max-w-md">
@@ -577,11 +591,18 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
           </div>
           <DialogFooter>
             <Button
-              variant="outline"
-              onClick={handleDailyReportCancel}
+              variant="ghost"
+              onClick={handleDailyReportAbort}
               disabled={!!actionLoading}
             >
-              Cancel
+              Back
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleDailyReportSkip}
+              disabled={!!actionLoading}
+            >
+              Clock Out Without Report
             </Button>
             <Button
               onClick={handleDailyReportSave}
@@ -590,7 +611,7 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
               {actionLoading ? (
                 <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
               ) : null}
-              Save
+              Save &amp; Clock Out
             </Button>
           </DialogFooter>
         </DialogContent>
