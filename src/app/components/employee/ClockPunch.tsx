@@ -299,7 +299,10 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
       // resolver re-fetches workModels at decision time if the mount fetch
       // failed, so a dropped fetch can't silently skip the modal.
       if (await resolveIsRemote()) {
-        setDailyReportText('');
+        // Pre-fill with the report already saved today (e.g. from an earlier
+        // shift on this same day), so a second clock-out lets the employee
+        // edit/extend it instead of starting blank and overwriting it.
+        setDailyReportText(status?.entry?.dailyReport ?? '');
         setDailyReportOpen(true);
         return;
       }
@@ -309,18 +312,23 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     }
   };
 
-  // Daily Report modal handlers. Save persists the entered note; the explicit
-  // "Skip" button completes clock-out with an empty report. Backdrop / Escape /
-  // X ABORT the clock-out entirely (returning to the Confirm Clock Out dialog)
-  // so an accidental dismissal never silently clocks the employee out — the
-  // modal is their only chance to attach a report.
+  // Daily Report modal handlers. Save persists the entered (possibly edited)
+  // note. "Skip" completes clock-out WITHOUT a report when none existed, but
+  // PRESERVES an existing report saved earlier today (passing undefined leaves
+  // the field untouched) rather than wiping it. Backdrop / Escape / X ABORT
+  // the clock-out entirely (returning to the Confirm Clock Out dialog) so an
+  // accidental dismissal never silently clocks the employee out.
   const handleDailyReportSave = async () => {
     setDailyReportOpen(false);
     await doPunchOut(dailyReportText);
   };
   const handleDailyReportSkip = async () => {
     setDailyReportOpen(false);
-    await doPunchOut('');
+    // A report pre-filled from an earlier shift today is kept as-is; passing
+    // undefined means punchOut leaves dailyReport untouched. Only when there
+    // was no prior report do we write an explicit empty string.
+    const existing = status?.entry?.dailyReport ?? '';
+    await doPunchOut(existing.trim().length > 0 ? undefined : '');
   };
   // Abort: close the report modal and re-open the Clock Out confirmation so
   // the employee can confirm again or back out with no state mutation.
@@ -618,7 +626,9 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
           <DialogHeader>
             <DialogTitle>Daily Report</DialogTitle>
             <DialogDescription>
-              Optionally summarize your work before clocking out.
+              {(status?.entry?.dailyReport ?? '').trim().length > 0
+                ? 'You already saved a report earlier today. Edit it below, or keep it as-is.'
+                : 'Optionally summarize your work before clocking out.'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -648,7 +658,9 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
               onClick={handleDailyReportSkip}
               disabled={!!actionLoading}
             >
-              Clock Out Without Report
+              {(status?.entry?.dailyReport ?? '').trim().length > 0
+                ? 'Keep Existing Report'
+                : 'Clock Out Without Report'}
             </Button>
             <Button
               onClick={handleDailyReportSave}

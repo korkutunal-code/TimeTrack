@@ -231,6 +231,9 @@ export function mapEntry(id: string, data: FirestoreTimeEntry): TimeEntry {
     autoClosed: data.autoClosed === true,
     autoEndedLunch: data.autoEndedLunch === true,
     flagged: data.flagged === true,
+    // Daily Report (Remote clock-out note) — top-level day field; mapped so the
+    // punch-status read can pre-fill the modal on a same-day second shift.
+    dailyReport: typeof data.dailyReport === 'string' ? data.dailyReport : undefined,
   };
 
   // --- Split-shift segments ---------------------------------------------
