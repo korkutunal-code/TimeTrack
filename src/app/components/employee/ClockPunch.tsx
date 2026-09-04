@@ -90,37 +90,64 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   // even when clicks arrive faster than the event loop.
   const punchInFlight = useRef(false);
 
-  // Daily Report trigger: Remote employees only. Resolved via the shared
-  // isRemoteWorkModel SSOT (authoritative workModelId → model name lookup,
-  // legacy workModel string fallback) — the same precedence every other
-  // component uses. workModels is readable by any authenticated user per
-  // firestore.rules.
+  // Daily Report trigger: Remote employees only.
+  //
+  // Root-cause fix for "popup didn't appear for a Remote employee (works for
+  // admin)": the workModels collection read can be DENIED for a non-admin
+  // (rules not yet deployed, or a transient failure), leaving the resolver to
+  // fall back to the legacy workModel string — which can be stale (workModelId
+  // → Remote model while workModel still says 'On-site'), silently suppressing
+  // the popup.
+  //
+  // Strategy (fail-SAFE toward showing the popup):
+  //   1. The employee's OWN user doc is always readable (rules: users read
+  //      their own profile), so workModel/workModelId are always present.
+  //   2. Legacy string says Remote → Remote, no fetch needed (standard case).
+  //   3. Else use the authoritative workModelId → name lookup when the model
+  //      list loaded (re-fetching once at click time if the mount fetch dropped).
+  //   4. If the list can't load AND a workModelId FK is present (possible drift
+  //      we can't disprove), default to showing the popup. When there's no FK,
+  //      the On-site legacy string is the only signal and stands.
   const [workModels, setWorkModels] = useState<WorkModelDef[]>([]);
+  const [workModelsLoaded, setWorkModelsLoaded] = useState(false);
   useEffect(() => {
     listWorkModels()
-      .then(setWorkModels)
-      .catch(e => console.error('Failed to load work models for daily-report trigger', e));
+      .then((m) => { setWorkModels(m); setWorkModelsLoaded(true); })
+      .catch(e => {
+        console.error('Failed to load work models for daily-report trigger', e);
+        setWorkModelsLoaded(false);
+      });
   }, []);
 
-  // Decision-time resolution. The mount-time fetch above is best-effort and
-  // single-shot: if it failed (e.g. a transient network drop — the same
-  // scenario the punch retry layer guards against), workModels stays empty
-  // and the resolver would fall back to the legacy workModel string, which
-  // can be stale on profiles with pre-existing workModel/workModelId drift.
-  // To never silently deny a genuinely-Remote employee the Daily Report, a
-  // negative result with an empty list triggers one fresh fetch at click time
-  // before the classification is trusted. A positive result from the loaded
-  // list is authoritative and needs no refresh.
   const resolveIsRemote = async (): Promise<boolean> => {
-    if (isRemoteWorkModel(user, workModels)) return true;
-    if (workModels.length > 0) return false; // fresh list, authoritative negative
-    try {
-      const fresh = await listWorkModels();
-      if (fresh.length > 0) setWorkModels(fresh);
-      return isRemoteWorkModel(user, fresh);
-    } catch {
-      return false; // fetch failed again — fall back to the legacy-string negative
+    // Fast path: the employee's own legacy string is authoritative when it
+    // already says Remote (covers the standard 'Remote' model with no fetch).
+    if (String(user.workModel).toLowerCase().includes('remote')) return true;
+
+    // Authoritative FK → name lookup when the model list is available.
+    let models = workModels;
+    let loaded = workModelsLoaded;
+    if (!loaded && models.length === 0) {
+      // Try one fresh fetch at click time in case the mount fetch was dropped.
+      try {
+        models = await listWorkModels();
+        setWorkModels(models);
+        loaded = true;
+        setWorkModelsLoaded(true);
+      } catch {
+        loaded = false;
+      }
     }
+    if (loaded) {
+      return isRemoteWorkModel(user, models);
+    }
+    // Model list unavailable (read denied / offline). Fail safe ONLY when there
+    // is positive evidence of possible drift: a workModelId FK is present but
+    // its name couldn't be resolved (e.g. a custom Remote-named model whose
+    // legacy string is stale). In that narrow case we can't disprove
+    // Remote-ness, so show the popup rather than silently deny it. When there's
+    // no FK at all, the legacy string is the only signal and it said On-site.
+    return Boolean(user.workModelId);
   };
 
   // Daily Report modal (Remote clock-out). When open, clock-out is paused
