@@ -1,11 +1,9 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 import { Loader2, ClipboardList, Save } from 'lucide-react';
-import { doc, updateDoc } from 'firebase/firestore';
 
 import type { User } from '../../lib/auth';
 import { dbService, type TimeEntry } from '../../lib/database';
-import { db } from '../../lib/firebase';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
 import {
@@ -32,11 +30,11 @@ const DAILY_REPORT_MAX = 250;
  * window (independent of the page's active date filter) and lets them edit
  * each day's `dailyReport` directly.
  *
- * Writes go straight to the shift doc's top-level `dailyReport` field via
- * `updateDoc` — NO correction request ticket, NO admin approval (unlike the
- * TimeAdjustmentModal time-editing flows). firestore.rules permits an
- * employee to update their own timeEntries doc, and `dailyReport` is not a
- * protected field.
+ * Writes go through `dbService.updateDailyReport`, which enforces the payroll
+ * lock and writes an immutable auditLogs row before mutating — the sanctioned
+ * correction path for a historical day doc (AGENTS.md audit requirement). NO
+ * correction request ticket, NO admin approval (unlike the TimeAdjustmentModal
+ * time-editing flows), since the note is not pay-affecting.
  *
  * Only single-doc days are editable here: each row maps to one real Firestore
  * doc id (`${uid}_${date}`), so edits always target a persisted document. Days
@@ -94,9 +92,10 @@ export function DailyReportsEditModal({ user, open, onClose }: DailyReportsEditM
     const value = (drafts[entry.id] ?? '').slice(0, DAILY_REPORT_MAX);
     setSavingId(entry.id);
     try {
-      // Direct write to the shift doc's top-level dailyReport field. No
-      // correction request, no approval flow (per feature spec).
-      await updateDoc(doc(db, 'timeEntries', entry.id), { dailyReport: value });
+      // Route through dbService so the edit enforces the payroll lock and
+      // writes an immutable audit row (the sanctioned correction path for a
+      // historical day doc) — no raw updateDoc, no correction ticket.
+      await dbService.updateDailyReport(entry.id, value, user);
       // Reflect the saved value in the loaded entry so isDirty resets.
       setEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, dailyReport: value } : e)));
       toast.success('Daily report saved');

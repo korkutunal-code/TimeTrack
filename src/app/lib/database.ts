@@ -1518,6 +1518,51 @@ class DatabaseService {
   }
 
   /**
+   * Update a shift doc's `dailyReport` note (Remote employees, Edit Daily
+   * Reports modal). Unlike punchOut — which writes the note at the real
+   * close-shift instant — this edits a HISTORICAL day doc, so it follows the
+   * sanctioned correction path: payroll-lock guardrail + immutable audit row
+   * FIRST, then the mutation. No correction request ticket is created (the
+   * note is not pay-affecting), but the change is still audit-logged per the
+   * AGENTS.md audit requirement for edits to time records.
+   */
+  async updateDailyReport(entryId: string, value: string, actor: User): Promise<TimeEntry> {
+    const snap = await getDoc(doc(db, 'timeEntries', entryId));
+    if (!snap.exists()) throw new Error('Entry not found.');
+    const before = mapEntry(entryId, snap.data());
+    const beforeVal = before.dailyReport ?? '';
+    const nextVal = (value ?? '').slice(0, 250);
+
+    // Payroll-lock guardrail (pre-audit), same as every other edit path.
+    await this.assertPayrollDatesNotLocked(before.date ?? before.workDate);
+
+    // 1) Audit FIRST (mandatory, non-bypassable). The reason documents the
+    //    action itself; the note content lives in the before/after snapshots.
+    await auditLogService.logTimeCorrection({
+      actorUid: actor.uid,
+      actorName: actor.name,
+      actorRole: 'employee',
+      action: 'time_correction',
+      targetId: entryId,
+      before: { dailyReport: beforeVal },
+      after: { dailyReport: nextVal },
+      reason: 'Daily report note updated',
+    });
+
+    // 2) Mutate the timeEntries doc.
+    await updateDoc(doc(db, 'timeEntries', entryId), {
+      dailyReport: nextVal,
+      updatedAt: Timestamp.now(),
+      updatedBy: actor.uid,
+    });
+
+    // Re-read + return hydrated view.
+    const freshSnap = await getDoc(doc(db, 'timeEntries', entryId));
+    if (!freshSnap.exists()) throw new Error('Entry not found after update.');
+    return mapEntry(entryId, freshSnap.data());
+  }
+
+  /**
    * Lock-check EVERY calendar date an adjustment touches. The owning doc's
    * date and the edited segment's attributed local date can differ across a
    * local-midnight split (targetSeg.localDate may be the next day while
