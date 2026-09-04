@@ -116,7 +116,7 @@ export function DailyReportsEditModal({ user, open, onClose }: DailyReportsEditM
             Edit Daily Reports
           </DialogTitle>
           <DialogDescription>
-            Last 14 days. Edit your shift notes directly — older entries are read-only.
+            Last 14 days — older entries are read-only.
           </DialogDescription>
         </DialogHeader>
 
@@ -140,8 +140,8 @@ export function DailyReportsEditModal({ user, open, onClose }: DailyReportsEditM
                   const dirty = isDirty(entry);
                   const saving = savingId === entry.id;
                   return (
-                    <div key={entry.id} className="flex items-start gap-3 px-3 py-2">
-                      <span className="w-28 shrink-0 pt-2 text-xs text-slate-600 whitespace-nowrap">
+                    <div key={entry.id} className="flex items-center gap-3 px-3 py-2">
+                      <span className="w-28 shrink-0 text-xs text-slate-600 whitespace-nowrap">
                         {formatDateShortWithWeekday(entry.date)}
                       </span>
                       <div className="flex-1 min-w-0">
@@ -152,27 +152,29 @@ export function DailyReportsEditModal({ user, open, onClose }: DailyReportsEditM
                           maxLength={DAILY_REPORT_MAX}
                           rows={2}
                           disabled={saving}
-                          className="text-sm"
+                          className="text-sm placeholder:text-slate-300"
                         />
-                        <div className="mt-1 flex items-center justify-between gap-2">
-                          <span className={`text-[11px] tabular-nums ${draft.length >= DAILY_REPORT_MAX ? 'text-rose-600 font-medium' : 'text-muted-foreground'}`}>
-                            {draft.length} / {DAILY_REPORT_MAX}
-                          </span>
-                          <Button
-                            size="sm"
-                            variant={dirty ? 'default' : 'outline'}
-                            onClick={() => saveRow(entry)}
-                            disabled={!dirty || saving}
-                            className="h-7 text-xs"
-                          >
-                            {saving ? (
-                              <Loader2 className="size-3.5 mr-1 animate-spin" />
-                            ) : (
-                              <Save className="size-3.5 mr-1" />
-                            )}
-                            {saving ? 'Saving…' : 'Save'}
-                          </Button>
-                        </div>
+                      </div>
+                      {/* Actions column: counter stacked above Save, both
+                          right-aligned — keeps the row single-level and compact. */}
+                      <div className="shrink-0 flex flex-col items-end justify-center gap-1">
+                        <span className={`text-[11px] tabular-nums ${draft.length >= DAILY_REPORT_MAX ? 'text-rose-600 font-medium' : 'text-muted-foreground'}`}>
+                          {draft.length} / {DAILY_REPORT_MAX}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant={dirty ? 'default' : 'outline'}
+                          onClick={() => saveRow(entry)}
+                          disabled={!dirty || saving}
+                          className="h-7 text-xs"
+                        >
+                          {saving ? (
+                            <Loader2 className="size-3.5 mr-1 animate-spin" />
+                          ) : (
+                            <Save className="size-3.5 mr-1" />
+                          )}
+                          {saving ? 'Saving…' : 'Save'}
+                        </Button>
                       </div>
                     </div>
                   );
