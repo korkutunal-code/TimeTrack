@@ -21,7 +21,7 @@ import {
 import { formatHoursHMM, getEmployeeTimezone, getTimezoneAbbreviation, getLocalDate, subtractLocalDays } from '../../../utils/timeCalculations';
 import { detectGuardrailWarning } from '../../../utils/shiftGuardrails';
 import { fetchGlobalSettings, resolveGuardrailLimits } from '../../../services/systemSettingsService';
-import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
+import { listAllWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
 import { isRemoteWorkModel } from '../../../utils/workModelUtils';
 
 interface ClockPunchProps {
@@ -93,25 +93,29 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
   // Daily Report trigger: Remote employees only.
   //
   // Root-cause fix for "popup didn't appear for a Remote employee (works for
-  // admin)": the workModels collection read can be DENIED for a non-admin
-  // (rules not yet deployed, or a transient failure), leaving the resolver to
-  // fall back to the legacy workModel string — which can be stale (workModelId
-  // → Remote model while workModel still says 'On-site'), silently suppressing
-  // the popup.
+  // admin)": the authoritative workModelId → name resolution can silently
+  // misclassify a Remote employee as On-site when (a) the FK points at a
+  // VOIDED model — listWorkModels filters voided docs out, so the lookup can't
+  // resolve the name and falls back to a stale legacy string — or (b) the
+  // fetch fails, forcing the same fallback.
   //
-  // Strategy (fail-SAFE toward showing the popup):
+  // Strategy:
   //   1. The employee's OWN user doc is always readable (rules: users read
   //      their own profile), so workModel/workModelId are always present.
   //   2. Legacy string says Remote → Remote, no fetch needed (standard case).
-  //   3. Else use the authoritative workModelId → name lookup when the model
-  //      list loaded (re-fetching once at click time if the mount fetch dropped).
-  //   4. If the list can't load AND a workModelId FK is present (possible drift
-  //      we can't disprove), default to showing the popup. When there's no FK,
-  //      the On-site legacy string is the only signal and stands.
+  //   3. Else use the authoritative FK → name lookup over a voided-INCLUSIVE
+  //      model list (listAllWorkModels), so a voided Remote model still
+  //      classifies correctly. Re-fetch once at click time if the mount fetch
+  //      was dropped.
+  //   4. If the list genuinely can't load, fall back to the legacy-string
+  //      negative (the string was already checked in step 2). FK presence
+  //      alone is NOT evidence of Remote-ness — work-model ids are opaque
+  //      auto-generated doc ids — so we never show the popup to a known
+  //      On-site employee just because the lookup failed.
   const [workModels, setWorkModels] = useState<WorkModelDef[]>([]);
   const [workModelsLoaded, setWorkModelsLoaded] = useState(false);
   useEffect(() => {
-    listWorkModels()
+    listAllWorkModels()
       .then((m) => { setWorkModels(m); setWorkModelsLoaded(true); })
       .catch(e => {
         console.error('Failed to load work models for daily-report trigger', e);
@@ -124,13 +128,13 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
     // already says Remote (covers the standard 'Remote' model with no fetch).
     if (String(user.workModel).toLowerCase().includes('remote')) return true;
 
-    // Authoritative FK → name lookup when the model list is available.
+    // Authoritative FK → name lookup over the voided-inclusive list.
     let models = workModels;
     let loaded = workModelsLoaded;
-    if (!loaded && models.length === 0) {
+    if (!loaded) {
       // Try one fresh fetch at click time in case the mount fetch was dropped.
       try {
-        models = await listWorkModels();
+        models = await listAllWorkModels();
         setWorkModels(models);
         loaded = true;
         setWorkModelsLoaded(true);
@@ -138,16 +142,9 @@ export function ClockPunch({ user, onViewHistory, displayTimezone }: ClockPunchP
         loaded = false;
       }
     }
-    if (loaded) {
-      return isRemoteWorkModel(user, models);
-    }
-    // Model list unavailable (read denied / offline). Fail safe ONLY when there
-    // is positive evidence of possible drift: a workModelId FK is present but
-    // its name couldn't be resolved (e.g. a custom Remote-named model whose
-    // legacy string is stale). In that narrow case we can't disprove
-    // Remote-ness, so show the popup rather than silently deny it. When there's
-    // no FK at all, the legacy string is the only signal and it said On-site.
-    return Boolean(user.workModelId);
+    // When the list loaded, trust the SSOT. When it genuinely can't load,
+    // return false (the legacy-string negative already established above).
+    return loaded ? isRemoteWorkModel(user, models) : false;
   };
 
   // Daily Report modal (Remote clock-out). When open, clock-out is paused

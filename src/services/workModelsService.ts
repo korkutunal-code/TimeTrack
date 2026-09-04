@@ -91,6 +91,22 @@ export async function listWorkModels(): Promise<WorkModel[]> {
   return models;
 }
 
+/**
+ * Read ALL work models INCLUDING soft-deleted (status: 'voided') ones.
+ *
+ * For referential-integrity lookups ONLY — e.g. classifying a user whose
+ * workModelId still points at a voided model. resolveWorkModelName /
+ * isRemoteWorkModel fall back to the drift-prone legacy workModel string when
+ * the FK doesn't resolve against the list, so a user assigned to a voided
+ * Remote-named model would otherwise be silently misclassified as On-site.
+ * UI lists and dropdowns must keep using listWorkModels() (active only) —
+ * this intentionally has no ensureSeeded side effect.
+ */
+export async function listAllWorkModels(): Promise<WorkModel[]> {
+  const snap = await getDocs(collection(db, 'workModels'));
+  return snap.docs.map(d => mapDoc(d.id, d.data()));
+}
+
 export async function ensureSeeded(): Promise<void> {
   // Seed only if there are zero usable (non-voided) models — including legacy
   // status-less docs, which count as usable so we never re-seed over them.
