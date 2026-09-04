@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
-import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, Radio, Users, Flag, Percent, Activity, ChevronDown } from 'lucide-react';
+import { FileText, Printer, Download, DollarSign, Clock, TrendingUp, Radio, Users, Flag, Percent, Activity, ChevronDown, ClipboardList } from 'lucide-react';
 import { generateCSV, downloadCSV } from '../../../services/exportService';
 import { ALL_USERS, USER_GROUP_OPTIONS, isGroupSelection } from '../../../utils/userSelection';
 import { DailyBreakdownTable } from './DailyBreakdownTable';
@@ -79,6 +79,9 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local',
   // Accordion state for the Flag Frequencies occurrence breakdown — the
   // expanded flag type id, or null when all rows are collapsed.
   const [expandedFlagType, setExpandedFlagType] = useState<string | null>(null);
+  // Accordion state for the Daily Reports per-employee breakdown — the
+  // expanded user id, or null when all rows are collapsed.
+  const [expandedReportUserId, setExpandedReportUserId] = useState<string | null>(null);
   // Per-user resolved work-model definition (drives the Bulk Edit live OT
   // preview in DailyBreakdownTable). Captured during generateReport.
   const [workModelByUser, setWorkModelByUser] = useState<Map<string, WorkModelDef | null>>(new Map());
@@ -785,6 +788,49 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local',
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report, allUsers, timeViewMode, resolveUserName]);
 
+  // Daily Reports section (Phase 2A): per-employee submission stats + the
+  // per-shift report rows. Derived from the SAME `report` pipeline output as
+  // the rest of the tab, so the setup card's date range + employee filter and
+  // the exclusion cutoff already apply — no separate fetch. `workDate` is the
+  // employee-local calendar date (AGENTS.md timezone architecture), matching
+  // how the Flag Distribution sub-table renders dates. Only REMOTE employees
+  // are listed (the Daily Report modal is a Remote-only clock-out feature).
+  const dailyReportStats = useMemo(() => {
+    if (!report) return null;
+    const hasReport = (v: unknown): boolean =>
+      typeof v === 'string' && v.trim().length > 0;
+    const employees = report
+      // Remote-only: classify via the shared workModelId → name SSOT (legacy
+      // string fallback), the same precedence used elsewhere on this tab.
+      .filter((summary) => {
+        const userObj = allUsers.find(u => u.uid === summary.userId);
+        return userObj ? isRemoteWorkModel(userObj, workModels) : false;
+      })
+      .map((summary) => {
+        const rows = (summary.dailyEntries ?? [])
+          .map((day) => ({
+            id: String(day.id ?? day.workDate ?? ''),
+            workDate: String(day.workDate ?? ''),
+            dailyReport: typeof day.dailyReport === 'string' ? day.dailyReport : '',
+          }))
+          // Defensive re-sort: generateReport already sorts dailyEntries by
+          // workDate descending, but we re-assert here so the sub-table order
+          // doesn't silently depend on that upstream invariant.
+          .sort((a, b) => b.workDate.localeCompare(a.workDate));
+        const submitted = rows.filter((r) => hasReport(r.dailyReport)).length;
+        return {
+          userId: summary.userId,
+          userName: summary.userName,
+          submitted,
+          total: rows.length,
+          rows,
+        };
+      })
+      // Only list employees who actually have shifts in the filtered range.
+      .filter((e) => e.total > 0);
+    return { employees };
+  }, [report, allUsers, workModels]);
+
   // Render flag chips for the Flags view. Empty flag list → null (clean cell).
   const renderFlagChips = (flags: string[]): JSX.Element | null => {
     if (flags.length === 0) return null;
@@ -1400,6 +1446,90 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local',
                 </CardContent>
               </Card>
             </div>
+          )}
+
+          {/* Daily Reports (Phase 2A) — per-employee shift-report accordion.
+              Mirrors the Employee Flag Distribution card idiom: static summary
+              row (name + stats), chevron-toggled inner table of per-shift
+              reports. Data comes from the same `report` pipeline output, so
+              the setup card's date range + employee filter already apply. */}
+          {dailyReportStats && (
+            <Card className="border-2 border-slate-200 gap-2">
+              <CardHeader className="pt-4 pb-0">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <ClipboardList className="size-4" />
+                  Daily Reports
+                  <span className="text-xs font-normal text-slate-400">(Remote employees)</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {dailyReportStats.employees.length === 0 && (
+                    <p className="text-sm text-slate-500">No remote employees with shifts in this period.</p>
+                  )}
+                  {dailyReportStats.employees.map((emp) => {
+                    const isReportOpen = expandedReportUserId === emp.userId;
+                    const toggleReport = () =>
+                      setExpandedReportUserId(prev => (prev === emp.userId ? null : emp.userId));
+                    return (
+                      <div key={emp.userId} className="bg-slate-50 rounded-lg border border-slate-200 overflow-hidden">
+                        {/* Summary header — static; only the chevron button
+                            toggles the accordion (no nested interactives). */}
+                        <div className="flex items-center justify-between p-3">
+                          <div className="flex-1">
+                            <p className="font-semibold text-sm text-slate-900">{emp.userName}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                              {emp.submitted} report{emp.submitted === 1 ? '' : 's'} / {emp.total} shift{emp.total === 1 ? '' : 's'}
+                            </span>
+                            <button
+                              type="button"
+                              aria-label={isReportOpen ? `Collapse daily reports for ${emp.userName}` : `Expand daily reports for ${emp.userName}`}
+                              aria-expanded={isReportOpen}
+                              onClick={toggleReport}
+                              className="inline-flex items-center justify-center size-7 rounded-md border border-slate-300 bg-white text-slate-500 cursor-pointer transition-colors hover:bg-slate-100 hover:text-slate-700"
+                            >
+                              <ChevronDown
+                                className={`size-4 transition-transform duration-200 ${isReportOpen ? 'rotate-180' : 'rotate-0'}`}
+                              />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Per-shift report sub-table — dates descending (newest
+                            first), matching the rest of the application. Empty /
+                            whitespace-only reports render as a muted placeholder. */}
+                        {isReportOpen && (
+                          <div className="mx-3 mb-3 rounded-lg border border-slate-200 bg-white overflow-hidden">
+                            <div className="flex items-center px-3 py-1.5 border-b border-slate-200 bg-slate-100/60">
+                              <span className="w-24 shrink-0 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Date</span>
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Daily Report</span>
+                            </div>
+                            <div className="divide-y divide-slate-100">
+                              {emp.rows.map((row) => (
+                                <div key={row.id} className="flex items-start px-3 py-1.5">
+                                  <span className="w-24 shrink-0 text-xs text-slate-600 whitespace-nowrap">
+                                    {formatDateShortWithWeekday(row.workDate)}
+                                  </span>
+                                  {row.dailyReport.trim().length > 0 ? (
+                                    <span className="text-xs text-slate-700 text-left whitespace-pre-wrap break-words min-w-0">
+                                      {row.dailyReport}
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-slate-400 italic">No report logged</span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
           )}
         </>
       )}
