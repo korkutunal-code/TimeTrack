@@ -7,11 +7,14 @@ import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
-import { ArrowLeft, AlertTriangle, Clock, Calendar, Target, Briefcase, ChevronLeft, ChevronRight, Filter, X, Pencil } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, Clock, Calendar, Target, Briefcase, ChevronLeft, ChevronRight, Filter, X, Pencil, ClipboardList } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatHoursHMM, getEmployeeTimezone } from '../../../utils/timeCalculations';
 import { displayTimeForView, explodeDocsBySegmentLocalDate } from '../../../utils/timeView';
 import { TimeAdjustmentModal } from './TimeAdjustmentModal';
+import { DailyReportsEditModal } from './DailyReportsEditModal';
+import { listWorkModels, type WorkModel as WorkModelDef } from '../../../services/workModelsService';
+import { isRemoteWorkModel } from '../../../utils/workModelUtils';
 
 interface HistoryViewProps {
   user: User;
@@ -81,6 +84,18 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [appliedRange, setAppliedRange] = useState<{ start: string; end: string } | null>(null);
+
+  // Edit Daily Reports modal (Remote employees only). workModels is loaded so
+  // Remote-ness resolves via the authoritative workModelId → name lookup
+  // (isRemoteWorkModel SSOT), the same precedence used across the app.
+  const [dailyReportsOpen, setDailyReportsOpen] = useState(false);
+  const [workModels, setWorkModels] = useState<WorkModelDef[]>([]);
+  useEffect(() => {
+    listWorkModels()
+      .then(setWorkModels)
+      .catch(e => console.error('Failed to load work models for daily-reports visibility', e));
+  }, []);
+  const isRemote = useMemo(() => isRemoteWorkModel(user, workModels), [user, workModels]);
 
   const getDateRange = useCallback((): { start: string; end: string } | null => {
     if (periodFilter === 'this-week') return getWeekBounds('this', employeeTz);
@@ -422,6 +437,18 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
         </div>
 
         <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          {/* Edit Daily Reports entry point — Remote employees only. */}
+          {isRemote && (
+            <Button
+              variant="outline"
+              onClick={() => setDailyReportsOpen(true)}
+              className="h-10 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800"
+            >
+              <ClipboardList className="size-4 mr-1.5" />
+              Edit Daily Reports
+            </Button>
+          )}
+
           {/* Quick Edit & Correction Request entry point */}
           <Button
             variant="outline"
@@ -832,6 +859,16 @@ export function HistoryView({ user, onBack }: HistoryViewProps) {
         onClose={() => setAdjustmentOpen(false)}
         onSaved={loadHistory}
       />
+
+      {/* Edit Daily Reports modal — rendered only for Remote employees (the
+          trigger button is hidden otherwise), so no extra role check here. */}
+      {isRemote && (
+        <DailyReportsEditModal
+          user={user}
+          open={dailyReportsOpen}
+          onClose={() => setDailyReportsOpen(false)}
+        />
+      )}
     </div>
   );
 }
