@@ -1328,6 +1328,13 @@ class DatabaseService {
       // modal recorded it. Used to correct the RIGHT shift on a multi-shift
       // day instead of guessing the most-recent one.
       shift_id: reqData.shift_id || undefined,
+      // The employee captured these from the EXACT segment they clicked, so on
+      // a multi-shift day they uniquely identify the target shift even when
+      // shift_id is absent (legacy requests) or stale (segment ids change on
+      // re-save). Used as the fallback targeting discriminator.
+      original_clock_in: reqData.original_clock_in || undefined,
+      original_clock_out: reqData.original_clock_out || undefined,
+      original_lunch: reqData.original_lunch || undefined,
       notes: reqData.notes || '',
       status: reqData.status || 'Open',
     };
@@ -1408,14 +1415,26 @@ class DatabaseService {
     // an earlier one — e.g. resolving "Shift 1 Clock In 00:02→00:03" would
     // otherwise rewrite Shift 2 (16:17) to clockIn 00:03, making it span
     // 00:03–16:22 and falsely overlapping Shift 1 (00:03–00:43).
-    // resolveCorrectionTargetIndex prefers the request's recorded shift_id
-    // (exact segment match), then the root-mirrored segment, then the last one.
+    // resolveCorrectionTargetIndex prefers the request's recorded shift_id,
+    // then the request's original_* value for the field being corrected (the
+    // employee captured it from the exact segment clicked — the reliable
+    // discriminator for legacy requests without shift_id), then the
+    // root-mirrored segment, then the last one.
     // When shift_id names the synthesized current segment (not a persisted
     // one), target the current view rather than a wrong persisted segment.
     const shiftIdMatchesCurrent =
       !!request.shift_id && !!currentSeg && currentSeg.id === request.shift_id;
+    // Map the corrected field to the request's captured original_* value.
+    const originalValueForField =
+      field === 'clockInManual' ? request.original_clock_in
+      : field === 'clockOutManual' ? request.original_clock_out
+      : field === 'lunchOutManual' ? (request.original_lunch ? request.original_lunch.split('-')[0]?.trim() : undefined)
+      : field === 'lunchInManual' ? (request.original_lunch ? (request.original_lunch.split('-')[1] ?? request.original_lunch.split('-')[0])?.trim() : undefined)
+      : undefined;
     let targetIdx = resolveCorrectionTargetIndex(persistedSegs, {
       shiftId: request.shift_id,
+      originalValue: originalValueForField,
+      field,
       rootClockInManual: before.clockInManual,
     });
     if (shiftIdMatchesCurrent) targetIdx = -1; // edit the current view in-place

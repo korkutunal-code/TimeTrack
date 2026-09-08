@@ -36,7 +36,29 @@ describe('resolveCorrectionTargetIndex — multi-shift correction targeting', ()
     expect(idx).toBe(0); // Shift 1 — without shift_id this resolves to index 1.
   });
 
-  it('falls back to the root-mirrored segment when shift_id is absent (legacy)', () => {
+  it('falls back to the request original_* value when shift_id is absent (Emir 09-04 case)', () => {
+    // REAL production case: request has NO shift_id (pre-badge-fix) but carries
+    // original_clock_in=00:02 — captured from Shift 1. Root mirrors Shift 2.
+    // Matching by the original value (not the root) selects Shift 1.
+    const idx = resolveCorrectionTargetIndex(segs, {
+      originalValue: '00:02',
+      field: 'clockInManual',
+      rootClockInManual: '16:17',
+    });
+    expect(idx).toBe(0); // Shift 1 — the correct target.
+  });
+
+  it('original_* value beats the root mirror even when they disagree', () => {
+    // originalValue names Shift 1 while root mirror names Shift 2 → Shift 1 wins.
+    const idx = resolveCorrectionTargetIndex(segs, {
+      originalValue: '00:43',
+      field: 'clockOutManual',
+      rootClockInManual: '16:17',
+    });
+    expect(idx).toBe(0);
+  });
+
+  it('falls back to the root-mirrored segment when neither shift_id nor original value matches', () => {
     const idx = resolveCorrectionTargetIndex(segs, { rootClockInManual: '16:17' });
     expect(idx).toBe(1);
   });
