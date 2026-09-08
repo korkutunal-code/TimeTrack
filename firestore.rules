@@ -106,9 +106,20 @@ service cloud.firestore {
     match /systemSettings/{document} {
       // Admins can read and write all system settings
       allow read, write: if hasRole('admin');
-      
+
       // All authenticated users can read payroll settings to respect lock dates
       allow read: if isAuthenticated() && document == 'payroll';
+
+      // All authenticated users can read the consolidated `global` settings doc.
+      // The payroll-lock guardrail (assertPayrollNotLocked, run for EVERY
+      // employee time correction BEFORE the mandatory audit write) and the
+      // employee ClockPunch guardrail banner both read systemSettings/global.
+      // The doc holds only policy/reminder config (reminder times, payroll
+      // cycle, locked_up_to_date, guardrail limits) — no PII, no pay rates —
+      // so employee read access is safe and required for employee self-edits
+      // to evaluate the payroll lock without a permission-denied failure.
+      // Write stays admin-only since it affects pay math.
+      allow read: if isAuthenticated() && document == 'global';
     }
 
     // workModels collection — per-work-model overtime configuration

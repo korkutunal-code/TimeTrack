@@ -335,8 +335,10 @@ async function main() {
       dref(dbOf(emp1), "auditLogs", "test-audit-emp-create").set(validAuditLog),
     );
 
-    // manager cannot create audit log
-    await assertFails(
+    // manager CAN create an audit log via the admin/manager path (policy
+    // change 2026-08, commit 67bdbae): the admin/manager branch requires only
+    // hasRole(admin|manager) + targetCollection + occurredAt.
+    await assertSucceeds(
       dref(dbOf(manager), "auditLogs", "test-audit-mgr-create").set(validAuditLog),
     );
 
@@ -468,6 +470,20 @@ async function main() {
 
     await assertSucceeds(
       dref(dbOf(admin), "systemSettings", "payroll").set(
+        { locked_up_to_date: "2025-12-01" },
+        { merge: true },
+      ),
+    );
+
+    // Employees can READ the consolidated `global` settings doc — required by
+    // the payroll-lock guardrail (assertPayrollNotLocked) that runs before the
+    // mandatory audit write on every employee time correction. Regression for
+    // the "insufficient permissions" employee Quick Edit failure.
+    await assertSucceeds(dref(dbOf(emp1), "systemSettings", "global").get());
+
+    // Employees still CANNOT write the `global` settings doc (pay-affecting).
+    await assertFails(
+      dref(dbOf(emp1), "systemSettings", "global").set(
         { locked_up_to_date: "2025-12-01" },
         { merge: true },
       ),
