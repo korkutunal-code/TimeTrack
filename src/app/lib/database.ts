@@ -2,7 +2,7 @@ import { collection, doc, getDoc, getDocs, orderBy, query, Timestamp, updateDoc,
 import type { DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { db } from './firebase';
 import type { User } from './auth';
-import { stripUndefined, closeActiveSegment, computeSegmentWorkMinutes, recalculateEntryTotals, recomputeSegmentSystemTimestamps, fieldToSystemField } from './segmentOps';
+import { stripUndefined, closeActiveSegment, computeSegmentWorkMinutes, recalculateEntryTotals, recomputeSegmentSystemTimestamps, fieldToSystemField, resolveCorrectionTargetIndex } from './segmentOps';
 import { deriveSegmentWorkMinutes, epochFromLocalWallTime, getEmployeeTimezone } from '../../utils/timeCalculations';
 import { validateSegmentChronology, getFuturePunchError, getSegmentOverlapError } from '../../utils/timeValidation';
 import { auditLogService } from '../../services/auditLogService';
@@ -1324,6 +1324,10 @@ class DatabaseService {
       requested_clock_in: reqData.requested_clock_in || undefined,
       requested_clock_out: reqData.requested_clock_out || undefined,
       requested_lunch: reqData.requested_lunch || undefined,
+      // The specific segment (shift) this request targets, when the submitting
+      // modal recorded it. Used to correct the RIGHT shift on a multi-shift
+      // day instead of guessing the most-recent one.
+      shift_id: reqData.shift_id || undefined,
       notes: reqData.notes || '',
       status: reqData.status || 'Open',
     };
@@ -1398,14 +1402,23 @@ class DatabaseService {
     const persistedSegs = before.segments ? before.segments.map((s) => ({ ...s })) : [];
     const currentSeg = before.currentSegment ?? null;
 
-    // Target the shift the root legacy fields mirror (the current / most-recent
-    // shift). Prefer the persisted segment whose clockIn matches the root
-    // clockIn (same shift, dual-write); fall back to the last persisted
-    // segment; else the synthesized current view (legacy doc with no segments).
-    let targetIdx = before.clockInManual
-      ? persistedSegs.findIndex((s) => s.clockInManual === before.clockInManual)
-      : -1;
-    if (targetIdx < 0 && persistedSegs.length > 0) targetIdx = persistedSegs.length - 1;
+    // Target the shift the request actually refers to. On a multi-shift day
+    // the root legacy fields (before.clockInManual) mirror only the MOST-RECENT
+    // shift, so keying off them edits the WRONG shift when the request targets
+    // an earlier one — e.g. resolving "Shift 1 Clock In 00:02→00:03" would
+    // otherwise rewrite Shift 2 (16:17) to clockIn 00:03, making it span
+    // 00:03–16:22 and falsely overlapping Shift 1 (00:03–00:43).
+    // resolveCorrectionTargetIndex prefers the request's recorded shift_id
+    // (exact segment match), then the root-mirrored segment, then the last one.
+    // When shift_id names the synthesized current segment (not a persisted
+    // one), target the current view rather than a wrong persisted segment.
+    const shiftIdMatchesCurrent =
+      !!request.shift_id && !!currentSeg && currentSeg.id === request.shift_id;
+    let targetIdx = resolveCorrectionTargetIndex(persistedSegs, {
+      shiftId: request.shift_id,
+      rootClockInManual: before.clockInManual,
+    });
+    if (shiftIdMatchesCurrent) targetIdx = -1; // edit the current view in-place
     const targetBase = targetIdx >= 0 ? persistedSegs[targetIdx] : currentSeg;
     if (!targetBase) throw new Error('No shift found to correct on this entry.');
     const anchorDate = targetBase.localDate ?? before.date ?? before.workDate;
@@ -1454,6 +1467,20 @@ class DatabaseService {
     after.totalHours = recalc.totalHours;
     const sysSeg = recalc.segments.find((s) => s.id === editedSeg.id) ?? editedSeg;
 
+    // Only mirror the correction to the ROOT/top-level fields when the edited
+    // segment is the one the root mirrors (the current / most-recent shift).
+    // The root fields are the dual-write of the most-recent shift; overwriting
+    // them with an EARLIER shift's values would corrupt the most-recent shift's
+    // display (Team view, mapEntry read the root *SystemTime) and produce
+    // inconsistent chronology on later edits. Mirrors directEditSegmentField's
+    // updateTopLevel guard.
+    const isLastMirroring =
+      targetIdx >= 0 &&
+      targetIdx === persistedSegs.length - 1 &&
+      before.clockInManual === (targetIdx >= 0 ? persistedSegs[targetIdx].clockInManual : undefined);
+    const isCurrentView = targetIdx < 0; // legacy doc: edited the synthesized current
+    const updateTopLevel = isCurrentView || isLastMirroring;
+
     // 6) Audit FIRST (mandatory, non-bypassable). Admin action.
     await auditLogService.logTimeCorrection({
       actorUid: adminUid,
@@ -1478,7 +1505,11 @@ class DatabaseService {
     // mapEntry (which read the top-level *SystemTime) show the corrected
     // instants. Lunch *System is guarded by skipLunch (the closed segment has no
     // lunch fields when the shift skips lunch).
-    const sysPatch: Record<string, unknown> = sysSeg
+    // sysPatch mirrors the corrected segment to the ROOT/top-level *System
+    // epochs — ONLY when the edited shift is the one the root mirrors
+    // (updateTopLevel). Writing an earlier shift's epochs to the root would
+    // corrupt the most-recent shift's mirror.
+    const sysPatch: Record<string, unknown> = sysSeg && updateTopLevel
       ? stripUndefined({
           clockInSystem: sysSeg.clockInSystem,
           clockOutSystem: sysSeg.clockOutSystem,
@@ -1491,13 +1522,18 @@ class DatabaseService {
         })
       : {};
     await updateDoc(doc(db, 'timeEntries', entryId), {
-      [field]: value,
+      // Top-level field mirror — only for the root-mirrored shift.
+      ...(updateTopLevel ? { [field]: value } : {}),
       segments: segments.map((s) => stripUndefined(s)),
       ...sysPatch,
-      ...(hasClockOut
+      // Day totals are day-level (sum over all segments) — always safe to write.
+      totalWorkMinutes: after.totalWorkMinutes,
+      totalHours: after.totalHours,
+      // Day-completion flags: only when the edited shift is the root-mirrored
+      // (most-recent) one AND it is now closed. Editing an earlier shift must
+      // not mark the day complete while a later shift is still open.
+      ...(updateTopLevel && hasClockOut
         ? {
-            totalWorkMinutes: after.totalWorkMinutes,
-            totalHours: after.totalHours,
             complete: true,
             dayComplete: true,
             currentStep: 4,

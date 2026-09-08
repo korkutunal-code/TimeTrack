@@ -471,3 +471,40 @@ export function getPreservedSegmentsForEdit(entry: {
   const lastMirrorsRoot = !!last && last.clockInManual === entry.clockInManual;
   return lastMirrorsRoot ? segs.slice(0, -1) : segs;
 }
+
+/**
+ * Pick the index of the segment an admin correction should edit.
+ *
+ * On a multi-shift day the entry's root `clockInManual` mirrors only the
+ * MOST-RECENT shift, so keying the target off it edits the WRONG shift when
+ * the request refers to an earlier one — e.g. resolving "Shift 1 Clock In
+ * 00:02→00:03" would otherwise rewrite Shift 2 (16:17–16:22) to clockIn
+ * 00:03, making it span 00:03–16:22 and falsely overlapping Shift 1
+ * (00:03–00:43) in getSegmentOverlapError.
+ *
+ * Preference order:
+ *   1. `shiftId` (recorded on the correction request by the submitting
+ *      modal) — the only reliable multi-shift discriminator. Matched against
+ *      persisted segment ids first, then the synthesized current segment.
+ *   2. The persisted segment whose clockInManual mirrors the root (legacy
+ *      requests without a shiftId; the dual-write invariant).
+ *   3. The last persisted segment.
+ *
+ * Returns the index into `segments`, or -1 when no persisted segment matches
+ * (caller then falls back to the synthesized current-segment view).
+ */
+export function resolveCorrectionTargetIndex(
+  segments: TimeSegment[],
+  opts: { shiftId?: string; rootClockInManual?: string },
+): number {
+  const { shiftId, rootClockInManual } = opts;
+  if (shiftId) {
+    const byId = segments.findIndex((s) => s.id === shiftId);
+    if (byId >= 0) return byId;
+  }
+  if (rootClockInManual) {
+    const byMirror = segments.findIndex((s) => s.clockInManual === rootClockInManual);
+    if (byMirror >= 0) return byMirror;
+  }
+  return segments.length > 0 ? segments.length - 1 : -1;
+}

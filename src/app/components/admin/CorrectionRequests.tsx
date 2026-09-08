@@ -327,9 +327,12 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
                   <p className="text-xs text-slate-600"><span className="text-slate-500">Notes:</span> {selectedRequest.notes}</p>
                 </div>
 
-                {/* Explicit 4-line Original vs Requested comparison. The
-                    Requested side highlights the single field being changed
-                    (issue_type) with its suggested_time; others show --:--. */}
+                {/* Original vs Requested comparison. The Requested side shows
+                    the EFFECTIVE post-resolution shift: the single field being
+                    changed (issue_type) shows its requested value highlighted;
+                    every other field shows the ORIGINAL value (unchanged),
+                    so a partial request (e.g. Clock In only) no longer reads
+                    as if the untouched punches were cleared to --:--. */}
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-0.5">
                     <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-1">Original</p>
@@ -340,17 +343,17 @@ export function CorrectionRequests({ currentUser }: CorrectionRequestsProps) {
                   </div>
                   <div className="space-y-0.5">
                     <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-1">Requested</p>
-                    <p className={'text-xs ' + (selectedRequest.issue_type === 'Clock In' ? 'font-bold text-indigo-700' : 'text-slate-400')}>
-                      Clock In: {selectedRequest.issue_type === 'Clock In' ? (selectedRequest.suggested_time || selectedRequest.requested_clock_in || '--:--') : '--:--'}
+                    <p className={'text-xs ' + (selectedRequest.issue_type === 'Clock In' ? 'font-bold text-indigo-700' : 'text-slate-700')}>
+                      Clock In: {selectedRequest.issue_type === 'Clock In' ? (selectedRequest.suggested_time || selectedRequest.requested_clock_in || '--:--') : (selectedRequest.original_clock_in || '--:--')}
                     </p>
-                    <p className={'text-xs ' + (selectedRequest.issue_type === 'Lunch Out' ? 'font-bold text-indigo-700' : 'text-slate-400')}>
-                      Lunch Out: {selectedRequest.issue_type === 'Lunch Out' ? (selectedRequest.suggested_time || parseLunchField(selectedRequest.requested_lunch, 0) || '--:--') : '--:--'}
+                    <p className={'text-xs ' + (selectedRequest.issue_type === 'Lunch Out' ? 'font-bold text-indigo-700' : 'text-slate-700')}>
+                      Lunch Out: {selectedRequest.issue_type === 'Lunch Out' ? (selectedRequest.suggested_time || parseLunchField(selectedRequest.requested_lunch, 0)) : parseLunchField(selectedRequest.original_lunch, 0)}
                     </p>
-                    <p className={'text-xs ' + (selectedRequest.issue_type === 'Lunch In' ? 'font-bold text-indigo-700' : 'text-slate-400')}>
-                      Lunch In: {selectedRequest.issue_type === 'Lunch In' ? (selectedRequest.suggested_time || parseLunchField(selectedRequest.requested_lunch, 1) || '--:--') : '--:--'}
+                    <p className={'text-xs ' + (selectedRequest.issue_type === 'Lunch In' ? 'font-bold text-indigo-700' : 'text-slate-700')}>
+                      Lunch In: {selectedRequest.issue_type === 'Lunch In' ? (selectedRequest.suggested_time || parseLunchField(selectedRequest.requested_lunch, 1)) : parseLunchField(selectedRequest.original_lunch, 1)}
                     </p>
-                    <p className={'text-xs ' + (selectedRequest.issue_type === 'Clock Out' ? 'font-bold text-indigo-700' : 'text-slate-400')}>
-                      Clock Out: {selectedRequest.issue_type === 'Clock Out' ? (selectedRequest.suggested_time || selectedRequest.requested_clock_out || '--:--') : '--:--'}
+                    <p className={'text-xs ' + (selectedRequest.issue_type === 'Clock Out' ? 'font-bold text-indigo-700' : 'text-slate-700')}>
+                      Clock Out: {selectedRequest.issue_type === 'Clock Out' ? (selectedRequest.suggested_time || selectedRequest.requested_clock_out || '--:--') : (selectedRequest.original_clock_out || '--:--')}
                     </p>
                   </div>
                 </div>

@@ -15,9 +15,68 @@ import {
   fieldToSystemField,
   getPreservedSegmentsForEdit,
   buildConsistentClosePatch,
+  resolveCorrectionTargetIndex,
 } from './segmentOps';
 import type { TimeSegment } from './database';
 import { hhmmInZone } from '../../utils/timeView';
+import { getSegmentOverlapError } from '../../utils/timeValidation';
+
+describe('resolveCorrectionTargetIndex — multi-shift correction targeting', () => {
+  // Shift 1 (00:02–00:43) and Shift 2 (16:17–16:22). The root clockInManual
+  // mirrors the MOST-RECENT shift (Shift 2 = 16:17), so a target keyed off the
+  // root edits the WRONG shift. The request's shift_id is the only reliable
+  // discriminator.
+  const shift1: TimeSegment = { id: 'seg_s1', clockInManual: '00:02', clockOutManual: '00:43', workMinutes: 41, complete: true };
+  const shift2: TimeSegment = { id: 'seg_s2', clockInManual: '16:17', clockOutManual: '16:22', workMinutes: 5, complete: true };
+  const segs = [shift1, shift2];
+
+  it('targets the shift named by shift_id, NOT the root-mirrored most-recent shift', () => {
+    // Request refers to Shift 1; root mirrors Shift 2 (16:17).
+    const idx = resolveCorrectionTargetIndex(segs, { shiftId: 'seg_s1', rootClockInManual: '16:17' });
+    expect(idx).toBe(0); // Shift 1 — without shift_id this resolves to index 1.
+  });
+
+  it('falls back to the root-mirrored segment when shift_id is absent (legacy)', () => {
+    const idx = resolveCorrectionTargetIndex(segs, { rootClockInManual: '16:17' });
+    expect(idx).toBe(1);
+  });
+
+  it('falls back to the last segment when neither shift_id nor root mirror matches', () => {
+    const idx = resolveCorrectionTargetIndex(segs, {});
+    expect(idx).toBe(1);
+  });
+
+  it('returns -1 for an empty segment list (caller uses the current view)', () => {
+    expect(resolveCorrectionTargetIndex([], { shiftId: 'x' })).toBe(-1);
+  });
+
+  it('edited Shift 1 merged over originals does NOT falsely overlap Shift 2', () => {
+    // The prompt's exact scenario: resolve Clock In 00:02→00:03 on Shift 1.
+    // The merged Shift 1 = requested clockIn over original clockOut (00:03–00:43).
+    const tz = 'America/Los_Angeles';
+    const editedShift1 = recomputeSegmentSystemTimestamps(
+      { ...shift1, clockInManual: '00:03' },
+      '2026-09-05',
+      tz,
+    );
+    const merged = [editedShift1, recomputeSegmentSystemTimestamps(shift2, '2026-09-05', tz)];
+    // No overlap: Shift 1 ends 00:43, Shift 2 starts 16:17.
+    expect(getSegmentOverlapError(merged)).toBeNull();
+  });
+
+  it('the WRONG target (Shift 2) WOULD falsely overlap — guards the regression', () => {
+    // What the pre-fix code did: apply clockIn 00:03 to Shift 2 (the root-
+    // mirrored last shift), making it span 00:03–16:22 → overlaps Shift 1.
+    const tz = 'America/Los_Angeles';
+    const wronglyEditedShift2 = recomputeSegmentSystemTimestamps(
+      { ...shift2, clockInManual: '00:03' },
+      '2026-09-05',
+      tz,
+    );
+    const merged = [recomputeSegmentSystemTimestamps(shift1, '2026-09-05', tz), wronglyEditedShift2];
+    expect(getSegmentOverlapError(merged)).not.toBeNull();
+  });
+});
 
 describe('getPreservedSegmentsForEdit — split-shift-safe correction', () => {
   // Regression for the Emir Korkut Ünal 2026-07-22 entry: a 3-segment
