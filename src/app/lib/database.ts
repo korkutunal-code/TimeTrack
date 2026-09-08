@@ -126,6 +126,14 @@ export interface CorrectionRequest {
   issue_type: string;
   notes: string;
   suggested_time?: string;
+  /**
+   * The specific segment (shift) this request targets, when known. Set by the
+   * Quick Edit / Request Time Adjustments modal so the pending badge attaches
+   * to ONE shift on a multi-shift day instead of bleeding onto every shift
+   * sharing the date. Absent on legacy requests (pre-shift-scoping) — those
+   * fall back to date+issue_type badge matching.
+   */
+  shift_id?: string;
 
   // Before/After comparison
   original_clock_in?: string;
@@ -1209,6 +1217,7 @@ class DatabaseService {
         issue_type: data.issue_type,
         notes: data.notes,
         suggested_time: data.suggested_time || undefined,
+        shift_id: data.shift_id || undefined,
         original_clock_in: data.original_clock_in || undefined,
         original_clock_out: data.original_clock_out || undefined,
         original_lunch: data.original_lunch || undefined,
@@ -1242,6 +1251,7 @@ class DatabaseService {
         issue_type: data.issue_type,
         notes: data.notes,
         suggested_time: data.suggested_time || undefined,
+        shift_id: data.shift_id || undefined,
         original_clock_in: data.original_clock_in || undefined,
         original_clock_out: data.original_clock_out || undefined,
         original_lunch: data.original_lunch || undefined,

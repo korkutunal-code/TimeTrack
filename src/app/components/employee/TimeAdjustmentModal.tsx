@@ -18,6 +18,7 @@ import {
 import { getLocalDate, subtractLocalDays, getEmployeeTimezone } from '../../../utils/timeCalculations';
 import { displayTimeForView, writeDocId } from '../../../utils/timeView';
 import { flattenToShiftRows, type ShiftRow } from './shiftRows';
+import { buildActiveRequestMap, findActiveRequest } from './correctionBadge';
 
 type EditableField = 'clockInManual' | 'lunchOutManual' | 'lunchInManual' | 'clockOutManual';
 
@@ -118,14 +119,10 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
 
   const rows = useMemo(() => flattenToShiftRows(entries), [entries]);
 
-  // Active-request lookup keyed by `${date}|${issueType}`.
-  const activeRequestMap = useMemo(() => {
-    const m = new Map<string, CorrectionRequest>();
-    for (const r of requests) {
-      m.set(`${r.requested_date}|${r.issue_type}`, r);
-    }
-    return m;
-  }, [requests]);
+  // Active-request lookup keyed by `${date}|${issueType}|${shiftId}` (shift-
+  // scoped) with a legacy `${date}|${issueType}` fallback for requests that
+  // predate the shift_id field. See correctionBadge.ts.
+  const activeRequestMap = useMemo(() => buildActiveRequestMap(requests), [requests]);
 
   const handleCellClick = (row: ShiftRow, field: FieldConfig) => {
     const current = row.segment[field.key];
@@ -308,6 +305,10 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
         issue_type: field.issueType,
         notes: `${reqReason.trim()}${shiftContext}`,
         suggested_time: reqTime.trim(),
+        // Shift-scoped badging: record WHICH segment this request targets so
+        // the pending badge attaches to this shift only (not every shift on
+        // the date). See correctionBadge.ts.
+        shift_id: seg.id,
         requested_lunch: field.isLunch ? reqTime.trim() : undefined,
         original_clock_in: seg.clockInManual,
         original_clock_out: seg.clockOutManual,
@@ -389,7 +390,12 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
                           editing.field === field.key;
                       const isRequesting =
                         requesting?.row.key === row.key && requesting.field.key === field.key;
-                      const activeReq = activeRequestMap.get(`${row.entry.date}|${field.issueType}`);
+                      const activeReq = findActiveRequest(
+                        activeRequestMap,
+                        row.entry.date,
+                        field.issueType,
+                        row.segment.id,
+                      );
                       return (
                         <td key={field.key} className="py-2 px-1.5 align-top">
                           {isEditing ? (
@@ -459,7 +465,7 @@ export function TimeAdjustmentModal({ user, open, onClose, onSaved }: TimeAdjust
                               </span>
                               {activeReq && (
                                 <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-[10px] px-1.5 py-0 h-4">
-                                  Open
+                                  Pending Approval
                                 </Badge>
                               )}
                             </button>
