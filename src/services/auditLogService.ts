@@ -7,7 +7,7 @@ export interface AuditLogEntry {
   actorUid: string;
   actorName?: string;
   actorRole: 'admin' | 'manager' | 'system' | 'employee';
-  action: 'time_correction' | 'void_entry' | 'bulk_correction' | 'status_change' | 'admin_correction_approved';
+  action: 'time_correction' | 'void_entry' | 'bulk_correction' | 'status_change' | 'admin_correction_approved' | 'workday_created';
   targetCollection: 'timeEntries';
   targetId: string; // timeEntries doc id (e.g., uid_YYYY-MM-DD)
 

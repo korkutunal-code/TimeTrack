@@ -138,6 +138,10 @@ export interface DailyBreakdownTableProps {
   /** Per-user work-model override (wins over workModelDef; mirrors the
       Analytics/Payroll pipeline's `userObj.workModelOverride`). */
   workModelOverride?: WorkModelOverride | null;
+  /** Admin "Exclude Records From Analysis" cutoff (PT YYYY-MM-DD, inclusive) —
+      forwarded to the Add Workday modal so it can warn when a staged day falls
+      inside the excluded window. */
+  excludeBefore?: string;
   /** Called after a successful batch save so the parent can regenerate. */
   onSaved: () => void;
   /**
@@ -351,6 +355,7 @@ export function DailyBreakdownTable({
   employeeTimezone,
   workModelDef,
   workModelOverride,
+  excludeBefore,
   onSaved,
   onLiveTotals,
   renderParentBoundary,
@@ -895,10 +900,14 @@ export function DailyBreakdownTable({
         const allComplete = finalSegs.length > 0 && finalSegs.every(s => s.complete === true);
 
         // Audit FIRST (mandatory). Admin edits need no reason (2026-08 policy).
+        // A created-from-scratch workday uses the distinct 'workday_created'
+        // action so the audit trail separates a fabricated day from a
+        // correction of an authentic punch record.
         await auditLogService.logTimeCorrection({
           actorUid: currentUser.uid,
           actorName: currentUser.name,
           actorRole: 'admin',
+          action: isNewDayGroup ? 'workday_created' : 'time_correction',
           targetId: sourceId,
           before: beforeSnapshot,
           after: { segments: finalSegs, totalWorkMinutes: recalc.totalWorkMinutes, totalHours: recalc.totalHours },
@@ -953,9 +962,11 @@ export function DailyBreakdownTable({
 
         if (isNewDayGroup) {
           // CREATE the workday doc. The Firestore timeEntries create rule
-          // allows admins/managers to create a doc whose userId is the
-          // employee's (not their own) — this is the "Add Workday" backfill
-          // path. The doc id follows the canonical `${userId}_${workDate}`.
+          // allows an admin to create a doc whose userId is the employee's
+          // (not their own) — this is the "Add Workday" backfill path. The doc
+          // id follows the canonical `${userId}_${workDate}`. `createdVia`
+          // marks the day as manually created so downstream views can
+          // distinguish it from an authentic punch-driven record.
           const newWorkDate = dayDrafts[0].workDate;
           await setDoc(doc(db, 'timeEntries', sourceId), {
             userId: summary.userId,
@@ -964,6 +975,7 @@ export function DailyBreakdownTable({
             timezoneAtCreation: employeeTimezone ?? 'America/Los_Angeles',
             createdAt: nowTs,
             createdBy: currentUser.uid,
+            createdVia: 'add_workday',
             ...sharedFields,
           });
         } else {
@@ -1363,6 +1375,8 @@ export function DailyBreakdownTable({
         onClose={() => setAddWorkdayOpen(false)}
         onAdd={addWorkday}
         employeeTimezone={employeeTimezone}
+        employeeUserId={summary.userId}
+        excludeBefore={excludeBefore}
         existingDates={[
           ...dailyEntries.map(d => String(d.workDate ?? d.date ?? '')),
           ...[...drafts.values()].filter(d => d.isNewDay).map(d => d.workDate),

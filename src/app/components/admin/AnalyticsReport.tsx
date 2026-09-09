@@ -1121,6 +1121,7 @@ export function AnalyticsReport({ allUsers, currentUser, timeViewMode = 'local',
                       employeeTimezone={empTz}
                       workModelDef={workModelByIdForUser(summary.userId)}
                       workModelOverride={allUsers.find(u => u.uid === summary.userId)?.workModelOverride ?? null}
+                      excludeBefore={payrollSettings.exclude_records_before_date}
                       onSaved={generateReport}
                       onLiveTotals={(totals) =>
                         setLiveTotalsByUser(prev => {

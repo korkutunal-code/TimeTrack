@@ -1,6 +1,8 @@
-import { useMemo, useState } from 'react';
-import { Loader2, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { AlertTriangle, Loader2, Plus, Trash2 } from 'lucide-react';
 
+import { db } from '../../lib/firebase';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -17,6 +19,8 @@ import {
   validateSegmentChronology,
   getSegmentOverlapError,
 } from '../../../utils/timeValidation';
+import { getLocalDate } from '../../../utils/timeCalculations';
+import { isExcludedByCutoff } from '../../../utils/exclusionFilter';
 import {
   recomputeSegmentSystemTimestamps,
   type TimeSegment,
@@ -58,9 +62,18 @@ export interface AddWorkdayModalProps {
   onAdd: (workDate: string, shifts: NewShiftInput[]) => void;
   /** Employee IANA timezone — manual HH:MM strings live in this zone. */
   employeeTimezone?: string;
+  /** The employee's uid — used to pre-check Firestore for an existing doc on
+      the picked date (covers dates outside the loaded report range). */
+  employeeUserId: string;
   /** Dates that already have a row in the breakdown (a second workday for the
       same date is rejected — edit the existing row instead). */
   existingDates: string[];
+  /**
+   * Admin "Exclude Records From Analysis" cutoff (PT YYYY-MM-DD, inclusive).
+   * Days on/before it are dropped from the report — adding a workday there is
+   * allowed but the row won't appear, so the admin is warned.
+   */
+  excludeBefore?: string;
 }
 
 /**
@@ -76,15 +89,39 @@ export interface AddWorkdayModalProps {
  * clock), so a staged workday is still caught before persistence. Nothing is
  * written to Firestore here — persistence happens on "Save All Changes".
  */
-export function AddWorkdayModal({ open, onClose, onAdd, employeeTimezone, existingDates }: AddWorkdayModalProps) {
+export function AddWorkdayModal({ open, onClose, onAdd, employeeTimezone, employeeUserId, existingDates, excludeBefore }: AddWorkdayModalProps) {
   const [workDate, setWorkDate] = useState('');
   const [shifts, setShifts] = useState<NewShiftInput[]>([freshShift()]);
   const [submitting, setSubmitting] = useState(false);
+  // Async Firestore duplicate check for the picked date (catches dates outside
+  // the currently-loaded report range, which `existingDates` can't see).
+  const [remoteDup, setRemoteDup] = useState<'checking' | 'exists' | 'clear' | null>(null);
+  const dupCheckSeq = useRef(0);
+
+  // Latest date the picker allows: the employee's local today (a future-dated
+  // workday is rejected at save by the future-punch guard; cap it here too).
+  const maxDate = useMemo(() => getLocalDate(employeeTimezone), [employeeTimezone]);
 
   const reset = () => {
     setWorkDate('');
     setShifts([freshShift()]);
+    setRemoteDup(null);
   };
+
+  // Pre-check Firestore for an existing timeEntries doc on the picked date.
+  useEffect(() => {
+    const seq = ++dupCheckSeq.current;
+    if (!workDate || existingDates.includes(workDate)) {
+      // Clear via microtask so no setState runs synchronously in the effect.
+      Promise.resolve().then(() => { if (dupCheckSeq.current === seq) setRemoteDup(null); });
+      return;
+    }
+    // Mark "checking" asynchronously (microtask), then resolve with the result.
+    Promise.resolve().then(() => { if (dupCheckSeq.current === seq) setRemoteDup('checking'); });
+    getDoc(doc(db, 'timeEntries', `${employeeUserId}_${workDate}`))
+      .then((snap) => { if (dupCheckSeq.current === seq) setRemoteDup(snap.exists() ? 'exists' : 'clear'); })
+      .catch(() => { if (dupCheckSeq.current === seq) setRemoteDup('clear'); }); // network fail → don't block; saveAll re-guards
+  }, [workDate, employeeUserId, existingDates]);
 
   const updateShift = (key: string, field: keyof NewShiftInput, value: string | boolean) => {
     setShifts(prev => prev.map(s => (s.key === key ? { ...s, [field]: value } : s)));
@@ -151,10 +188,24 @@ export function AddWorkdayModal({ open, onClose, onAdd, employeeTimezone, existi
   const dateError = useMemo(() => {
     if (!workDate) return 'Date is required';
     if (existingDates.includes(workDate)) return 'A workday already exists for this date — edit it in the table instead';
+    if (remoteDup === 'exists') return 'A time entry already exists for this date — cancel and edit the existing row instead';
+    if (remoteDup === 'checking') return null; // don't flash an error while checking
     return null;
-  }, [workDate, existingDates]);
+  }, [workDate, existingDates, remoteDup]);
 
-  const valid = !dateError && errors.size === 0;
+  // Non-blocking warning: the picked date falls inside the admin's "Exclude
+  // Records From Analysis" window, so the created workday won't appear in the
+  // report being viewed.
+  const exclusionWarning = useMemo(() => {
+    const cutoff = (excludeBefore || '').trim();
+    if (!cutoff || !workDate) return null;
+    if (isExcludedByCutoff(workDate, cutoff)) {
+      return `This date is excluded from analysis because the "Exclude Records From Analysis" setting is excluding all records on or before ${cutoff}.`;
+    }
+    return null;
+  }, [workDate, excludeBefore]);
+
+  const valid = !dateError && errors.size === 0 && remoteDup !== 'checking' && remoteDup !== 'exists';
 
   const handleAdd = () => {
     if (!valid) return;
@@ -191,13 +242,24 @@ export function AddWorkdayModal({ open, onClose, onAdd, employeeTimezone, existi
             <Input
               type="date"
               value={workDate}
+              max={maxDate}
               onChange={(e) => setWorkDate(e.target.value)}
               className={!workDate || dateError && workDate ? (workDate && dateError ? 'border-red-400 bg-red-50' : '') : ''}
             />
             {workDate && dateError && (
               <p className="mt-1 text-xs text-red-600">{dateError}</p>
             )}
+            {workDate && remoteDup === 'checking' && (
+              <p className="mt-1 text-xs text-slate-500">Checking for an existing entry…</p>
+            )}
           </div>
+
+          {exclusionWarning && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+              <AlertTriangle className="size-4 text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-800">{exclusionWarning}</p>
+            </div>
+          )}
 
           {/* One card per shift — same layout as Correct Time Entry. */}
           <div className="space-y-3">
