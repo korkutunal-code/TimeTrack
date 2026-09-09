@@ -67,14 +67,16 @@ service cloud.firestore {
       // Managers can read entries from all users
       allow read: if hasRole('manager') || hasRole('admin');
       
-      // Users can create their own entries. Admins and managers may ALSO
-      // create an entry on behalf of an employee (e.g. the Daily Breakdown
-      // "Add Workday" flow backfills a missing day); the new doc's userId is
-      // the employee's, so the employee-scoped check alone would reject it.
-      // Role check keeps this from being abused by ordinary employees.
+      // Users can create their own entries. Admins may ALSO create an entry on
+      // behalf of an employee (e.g. the Daily Breakdown "Add Workday" flow
+      // backfills a missing day); the new doc's userId is the employee's, so
+      // the employee-scoped check alone would reject it. Admin-only (not
+      // managers): the update rule below keeps managers read-only on others'
+      // timeEntries, and the Add Workday UI is gated to admins — granting
+      // managers create here would widen their write surface with no caller.
       allow create: if isAuthenticated() && isActive() &&
                        (request.resource.data.userId == request.auth.uid ||
-                        hasRole('admin') || hasRole('manager'));
+                        hasRole('admin'));
       
       allow update: if isAuthenticated() && 
                        (request.auth.uid == resource.data.userId || hasRole('admin')) &&

@@ -69,10 +69,12 @@ export interface AddWorkdayModalProps {
  * "Correct Time Entry" dialog layout: backdrop-blur overlay + rounded card +
  * per-shift 2x2 time grid with a "+ Add Shift" button.
  *
- * The modal is a pure form: it validates the entered times (chronology +
- * same-day overlap + future-punch) and hands the clean shift list to the
- * parent via onAdd. Nothing is written to Firestore here — persistence happens
- * on the table's "Save All Changes".
+ * The modal is a pure form: it validates the entered times (HH:MM format,
+ * chronology, and same-day shift overlap) and hands the clean shift list to
+ * the parent via onAdd. Future-punch rejection is intentionally left to the
+ * table's live errors memo + the saveAll guard (which re-check with a fresh
+ * clock), so a staged workday is still caught before persistence. Nothing is
+ * written to Firestore here — persistence happens on "Save All Changes".
  */
 export function AddWorkdayModal({ open, onClose, onAdd, employeeTimezone, existingDates }: AddWorkdayModalProps) {
   const [workDate, setWorkDate] = useState('');
