@@ -28,10 +28,10 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, Timestamp } from 'firebase/firestore';
 import type { DocumentData } from 'firebase/firestore';
 import { toast } from 'sonner';
-import { ChevronDown, ChevronRight, Loader2, Plus, Trash2 } from 'lucide-react';
+import { CalendarPlus, ChevronDown, ChevronRight, Loader2, Plus, Trash2 } from 'lucide-react';
 
 import { db } from '../../lib/firebase';
 import { dbService, type TimeSegment } from '../../lib/database';
@@ -60,6 +60,7 @@ import { auditLogService } from '../../../services/auditLogService';
 import { writeDocId } from '../../../utils/timeView';
 import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
+import { AddWorkdayModal, type NewShiftInput } from './AddWorkdayModal';
 import type { User } from '../../lib/auth';
 import type { WorkModel as WorkModelDef } from '../../../services/workModelsService';
 
@@ -110,6 +111,9 @@ interface DraftDay {
   /** Employee-local anchor date used to derive epochs for this row's shifts. */
   anchorDate: string;
   segments: DraftSegment[];
+  /** True when this day was added via "Add Workday" — no persisted doc exists
+      yet, so Save must CREATE the timeEntries doc instead of updating it. */
+  isNewDay?: boolean;
 }
 
 export interface DailyBreakdownTableProps {
@@ -366,6 +370,9 @@ export function DailyBreakdownTable({
   const [drafts, setDrafts] = useState<Map<string, DraftDay>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+  // Workdays staged via the "Add Workday" modal (no persisted doc yet). These
+  // render as extra rows in the table and are created (not updated) on save.
+  const [addWorkdayOpen, setAddWorkdayOpen] = useState(false);
   // Captured when Bulk Edit is entered (an event) — used as the "now" anchor
   // for the live future-punch check. Not refreshed during render (Date.now()
   // is impure inside useMemo); the save path re-checks with a fresh Date.now().
@@ -486,6 +493,30 @@ export function DailyBreakdownTable({
     return m;
   }, [drafts, workModelDef, workModelOverride]);
 
+  // Ordered list of rows to render in BULK EDIT mode: the pipeline days plus
+  // any brand-new workdays staged via "Add Workday", merged and date-sorted
+  // (ascending, matching the table's existing order). New days get a minimal
+  // synthetic `day` object so the row renderer can treat them uniformly.
+  const renderDays = useMemo((): DocumentData[] => {
+    if (!bulkEdit) return dailyEntries;
+    const newDays: DocumentData[] = [];
+    for (const d of drafts.values()) {
+      if (!d.isNewDay) continue;
+      newDays.push({
+        id: d.rowKey,
+        workDate: d.workDate,
+        date: d.workDate,
+        totalWorkMinutes: liveTotals.get(d.rowKey)?.totalWorkMinutes ?? 0,
+        segments: [],
+      } as DocumentData);
+    }
+    if (newDays.length === 0) return dailyEntries;
+    // dailyEntries is newest-first (descending workDate); keep that order.
+    return [...dailyEntries, ...newDays].sort((a, b) =>
+      String(b.workDate ?? b.date).localeCompare(String(a.workDate ?? a.date)),
+    );
+  }, [bulkEdit, dailyEntries, drafts, liveTotals]);
+
   // Live summary-card totals: recompute the WHOLE employee range through the
   // canonical weekly-OT pipeline with edited days swapped in, so the summary
   // numbers stay payroll-accurate (weekly >40h adjustments included).
@@ -504,6 +535,16 @@ export function DailyBreakdownTable({
         weeklyOtAdjustment: undefined,
       } as OvertimeEntry;
     });
+    // Append brand-new workdays (added via "Add Workday") so the live summary
+    // card includes their hours in the weekly-OT recalculation.
+    for (const d of drafts.values()) {
+      if (!d.isNewDay) continue;
+      const t = liveTotals.get(d.rowKey)!;
+      otEntries.push({
+        workDate: d.workDate,
+        totalWorkMinutes: t.totalWorkMinutes,
+      } as OvertimeEntry);
+    }
     const byWeek = new Map<string, OvertimeEntry[]>();
     for (const e of otEntries) {
       const ws = getWorkWeekStartDate(e.workDate, DEFAULT_WORKWEEK_START_DAY);
@@ -647,6 +688,41 @@ export function DailyBreakdownTable({
     setExpanded(prev => new Set(prev).add(dayKey));
   };
 
+  // --- Add Workday (brand-new, not-yet-persisted day) ------------------------
+
+  /** Stage a new workday from the Add Workday modal into the drafts map. The
+      row renders immediately and is created in Firestore on Save All Changes. */
+  const addWorkday = (workDate: string, shifts: NewShiftInput[]) => {
+    touchNow();
+    const rowKey = `newday_${workDate}`;
+    const sourceId = `${summary.userId}_${workDate}`;
+    const segments: DraftSegment[] = shifts.map(s => ({
+      key: `seg_new_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      clockInManual: s.clockInManual,
+      lunchOutManual: s.skipLunch ? '' : s.lunchOutManual,
+      lunchInManual: s.skipLunch ? '' : s.lunchInManual,
+      clockOutManual: s.clockOutManual,
+      skipLunch: s.skipLunch,
+      isNew: true,
+      deleted: false,
+      orig: { clockInManual: '', lunchOutManual: '', lunchInManual: '', clockOutManual: '', skipLunch: s.skipLunch },
+    }));
+    const day: DraftDay = {
+      rowKey,
+      workDate,
+      sourceId,
+      anchorDate: workDate,
+      segments,
+      isNewDay: true,
+    };
+    setDrafts(prev => {
+      const next = new Map(prev);
+      next.set(rowKey, day);
+      return next;
+    });
+    if (segments.length > 1) setExpanded(prev => new Set(prev).add(rowKey));
+  };
+
   // --- Save ------------------------------------------------------------------
 
   const saveAll = async () => {
@@ -664,9 +740,21 @@ export function DailyBreakdownTable({
       }
 
       for (const [sourceId, dayDrafts] of byDoc.entries()) {
+        // A group is a brand-new workday when every draft in it was staged via
+        // "Add Workday" (no persisted doc). New days are CREATED, not updated.
+        const isNewDayGroup = dayDrafts.every(d => d.isNewDay === true);
         const snap = await getDoc(doc(db, 'timeEntries', sourceId));
-        if (!snap.exists()) throw new Error(`Entry ${sourceId} no longer exists.`);
-        const persisted = snap.data() as DocumentData;
+        if (!snap.exists() && !isNewDayGroup) {
+          throw new Error(`Entry ${sourceId} no longer exists.`);
+        }
+        if (snap.exists() && isNewDayGroup) {
+          // The employee (or another admin) created the doc after the workday
+          // was staged — refuse to silently overwrite it.
+          throw new Error(
+            `An entry for ${dayDrafts[0].workDate} already exists. Cancel and use the existing row instead.`,
+          );
+        }
+        const persisted = (snap.exists() ? snap.data() : {}) as DocumentData;
 
         // GUARD — never mutate voided/archived records. The report pipeline
         // can surface them, and writing status:'corrected' below would
@@ -846,7 +934,8 @@ export function DailyBreakdownTable({
           }
           : null;
 
-        await updateDoc(doc(db, 'timeEntries', sourceId), {
+        const nowTs = Timestamp.now();
+        const sharedFields = {
           segments: finalSegs.map(s => stripUndefined(s)),
           totalWorkMinutes: recalc.totalWorkMinutes,
           totalHours: recalc.totalHours,
@@ -858,9 +947,28 @@ export function DailyBreakdownTable({
           complete: allComplete,
           ...(allComplete ? { currentStep: 'complete' } : {}),
           status: 'corrected',
-          updatedAt: Timestamp.now(),
+          updatedAt: nowTs,
           updatedBy: currentUser.uid,
-        });
+        };
+
+        if (isNewDayGroup) {
+          // CREATE the workday doc. The Firestore timeEntries create rule
+          // allows admins/managers to create a doc whose userId is the
+          // employee's (not their own) — this is the "Add Workday" backfill
+          // path. The doc id follows the canonical `${userId}_${workDate}`.
+          const newWorkDate = dayDrafts[0].workDate;
+          await setDoc(doc(db, 'timeEntries', sourceId), {
+            userId: summary.userId,
+            workDate: newWorkDate,
+            date: newWorkDate,
+            timezoneAtCreation: employeeTimezone ?? 'America/Los_Angeles',
+            createdAt: nowTs,
+            createdBy: currentUser.uid,
+            ...sharedFields,
+          });
+        } else {
+          await updateDoc(doc(db, 'timeEntries', sourceId), sharedFields);
+        }
       }
 
       toast.success('Bulk changes saved (audit trail recorded)');
@@ -936,6 +1044,16 @@ export function DailyBreakdownTable({
             <Button
               size="sm"
               variant="outline"
+              className="h-7 text-xs bg-white hover:bg-indigo-50 text-indigo-700 border-indigo-300"
+              onClick={() => setAddWorkdayOpen(true)}
+              disabled={saving}
+            >
+              <CalendarPlus className="size-3.5 mr-1" />
+              Add Workday
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
               className="h-7 text-xs bg-white hover:bg-slate-50 text-slate-700 border-slate-300"
               onClick={cancelBulkEdit}
               disabled={saving}
@@ -986,7 +1104,7 @@ export function DailyBreakdownTable({
           </tr>
         </thead>
         <tbody>
-          {dailyEntries.flatMap((day: DocumentData) => {
+          {(bulkEdit ? renderDays : dailyEntries).flatMap((day: DocumentData) => {
             const rowKey = String(day.id ?? day.workDate);
             const multi = isMultiShift(day);
             // Purely state-driven: bulk-edit entry pre-populates multi-shift
@@ -1238,6 +1356,18 @@ export function DailyBreakdownTable({
 
       {/* No bottom preview strip: live totals surface directly on the
           employee summary card above (via onLiveTotals) instead. */}
+
+      {/* Add Workday modal (bulk-edit only) */}
+      <AddWorkdayModal
+        open={addWorkdayOpen}
+        onClose={() => setAddWorkdayOpen(false)}
+        onAdd={addWorkday}
+        employeeTimezone={employeeTimezone}
+        existingDates={[
+          ...dailyEntries.map(d => String(d.workDate ?? d.date ?? '')),
+          ...[...drafts.values()].filter(d => d.isNewDay).map(d => d.workDate),
+        ]}
+      />
     </div>
   );
 }

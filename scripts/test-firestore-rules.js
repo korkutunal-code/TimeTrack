@@ -200,6 +200,35 @@ async function main() {
       }),
     );
 
+    // --- "Add Workday" backfill: admin/manager may CREATE an entry whose
+    // userId is the employee's (not their own). Regression for the Daily
+    // Breakdown Add Workday save path (permission-denied without this).
+    await assertSucceeds(
+      dref(dbOf(admin), "timeEntries", "emp-1_2025-12-30").set({
+        userId: "emp-1",
+        workDate: "2025-12-30",
+        clockInManual: "08:00",
+        clockOutManual: "17:00",
+        status: "corrected",
+      }),
+    );
+    await assertSucceeds(
+      dref(dbOf(manager), "timeEntries", "emp-1_2025-12-31").set({
+        userId: "emp-1",
+        workDate: "2025-12-31",
+        clockInManual: "08:00",
+        clockOutManual: "17:00",
+        status: "corrected",
+      }),
+    );
+    // an employee still cannot create an entry for ANOTHER user
+    await assertFails(
+      dref(dbOf(emp1), "timeEntries", "emp-2_2025-12-30").set({
+        userId: "emp-2",
+        workDate: "2025-12-30",
+      }),
+    );
+
     // manager can read others' entries
     await assertSucceeds(dref(dbOf(manager), "timeEntries", entryId1).get());
 
