@@ -10,6 +10,8 @@ import { fetchGlobalSettings } from '../../../services/systemSettingsService';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { TablePagination } from '../ui/table-pagination';
+import { DEFAULT_PAGE_SIZE, pageCount, clampPage, slicePage } from '../../hooks/usePagination';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
@@ -65,6 +67,11 @@ export function PayrollReports({ allUsers, timeViewMode = 'local', onTimeViewCha
   const [loading, setLoading] = useState(false);
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
+  // Per-employee pagination state for the Daily Breakdown detail view, keyed
+  // by userId so each expanded employee paginates independently. Resets to
+  // page 1 whenever the global filters (employee selection / date range) or
+  // the report data change.
+  const [pageByUser, setPageByUser] = useState<Map<string, { page: number; size: number }>>(new Map());
   const [payrollSettings, setPayrollSettings] = useState({
     payroll_cycle_type: 'biweekly',
     weekly_start_day: 1,
@@ -84,6 +91,28 @@ export function PayrollReports({ allUsers, timeViewMode = 'local', onTimeViewCha
       .then(setWorkModels)
       .catch(e => console.error('Failed to load work models for cycle resolution', e));
   }, []);
+
+  // Reset every employee's Daily Breakdown pagination to page 1 whenever the
+  // global employee/date filters change or the report regenerates. Done during
+  // render (React's "adjust state during render" pattern) so the stale page
+  // never flashes before the reset.
+  const filterKey = `${selectedUserId}|${startDate}|${endDate}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  const [prevReport, setPrevReport] = useState(report);
+  if (filterKey !== prevFilterKey || report !== prevReport) {
+    setPrevFilterKey(filterKey);
+    setPrevReport(report);
+    setPageByUser(new Map());
+  }
+
+  // Per-employee pagination accessors (default: page 1, 50/page).
+  const getPaging = (userId: string) => pageByUser.get(userId) ?? { page: 1, size: DEFAULT_PAGE_SIZE };
+  const setPaging = (userId: string, next: { page: number; size: number }) =>
+    setPageByUser(prev => {
+      const m = new Map(prev);
+      m.set(userId, next);
+      return m;
+    });
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -877,9 +906,26 @@ export function PayrollReports({ allUsers, timeViewMode = 'local', onTimeViewCha
                     </Button>
                   </div>
 
-                  {expandedUserId === summary.userId && summary.dailyEntries && (
+                  {expandedUserId === summary.userId && summary.dailyEntries && (() => {
+                    // Per-employee pagination over DAY rows (each day may
+                    // expand into child shift rows).
+                    const paging = getPaging(summary.userId);
+                    const total = summary.dailyEntries.length;
+                    const totalPages = pageCount(total, paging.size);
+                    const page = clampPage(paging.page, totalPages);
+                    const pagedEntries = slicePage(summary.dailyEntries, page, paging.size);
+                    return (
                     <div className="mt-2 pt-2 border-t border-slate-200 overflow-x-auto px-[10px]">
-                      <p className="text-xs font-semibold text-slate-700 mb-2">Daily Breakdown</p>
+                      <div className="flex items-center gap-3 mb-2 flex-wrap">
+                        <p className="text-xs font-semibold text-slate-700">Daily Breakdown</p>
+                        <TablePagination
+                          currentPage={page}
+                          pageSize={paging.size}
+                          totalItems={total}
+                          onPageChange={(p) => setPaging(summary.userId, { page: p, size: paging.size })}
+                          onPageSizeChange={(s) => setPaging(summary.userId, { page: 1, size: s })}
+                        />
+                      </div>
                       {/* Fluid fixed grid: table-fixed + w-full pins every
                           labeled column to an exact pixel width (164 |
                           100×4 | … | 100×3 | 56) while the widthless
@@ -918,7 +964,7 @@ export function PayrollReports({ allUsers, timeViewMode = 'local', onTimeViewCha
                           </tr>
                         </thead>
                         <tbody>
-                          {summary.dailyEntries.flatMap((day: DocumentData) => {
+                          {pagedEntries.flatMap((day: DocumentData) => {
                             const b = getDayBoundaries(day, viewZone);
                             const lunch = getDayLunch(day, viewZone);
                             const segs = Array.isArray(day.segments) ? day.segments : [];
@@ -1025,7 +1071,8 @@ export function PayrollReports({ allUsers, timeViewMode = 'local', onTimeViewCha
                         </tbody>
                       </table>
                     </div>
-                  )}
+                    );
+                  })()}
                 </CardContent>
               </Card>
               </Fragment>

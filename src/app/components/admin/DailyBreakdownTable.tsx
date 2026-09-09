@@ -60,6 +60,8 @@ import { auditLogService } from '../../../services/auditLogService';
 import { writeDocId } from '../../../utils/timeView';
 import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
+import { TablePagination } from '../ui/table-pagination';
+import { usePagination } from '../../hooks/usePagination';
 import { AddWorkdayModal, type NewShiftInput } from './AddWorkdayModal';
 import type { User } from '../../lib/auth';
 import type { WorkModel as WorkModelDef } from '../../../services/workModelsService';
@@ -370,6 +372,13 @@ export function DailyBreakdownTable({
   const isAdmin = currentUser.role === 'admin';
   const dailyEntries = useMemo(() => summary.dailyEntries ?? [], [summary.dailyEntries]);
 
+  // Pagination over DAY rows (each day may expand into child shift rows). The
+  // hook state is per-component-instance, and Analytics renders one
+  // DailyBreakdownTable per expanded employee — so each employee's breakdown
+  // paginates independently. Reset key = the day set, so changing global
+  // date/employee filters (or the summary regenerating) drops back to page 1.
+  const pagination = usePagination(dailyEntries.length, dailyEntries);
+
   // --- Bulk edit state -----------------------------------------------------
   const [bulkEdit, setBulkEdit] = useState(false);
   const [drafts, setDrafts] = useState<Map<string, DraftDay>>(new Map());
@@ -521,6 +530,14 @@ export function DailyBreakdownTable({
       String(b.workDate ?? b.date).localeCompare(String(a.workDate ?? a.date)),
     );
   }, [bulkEdit, dailyEntries, drafts, liveTotals]);
+
+  // Day rows actually rendered. Bulk edit shows EVERY day (a staged or edited
+  // row on another page must stay visible and the Save pipeline iterates the
+  // full drafts map, not the rendered rows). Read mode paginates.
+  const visibleDays = useMemo(
+    () => (bulkEdit ? renderDays : pagination.slice(renderDays)),
+    [bulkEdit, renderDays, pagination],
+  );
 
   // Live summary-card totals: recompute the WHOLE employee range through the
   // canonical weekly-OT pipeline with edited days swapped in, so the summary
@@ -1027,8 +1044,21 @@ export function DailyBreakdownTable({
       }
     >
       {/* Section header + Bulk Edit toggle */}
-      <div className="flex items-center justify-between mb-2">
-        <p className="text-xs font-semibold text-slate-700">Daily Breakdown</p>
+      <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <p className="text-xs font-semibold text-slate-700">Daily Breakdown</p>
+          {/* Pagination controls sit inline next to the section title. Hidden
+              during bulk edit (which shows every row). */}
+          {!bulkEdit && renderDays.length > 0 && (
+            <TablePagination
+              currentPage={pagination.currentPage}
+              pageSize={pagination.pageSize}
+              totalItems={renderDays.length}
+              onPageChange={pagination.setCurrentPage}
+              onPageSizeChange={pagination.setPageSize}
+            />
+          )}
+        </div>
         {isAdmin && !bulkEdit && (
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={enterBulkEdit}>
             Bulk Edit
@@ -1116,7 +1146,7 @@ export function DailyBreakdownTable({
           </tr>
         </thead>
         <tbody>
-          {(bulkEdit ? renderDays : dailyEntries).flatMap((day: DocumentData) => {
+          {visibleDays.flatMap((day: DocumentData) => {
             const rowKey = String(day.id ?? day.workDate);
             const multi = isMultiShift(day);
             // Purely state-driven: bulk-edit entry pre-populates multi-shift
